@@ -1,0 +1,29 @@
+queue memory
+
+workspace sandbox {
+  base = "./worktree"
+  excludes = [".git"]
+  preserve_mtime = false
+
+  apply_back {
+    mode = sync
+    excludes = ["*.md", ".git"]
+    includes = ["README.md"]
+  }
+
+  policy {
+    network = off
+  }
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = true
+  behavior = wait
+}
+
+prompt "iterate"

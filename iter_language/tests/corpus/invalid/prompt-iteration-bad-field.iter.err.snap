@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: prompt-iteration-bad-field.iter
+---
+Error: unknown iteration field `bogus`
+    ╭─[prompt-iteration-bad-field.iter:19:23]
+    │
+ 19 │ prompt when iteration.bogus == 1 "should fail"
+    │                       ──┬──  
+    │                         ╰──── unknown iteration field `bogus`
+    │ 
+    │ Help: valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_outcome ==/!= "none|success|errored"` for the outcome string.
+────╯

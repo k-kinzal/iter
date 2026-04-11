@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-in-iterfile.iter
+---
+Error: `trigger` is no longer a valid top-level section in an Iterfile
+   ╭─[trigger-in-iterfile.iter:8:1]
+   │
+ 8 │ trigger cron { schedule = "0 0 * * *" }
+   │ ───────────────────┬───────────────────  
+   │                    ╰───────────────────── `trigger` is no longer a valid top-level section in an Iterfile
+   │ 
+   │ Help: trigger declarations belong in `compose.iter`, not in an Iterfile. Run `iter compose up` against a `compose.iter` that wires this trigger to a service.
+───╯

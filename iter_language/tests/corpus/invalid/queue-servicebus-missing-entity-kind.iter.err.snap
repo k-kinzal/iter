@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-servicebus-missing-entity-kind.iter
+---
+Error: queue servicebus requires `entity_kind`
+   ╭─[queue-servicebus-missing-entity-kind.iter:1:7]
+   │
+ 1 │ queue servicebus {
+   │       ─────┬────  
+   │            ╰────── queue servicebus requires `entity_kind`
+   │ 
+   │ Help: set `entity_kind = "queue"` or `entity_kind = "subscription"`
+───╯

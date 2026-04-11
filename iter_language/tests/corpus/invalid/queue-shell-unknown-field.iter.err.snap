@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-shell-unknown-field.iter
+---
+Error: unknown field `bogus` in queue shell
+   ╭─[queue-shell-unknown-field.iter:4:3]
+   │
+ 4 │   bogus   = "no such field"
+   │   ──┬──  
+   │     ╰──── unknown field `bogus` in queue shell
+   │ 
+   │ Help: valid fields: enqueue, dequeue, close, interpreter, enqueue_timeout
+───╯

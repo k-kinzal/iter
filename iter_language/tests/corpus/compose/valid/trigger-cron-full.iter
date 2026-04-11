@@ -1,0 +1,15 @@
+queue main file { path = "./.iter/queue" }
+
+trigger nightly cron {
+    schedule = "0 0 * * *"
+    timezone = "Asia/Tokyo"
+    at_startup = true
+    catch_up = 300s
+    jitter = 5s
+    priority = high
+    max_signals = 100
+    metadata {
+        source = "nightly-cron"
+    }
+    target = main
+}

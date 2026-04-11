@@ -1,0 +1,108 @@
+queue kafka {
+  bootstrap_servers = "pkc-12345.us-east-1.aws.confluent.cloud:9092"
+  client_id = "iter-runner"
+  client_rack = "us-east-1a"
+  broker_address_family = "any"
+  broker_address_ttl = 60s
+  metadata_max_age = 300s
+  topic_metadata_refresh_interval = 60s
+  topic_metadata_refresh_fast_interval_ms = 100
+  socket_timeout = 30s
+  socket_keepalive_enable = true
+  socket_nagle_disable = false
+  socket_max_fails = 3
+  reconnect_backoff_ms = 100
+  reconnect_backoff_max_ms = 10000
+  api_version_request = true
+  api_version_request_timeout_ms = 10000
+  exactly_once = true
+
+  security {
+    security_protocol = "sasl_ssl"
+    sasl_mechanism = "PLAIN"
+    sasl_username = env("CONFLUENT_API_KEY")
+    sasl_password = env("CONFLUENT_API_SECRET")
+    enable_ssl_certificate_verification = true
+    ssl_endpoint_identification_algorithm = "https"
+  }
+
+  producer {
+    topic = "iter-signals"
+    acks = "all"
+    compression_type = "zstd"
+    compression_level = 3
+    batch_size = 16384
+    batch_num_messages = 10000
+    linger_ms = 20
+    queue_buffering_max_messages = 100000
+    queue_buffering_max_kbytes = 1048576
+    message_max_bytes = 1000000
+    message_copy_max_bytes = 65535
+    max_in_flight_requests_per_connection = 5
+    request_timeout_ms = 30000
+    message_timeout_ms = 300000
+    delivery_timeout_ms = 120000
+    enable_idempotence = true
+    enable_gapless_guarantee = true
+    partitioner = "consistent_random"
+    message_send_max_retries = 2147483647
+    retry_backoff_ms = 100
+    retry_backoff_max_ms = 1000
+    headers {
+      "x-source" = "iter"
+    }
+    timestamp_strategy = "signal_created_at"
+    partition_strategy = from_metadata("partition_key")
+    key_strategy = from_metadata("workspace")
+  }
+
+  consumer {
+    topics = ["iter-signals"]
+    group_id = "iter-runner"
+    group_instance_id = "iter-1"
+    auto_offset_reset = "earliest"
+    enable_auto_commit = false
+    auto_commit_interval_ms = 5000
+    enable_auto_offset_store = false
+    fetch_min_bytes = 1
+    fetch_max_bytes = 52428800
+    max_partition_fetch_bytes = 1048576
+    fetch_wait_max_ms = 500
+    fetch_queue_backoff_ms = 100
+    session_timeout_ms = 45000
+    heartbeat_interval_ms = 3000
+    max_poll_interval_ms = 600000
+    isolation_level = "read_committed"
+    partition_assignment_strategy = "cooperative-sticky"
+    check_crcs = true
+    queued_min_messages = 100000
+    queued_max_messages_kbytes = 65536
+    poll_timeout = 100
+  }
+
+  extra_config {
+    "client.dns.lookup" = "use_all_dns_ips"
+  }
+
+  dlq {
+    kind = "iter_republish"
+    max_receive_count = 3
+    target {
+      kind = "kafka"
+      brokers = "pkc-12345.us-east-1.aws.confluent.cloud:9092"
+      topic = "iter-signals.dlq"
+    }
+  }
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

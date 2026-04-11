@@ -1,0 +1,5 @@
+queue memory
+on no_such_event {
+  shell "echo hi"
+}
+runner { continue_on_error = false  behavior = wait }

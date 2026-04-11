@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# iter custom dylint libraries.
+#
+# This is a SEPARATE workspace from the main iter workspace, deliberately
+# excluded from `../Cargo.toml`. Custom lints depend on `rustc_private` APIs
+# that are only available on a pinned nightly toolchain (see
+# `rust-toolchain.toml`), so we keep them isolated to avoid contaminating
+# the main stable-toolchain build.
+#
+# How to use
+# ----------
+#   cargo install cargo-dylint dylint-link    # one-time, host-wide
+#   cargo dylint --all --workspace             # run from repo root
+#
+# How to add a new lint
+# ---------------------
+#   1. Copy `iter_lint_no_std_print/` as a template under `lints/`.
+#   2. Rename the package, the lint name (UPPER_SNAKE), and its `LintPass`
+#      struct.
+#   3. Add the package to `members` below.
+#   4. The main workspace's `[workspace.metadata.dylint]` glob (`lints/*`)
+#      picks it up automatically — no edits needed there.
+# ---------------------------------------------------------------------------
+
+[workspace]
+resolver = "3"
+members = [
+    "iter_lint_no_std_print",
+    "iter_lint_no_lint_suppression",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/k-kinzal/iter"
+authors = ["iter contributors"]
+publish = false
+
+[workspace.dependencies]
+dylint_linting = "5"
+dylint_testing = "5"

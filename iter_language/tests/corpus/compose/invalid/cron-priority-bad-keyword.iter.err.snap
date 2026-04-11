@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: cron-priority-bad-keyword.iter
+---
+Error: unknown priority `urgent`
+   ╭─[cron-priority-bad-keyword.iter:5:16]
+   │
+ 5 │     priority = urgent
+   │                ───┬──  
+   │                   ╰──── unknown priority `urgent`
+   │ 
+   │ Help: valid: low, normal, high, critical
+───╯

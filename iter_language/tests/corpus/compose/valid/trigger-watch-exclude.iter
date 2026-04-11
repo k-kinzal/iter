@@ -1,0 +1,10 @@
+queue main file { path = "./.iter/queue" }
+
+trigger sessions watch {
+    dir = "/Users/me/Library/Logs/Agents"
+    include = ["**/*.jsonl"]
+    exclude = ["self-loop/**", "tmp/**"]
+    per_file = true
+    cooldown = 1800s
+    target = main
+}

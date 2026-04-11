@@ -1,0 +1,5 @@
+# cargo-fuzz output
+/target/
+/corpus/
+/artifacts/
+/coverage/

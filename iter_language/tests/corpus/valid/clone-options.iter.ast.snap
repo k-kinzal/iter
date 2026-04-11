@@ -1,0 +1,67 @@
+---
+source: iter_language/tests/conformance.rs
+description: clone-options.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [
+                    "build-output",
+                    "vendor-cache",
+                    ".scratch",
+                    ".vcs",
+                ],
+                includes: [
+                    ".vcs",
+                ],
+                preserve_mtime: false,
+                apply_back: ApplyBackDecl {
+                    mode: Merge,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..188,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 190..242,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 244..300,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "explore",
+            },
+            span: 302..318,
+        },
+    ],
+    events: [],
+}

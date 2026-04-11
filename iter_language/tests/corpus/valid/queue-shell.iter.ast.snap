@@ -1,0 +1,63 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-shell.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Shell {
+                enqueue: "redis-cli -u $REDIS_URL ZADD myq $ITER_SIGNAL_PRIORITY -",
+                dequeue: "./scripts/poll-myq.sh",
+                close: Some(
+                    "redis-cli -u $REDIS_URL DEL myq",
+                ),
+                interpreter: Some(
+                    "bash -c",
+                ),
+                enqueue_timeout_secs: Some(
+                    30,
+                ),
+            },
+            span: 0..218,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 220..252,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 254..306,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 330..383,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 308..329,
+        },
+    ],
+    events: [],
+}

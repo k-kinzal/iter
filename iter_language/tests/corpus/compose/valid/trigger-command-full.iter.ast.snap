@@ -1,0 +1,60 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-command-full.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "probe",
+                decl: Command {
+                    run: "ls",
+                    shell: Some(
+                        "bash -c",
+                    ),
+                    extract: Some(
+                        Regex(
+                            "^(?P<value>.+)$",
+                        ),
+                    ),
+                    poll_secs: Some(
+                        30,
+                    ),
+                    dedupe: true,
+                    on_error: Some(
+                        Abort,
+                    ),
+                    base_metadata: [
+                        (
+                            "source",
+                            "probe",
+                        ),
+                    ],
+                    priority: Some(
+                        Critical,
+                    ),
+                    max_signals: Some(
+                        50,
+                    ),
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..308,
+        },
+    ],
+}

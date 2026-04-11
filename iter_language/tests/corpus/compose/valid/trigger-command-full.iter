@@ -1,0 +1,16 @@
+queue main file { path = "./.iter/queue" }
+
+trigger probe command {
+    run = "ls"
+    shell = "bash -c"
+    poll = 30s
+    extract = regex("^(?P<value>.+)$")
+    dedupe = true
+    on_error = abort
+    priority = critical
+    max_signals = 50
+    metadata {
+        source = "probe"
+    }
+    target = main
+}

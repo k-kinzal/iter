@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-iteration-timeout-zero.iter
+---
+Error: `iteration_timeout_secs` must be a positive duration
+    ╭─[runner-iteration-timeout-zero.iter:17:28]
+    │
+ 17 │   iteration_timeout_secs = 0
+    │                            ┬  
+    │                            ╰── `iteration_timeout_secs` must be a positive duration
+────╯

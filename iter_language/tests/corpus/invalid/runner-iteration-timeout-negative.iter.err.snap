@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-iteration-timeout-negative.iter
+---
+Error: unexpected character `-`
+    ╭─[runner-iteration-timeout-negative.iter:17:28]
+    │
+ 17 │   iteration_timeout_secs = -30
+    │                            ┬  
+    │                            ╰── unexpected character `-`
+────╯

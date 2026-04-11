@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger probe command {
+    run = "ls"
+    on_error = halt
+    target = main
+}

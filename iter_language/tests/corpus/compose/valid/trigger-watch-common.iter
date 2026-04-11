@@ -1,0 +1,14 @@
+queue main file { path = "./.iter/queue" }
+
+trigger edits watch {
+    dir = "./src"
+    include = ["*.rs"]
+    per_file = true
+    cooldown = 2s
+    priority = normal
+    max_signals = 10
+    metadata {
+        source = "edits"
+    }
+    target = main
+}

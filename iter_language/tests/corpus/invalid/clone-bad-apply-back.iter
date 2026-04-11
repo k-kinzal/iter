@@ -1,0 +1,9 @@
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back {
+    mode = teleport
+  }
+}
+runner { continue_on_error = false  behavior = wait }

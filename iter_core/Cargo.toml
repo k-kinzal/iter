@@ -1,0 +1,101 @@
+[package]
+name = "iter_core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core traits, domain types, and Runner for the iter agent control framework"
+
+[features]
+default = [
+    "driver-sqs",
+    "driver-kinesis",
+    "driver-pubsub",
+    "driver-servicebus",
+    "driver-kafka",
+    "driver-redis",
+]
+driver-sqs = ["dep:aws-config", "dep:aws-credential-types", "dep:aws-sdk-sqs", "dep:aws-sdk-dynamodb", "dep:aws-sdk-s3", "dep:aws-sigv4", "dep:aws-types", "dep:aws-smithy-http-client", "dep:aws-smithy-types", "dep:aws-smithy-runtime-api"]
+driver-kinesis = ["dep:aws-config", "dep:aws-credential-types", "dep:aws-sdk-kinesis", "dep:aws-sdk-dynamodb", "dep:aws-sdk-s3", "dep:aws-sigv4", "dep:aws-types", "dep:aws-smithy-http-client", "dep:aws-smithy-types", "dep:aws-smithy-runtime-api"]
+driver-pubsub = ["dep:google-cloud-pubsub", "dep:google-cloud-googleapis", "dep:google-cloud-auth", "dep:google-cloud-gax"]
+driver-servicebus = ["dep:azservicebus", "dep:azure_core", "dep:azure_identity"]
+driver-kafka = ["dep:rdkafka"]
+driver-redis = ["dep:redis"]
+
+[dependencies]
+iter_tracing.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+toml.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+hex.workspace = true
+rand.workspace = true
+tracing.workspace = true
+handlebars.workspace = true
+
+# workspace 実装向け
+tempfile.workspace = true
+
+# instance 実装向け
+ulid.workspace = true
+
+# queue drivers (feature-gated)
+redis = { workspace = true, optional = true }
+aws-config = { workspace = true, optional = true }
+aws-credential-types = { workspace = true, optional = true }
+aws-sdk-sqs = { workspace = true, optional = true }
+aws-sdk-kinesis = { workspace = true, optional = true }
+aws-sdk-dynamodb = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
+aws-sigv4 = { workspace = true, optional = true }
+aws-types = { workspace = true, optional = true }
+aws-smithy-http-client = { workspace = true, optional = true }
+aws-smithy-types = { workspace = true, optional = true }
+aws-smithy-runtime-api = { workspace = true, optional = true }
+google-cloud-pubsub = { workspace = true, optional = true }
+google-cloud-googleapis = { workspace = true, optional = true }
+google-cloud-auth = { workspace = true, optional = true }
+google-cloud-gax = { workspace = true, optional = true }
+rdkafka = { workspace = true, optional = true }
+azservicebus = { workspace = true, optional = true }
+azure_core = { workspace = true, optional = true }
+azure_identity = { workspace = true, optional = true }
+
+# workspace + file queue driver
+notify.workspace = true
+globset.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
+insta = { workspace = true, features = ["yaml"] }
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+
+# NOTE: do not use `[lints] workspace = true` here — cargo forbids mixing
+# workspace inheritance with per-package overrides. iter_core needs to
+# `allow` `unsafe_code` (legitimate FFI in process/queue), so the rust
+# and clippy lint groups are duplicated from the root `Cargo.toml`.
+[lints.rust]
+unsafe_code = "allow"
+unreachable_pub = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+trivial_numeric_casts = "warn"
+let_underscore_drop = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }

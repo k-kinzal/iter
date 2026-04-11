@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: files-list-with-stdin.iter
+---
+Error: `stdin` is not allowed inside a `from` list
+   ╭─[files-list-with-stdin.iter:4:13]
+   │
+ 4 │     from = [stdin, "path:./a.txt"]
+   │             ──┬──  
+   │               ╰──── `stdin` is not allowed inside a `from` list
+   │ 
+   │ Help: use `from = stdin` (scalar) or list path sources only
+───╯

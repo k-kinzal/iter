@@ -1,0 +1,329 @@
+//! `build_prompt_selector` — pick prompts out of an [`Iterfile`](Root).
+//!
+//! Translates an Iterfile's `prompt [when ...] "..."` declarations into an
+//! [`iter_core::PromptSelector`] the runner can evaluate per-signal. Guards
+//! are translated from [`iter_language::PromptGuard`] (a parse-tree type)
+//! into [`iter_core::PromptGuard`] (a runtime type) so the runtime layer
+//! does not depend on the language crate.
+//!
+//! # Selection semantics
+//!
+//! At build time we accept any number of guarded prompts but at most one
+//! *unguarded* prompt — the default. Multiple defaults are almost always a
+//! user mistake, so we surface a clear error instead of picking one
+//! arbitrarily. At run time the selector walks the guarded branches in
+//! source order and falls back to the default only when no guard matches;
+//! see [`iter_core::PromptSelector::render`] for the exact contract.
+
+use iter_core::{
+    CmpOp as CoreCmpOp, IterationField as CoreIterationField, PromptGuard as CorePromptGuard,
+    PromptSelector, PromptTemplate, TemplateError,
+};
+use iter_language::{
+    CmpOp as LangCmpOp, IterationField as LangIterationField, PromptDecl,
+    PromptGuard as LangPromptGuard, Root, Spanned,
+};
+
+/// Errors produced while assembling a [`PromptSelector`] from prompt
+/// declarations.
+#[derive(Debug, thiserror::Error)]
+pub enum PromptBuildError {
+    /// No `prompt` block was declared.
+    #[error("iterfile is missing a `prompt` declaration")]
+    Missing,
+    /// More than one unguarded `prompt` block was declared.
+    #[error(
+        "iterfile declares more than one unguarded `prompt`; \
+         at most one default (unguarded) prompt is allowed — \
+         add a `when ...` guard to narrow the extras or merge \
+         them into a single template"
+    )]
+    MultipleDefaults,
+    /// A prompt body failed to compile as a [`PromptTemplate`].
+    #[error("invalid prompt template: {body:?}")]
+    InvalidTemplate {
+        /// Raw template body that failed to compile.
+        body: String,
+        /// Underlying template-compilation error.
+        #[source]
+        source: TemplateError,
+    },
+}
+
+/// Build the [`PromptSelector`] the runner should use for `iterfile`.
+///
+/// Convenience wrapper around [`build_prompt_selector_from_prompts`] for the
+/// Iterfile case. Compose-side code that ships its own prompt slice should
+/// call [`build_prompt_selector_from_prompts`] directly.
+///
+/// # Errors
+///
+/// * The Iterfile contains no `prompt` declaration at all.
+/// * The Iterfile declares more than one unguarded `prompt` block.
+pub fn build_prompt_selector(iterfile: &Root) -> Result<PromptSelector, PromptBuildError> {
+    build_prompt_selector_from_prompts(&iterfile.prompts)
+}
+
+/// Build the [`PromptSelector`] for a flat slice of prompt declarations.
+///
+/// Shared by the Iterfile and compose `InlineService` code paths.
+///
+/// # Errors
+///
+/// * `prompts` is empty.
+/// * More than one entry is unguarded.
+pub fn build_prompt_selector_from_prompts(
+    prompts: &[Spanned<PromptDecl>],
+) -> Result<PromptSelector, PromptBuildError> {
+    if prompts.is_empty() {
+        return Err(PromptBuildError::Missing);
+    }
+
+    let mut branches: Vec<(CorePromptGuard, PromptTemplate)> = Vec::new();
+    let mut default: Option<PromptTemplate> = None;
+
+    for spanned in prompts {
+        let decl = &spanned.node;
+        let template = PromptTemplate::new(decl.body.clone()).map_err(|source| {
+            PromptBuildError::InvalidTemplate {
+                body: decl.body.clone(),
+                source,
+            }
+        })?;
+        if let Some(guard) = &decl.guard {
+            branches.push((translate_guard(guard), template));
+        } else {
+            if default.is_some() {
+                return Err(PromptBuildError::MultipleDefaults);
+            }
+            default = Some(template);
+        }
+    }
+
+    Ok(PromptSelector::new(branches, default))
+}
+
+/// Recursively translate a language-AST guard into the runtime guard type.
+/// Pure structural mapping; no semantic validation happens here because the
+/// parser already rejected malformed guards.
+fn translate_guard(guard: &LangPromptGuard) -> CorePromptGuard {
+    match guard {
+        LangPromptGuard::MetadataEq { key, value } => CorePromptGuard::MetadataEq {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        LangPromptGuard::MetadataNeq { key, value } => CorePromptGuard::MetadataNeq {
+            key: key.clone(),
+            value: value.clone(),
+        },
+        LangPromptGuard::IterationCmp {
+            field,
+            modulus,
+            op,
+            rhs,
+        } => CorePromptGuard::IterationCmp {
+            field: translate_iteration_field(*field),
+            modulus: *modulus,
+            op: translate_cmp_op(*op),
+            rhs: *rhs,
+        },
+        LangPromptGuard::IterationOutcomeEq { value } => CorePromptGuard::IterationOutcomeEq {
+            value: value.clone(),
+        },
+        LangPromptGuard::IterationOutcomeNeq { value } => CorePromptGuard::IterationOutcomeNeq {
+            value: value.clone(),
+        },
+        LangPromptGuard::And(lhs, rhs) => CorePromptGuard::And(
+            Box::new(translate_guard(lhs)),
+            Box::new(translate_guard(rhs)),
+        ),
+        LangPromptGuard::Or(lhs, rhs) => CorePromptGuard::Or(
+            Box::new(translate_guard(lhs)),
+            Box::new(translate_guard(rhs)),
+        ),
+    }
+}
+
+fn translate_iteration_field(field: LangIterationField) -> CoreIterationField {
+    match field {
+        LangIterationField::Count => CoreIterationField::Count,
+        LangIterationField::PreviousExitCode => CoreIterationField::PreviousExitCode,
+        LangIterationField::ConsecutiveFailures => CoreIterationField::ConsecutiveFailures,
+        LangIterationField::ConsecutiveSuccesses => CoreIterationField::ConsecutiveSuccesses,
+    }
+}
+
+fn translate_cmp_op(op: LangCmpOp) -> CoreCmpOp {
+    match op {
+        LangCmpOp::Eq => CoreCmpOp::Eq,
+        LangCmpOp::Neq => CoreCmpOp::Neq,
+        LangCmpOp::Lt => CoreCmpOp::Lt,
+        LangCmpOp::Le => CoreCmpOp::Le,
+        LangCmpOp::Gt => CoreCmpOp::Gt,
+        LangCmpOp::Ge => CoreCmpOp::Ge,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iter_core::{IterationContext, Metadata, MetadataKey, MetadataValue, Signal};
+    use iter_language::{PromptDecl, Spanned};
+
+    fn prompt(body: &str, guard: Option<LangPromptGuard>) -> Spanned<PromptDecl> {
+        Spanned::new(
+            PromptDecl {
+                guard,
+                body: body.to_owned(),
+            },
+            0..0,
+        )
+    }
+
+    fn signal_with_kind(kind: &str) -> Signal {
+        let mut meta = Metadata::new();
+        meta.insert(
+            MetadataKey::new("kind").unwrap(),
+            MetadataValue::String(kind.into()),
+        );
+        Signal::new(meta)
+    }
+
+    fn iter_ctx() -> IterationContext {
+        IterationContext::for_test()
+    }
+
+    #[test]
+    fn missing_prompt_errors() {
+        let iterfile = Root::default();
+        let err = build_prompt_selector(&iterfile).expect_err("must fail");
+        assert!(err.to_string().contains("missing a `prompt`"));
+    }
+
+    #[test]
+    fn single_unguarded_prompt_becomes_default() {
+        let mut iterfile = Root::default();
+        iterfile.prompts.push(prompt("hello {{signal.id}}", None));
+        let selector = build_prompt_selector(&iterfile).expect("build");
+        let signal = signal_with_kind("anything");
+        let rendered = selector.render(&signal, &iter_ctx()).expect("render");
+        assert!(rendered.as_str().starts_with("hello "));
+    }
+
+    #[test]
+    fn multiple_guarded_prompts_are_supported() {
+        let mut iterfile = Root::default();
+        iterfile.prompts.push(prompt(
+            "handle issue {{metadata.kind}}",
+            Some(LangPromptGuard::MetadataEq {
+                key: "kind".into(),
+                value: "issue".into(),
+            }),
+        ));
+        iterfile.prompts.push(prompt(
+            "fix ci {{metadata.kind}}",
+            Some(LangPromptGuard::MetadataEq {
+                key: "kind".into(),
+                value: "ci_fix".into(),
+            }),
+        ));
+
+        let selector = build_prompt_selector(&iterfile).expect("build");
+        assert_eq!(
+            selector
+                .render(&signal_with_kind("issue"), &iter_ctx())
+                .unwrap()
+                .as_str(),
+            "handle issue issue"
+        );
+        assert_eq!(
+            selector
+                .render(&signal_with_kind("ci_fix"), &iter_ctx())
+                .unwrap()
+                .as_str(),
+            "fix ci ci_fix"
+        );
+    }
+
+    #[test]
+    fn guarded_branches_fall_through_to_default() {
+        let mut iterfile = Root::default();
+        iterfile.prompts.push(prompt(
+            "urgent path",
+            Some(LangPromptGuard::MetadataEq {
+                key: "kind".into(),
+                value: "urgent".into(),
+            }),
+        ));
+        iterfile.prompts.push(prompt("default path", None));
+
+        let selector = build_prompt_selector(&iterfile).expect("build");
+        assert_eq!(
+            selector
+                .render(&signal_with_kind("urgent"), &iter_ctx())
+                .unwrap()
+                .as_str(),
+            "urgent path"
+        );
+        assert_eq!(
+            selector
+                .render(&signal_with_kind("other"), &iter_ctx())
+                .unwrap()
+                .as_str(),
+            "default path"
+        );
+    }
+
+    #[test]
+    fn multiple_unguarded_prompts_error() {
+        let mut iterfile = Root::default();
+        iterfile.prompts.push(prompt("a", None));
+        iterfile.prompts.push(prompt("b", None));
+        let err = build_prompt_selector(&iterfile).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("more than one unguarded"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn nested_and_or_guards_translate_structurally() {
+        let mut iterfile = Root::default();
+        iterfile.prompts.push(prompt(
+            "matched",
+            Some(LangPromptGuard::And(
+                Box::new(LangPromptGuard::MetadataEq {
+                    key: "kind".into(),
+                    value: "issue".into(),
+                }),
+                Box::new(LangPromptGuard::Or(
+                    Box::new(LangPromptGuard::MetadataNeq {
+                        key: "kind".into(),
+                        value: "ci_fix".into(),
+                    }),
+                    Box::new(LangPromptGuard::MetadataEq {
+                        key: "kind".into(),
+                        value: "urgent".into(),
+                    }),
+                )),
+            )),
+        ));
+
+        let selector = build_prompt_selector(&iterfile).expect("build");
+        // kind=issue: And(Eq(issue), Or(Neq(ci_fix)=true, Eq(urgent)=false)) = true
+        assert_eq!(
+            selector
+                .render(&signal_with_kind("issue"), &iter_ctx())
+                .unwrap()
+                .as_str(),
+            "matched"
+        );
+        // kind=other: And(Eq(issue)=false, ...) = false → no match, no default
+        assert!(
+            selector
+                .render(&signal_with_kind("other"), &iter_ctx())
+                .is_err()
+        );
+    }
+}

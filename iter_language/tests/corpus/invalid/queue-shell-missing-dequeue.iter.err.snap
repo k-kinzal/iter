@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-shell-missing-dequeue.iter
+---
+Error: queue shell requires `dequeue`
+   ╭─[queue-shell-missing-dequeue.iter:1:7]
+   │
+ 1 │ queue shell {
+   │       ──┬──  
+   │         ╰──── queue shell requires `dequeue`
+   │ 
+   │ Help: add `dequeue = "..."`
+───╯

@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-servicebus-web-proxy-without-websockets.iter
+---
+Error: queue servicebus: `web_proxy` requires `transport = "amqp_websockets"`
+   ╭─[queue-servicebus-web-proxy-without-websockets.iter:1:7]
+   │
+ 1 │ queue servicebus {
+   │       ─────┬────  
+   │            ╰────── queue servicebus: `web_proxy` requires `transport = "amqp_websockets"`
+───╯

@@ -1,0 +1,20 @@
+queue sqs {
+  queue_url = "https://sqs.us-east-1.amazonaws.com/123/q"
+  region    = "us-east-1"
+  dlq {
+    kind = "iter_republish"
+    max_receive_count = 5
+  }
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

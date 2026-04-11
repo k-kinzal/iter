@@ -1,0 +1,34 @@
+# Worker file: drains a queue but doesn't define a trigger of its own.
+queue redis {
+  url = "redis://localhost:6379/0"
+  key = "iter:worker"
+}
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }}
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt when metadata.kind == "issue" """
+  A new issue was opened in {{metadata.repo}}.
+  Investigate and post your findings as a comment.
+"""
+
+prompt when metadata.kind == "ci_fix" """
+  CI is failing on {{metadata.repo}}. Diagnose the failure and prepare a patch.
+"""
+
+prompt when metadata.kind != "issue" && metadata.kind != "ci_fix" """
+  Unknown signal kind {{metadata.kind}} — log it and exit.
+"""
+
+on workspace_teardown_finished { shell "./scripts/persist-worker-run.sh {{signal.id}}" }

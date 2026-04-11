@@ -1,0 +1,83 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-once-hook.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [],
+                includes: [],
+                preserve_mtime: true,
+                apply_back: ApplyBackDecl {
+                    mode: Sync,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..114,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 116..168,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 170..226,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "Iterate on the workspace once.",
+            },
+            span: 228..267,
+        },
+    ],
+    events: [
+        Spanned {
+            node: EventHandlerDecl {
+                event: RunnerStarting,
+                actions: [
+                    Shell(
+                        "test -d .iter/wt || git worktree add .iter/wt HEAD",
+                    ),
+                ],
+            },
+            span: 269..352,
+        },
+        Spanned {
+            node: EventHandlerDecl {
+                event: RunnerFinished,
+                actions: [
+                    Shell(
+                        "echo 'runner done; worktree retained at .iter/wt'",
+                    ),
+                ],
+            },
+            span: 354..436,
+        },
+    ],
+}

@@ -1,0 +1,4 @@
+agent claude {
+  mode = print
+}
+runner { continue_on_error = false  behavior = wait }

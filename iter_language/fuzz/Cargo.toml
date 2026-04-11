@@ -1,0 +1,43 @@
+[package]
+name = "iter_language-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pest = "2"
+pest_derive = "2"
+
+[dependencies.iter_language]
+path = ".."
+
+# Prevent cargo-fuzz workspace-member inference.
+[workspace]
+
+[[bin]]
+name = "fuzz_parse"
+path = "fuzz_targets/fuzz_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_diff"
+path = "fuzz_targets/fuzz_diff.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_lex_only"
+path = "fuzz_targets/fuzz_lex_only.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

@@ -1,0 +1,74 @@
+---
+source: iter_language/tests/conformance.rs
+description: iter-explore.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [],
+                includes: [],
+                preserve_mtime: true,
+                apply_back: ApplyBackDecl {
+                    mode: Sync,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..114,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Interactive,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 116..174,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Loop {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: None,
+            },
+            span: 176..232,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "Continue improving iter. When you believe the iteration is complete, write \"ITER_DONE\".",
+            },
+            span: 234..338,
+        },
+    ],
+    events: [
+        Spanned {
+            node: EventHandlerDecl {
+                event: WorkspaceTeardownFinished,
+                actions: [
+                    Shell(
+                        "./scripts/on-torndown.sh {{signal.id}}",
+                    ),
+                ],
+            },
+            span: 340..423,
+        },
+    ],
+}

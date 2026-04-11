@@ -1,0 +1,2 @@
+queue redis { }
+runner { continue_on_error = false  behavior = wait }

@@ -1,0 +1,46 @@
+error: suppressing `clippy::needless_return` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:14:9
+   |
+LL | #[allow(clippy::needless_return)]
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[deny(no_lint_suppression)]` on by default
+
+error: suppressing `clippy::all` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:19:9
+   |
+LL | #[allow(clippy::all)]
+   |         ^^^^^^^^^^^
+
+error: suppressing `clippy::pedantic` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:22:9
+   |
+LL | #[allow(clippy::pedantic)]
+   |         ^^^^^^^^^^^^^^^^
+
+error: suppressing `clippy::needless_return` via `#[expect(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:27:10
+   |
+LL | #[expect(clippy::needless_return)]
+   |          ^^^^^^^^^^^^^^^^^^^^^^^
+
+error: suppressing `no_std_print` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:34:9
+   |
+LL | #[allow(no_std_print)]
+   |         ^^^^^^^^^^^^
+
+error: suppressing `no_std_print` via `#[expect(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:37:10
+   |
+LL | #[expect(no_std_print)]
+   |          ^^^^^^^^^^^^
+
+error: suppressing `clippy::needless_return` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
+  --> $DIR/main.rs:45:20
+   |
+LL | #[allow(dead_code, clippy::needless_return, unused_variables)]
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 7 previous errors
+

@@ -1,0 +1,68 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-webhook-inherit.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "hook",
+                decl: Webhook {
+                    host: Some(
+                        "127.0.0.1",
+                    ),
+                    port: Some(
+                        9000,
+                    ),
+                    bind: None,
+                    path: "/hooks",
+                    secret: Some(
+                        File(
+                            "./secret.txt",
+                        ),
+                    ),
+                    routes: [
+                        WebhookRoute {
+                            event_pattern: "push",
+                            when: None,
+                            priority: None,
+                            metadata: [
+                                (
+                                    "repo",
+                                    "demo",
+                                ),
+                            ],
+                        },
+                    ],
+                    base_metadata: [
+                        (
+                            "kind",
+                            "github",
+                        ),
+                    ],
+                    priority: Some(
+                        High,
+                    ),
+                    max_signals: None,
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..322,
+        },
+    ],
+}

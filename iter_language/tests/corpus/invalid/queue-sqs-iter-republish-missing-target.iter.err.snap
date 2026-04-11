@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-sqs-iter-republish-missing-target.iter
+---
+Error: dlq kind `iter_republish` requires a `target { ... }` block
+   ╭─[queue-sqs-iter-republish-missing-target.iter:1:7]
+   │
+ 1 │ queue sqs {
+   │       ─┬─  
+   │        ╰─── dlq kind `iter_republish` requires a `target { ... }` block
+   │ 
+   │ Help: add `target { kind = "sqs" queue_url = "..." }`
+───╯

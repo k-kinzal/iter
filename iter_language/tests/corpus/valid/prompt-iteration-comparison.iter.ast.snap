@@ -1,0 +1,102 @@
+---
+source: iter_language/tests/conformance.rs
+description: prompt-iteration-comparison.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [],
+                includes: [],
+                preserve_mtime: true,
+                apply_back: ApplyBackDecl {
+                    mode: Sync,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..114,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 116..168,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: true,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 170..225,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationCmp {
+                        field: Count,
+                        modulus: None,
+                        op: Eq,
+                        rhs: 1,
+                    },
+                ),
+                body: "first run",
+            },
+            span: 227..271,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationCmp {
+                        field: ConsecutiveFailures,
+                        modulus: None,
+                        op: Ge,
+                        rhs: 3,
+                    },
+                ),
+                body: "three failures in a row",
+            },
+            span: 272..345,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationCmp {
+                        field: PreviousExitCode,
+                        modulus: None,
+                        op: Neq,
+                        rhs: 0,
+                    },
+                ),
+                body: "previous turn errored exit={{iteration.previous_exit_code}}",
+            },
+            span: 346..453,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "regular tick n={{iteration.count}}",
+            },
+            span: 454..497,
+        },
+    ],
+    events: [],
+}

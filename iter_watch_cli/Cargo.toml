@@ -1,0 +1,39 @@
+[package]
+name = "iter_watch_cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "iter-watch — single-process filesystem watch trigger that publishes signals into an iter queue"
+
+[lib]
+name = "iter_watch_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "iter-watch"
+path = "src/main.rs"
+
+[dependencies]
+iter_core.workspace = true
+iter_tracing.workspace = true
+iter_trigger.workspace = true
+chrono.workspace = true
+globset.workspace = true
+notify.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread", "process"] }
+
+[lints]
+workspace = true

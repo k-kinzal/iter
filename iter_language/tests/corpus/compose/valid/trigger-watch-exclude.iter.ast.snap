@@ -1,0 +1,47 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-watch-exclude.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "sessions",
+                decl: Watch {
+                    dir: "/Users/me/Library/Logs/Agents",
+                    include: [
+                        "**/*.jsonl",
+                    ],
+                    exclude: [
+                        "self-loop/**",
+                        "tmp/**",
+                    ],
+                    per_file: true,
+                    cooldown_secs: Some(
+                        1800,
+                    ),
+                    base_metadata: [],
+                    priority: None,
+                    max_signals: None,
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..241,
+        },
+    ],
+}

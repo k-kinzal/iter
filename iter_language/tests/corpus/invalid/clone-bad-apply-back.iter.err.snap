@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: clone-bad-apply-back.iter
+---
+Error: unknown apply_back mode `teleport`
+   ╭─[clone-bad-apply-back.iter:6:12]
+   │
+ 6 │     mode = teleport
+   │            ────┬───  
+   │                ╰───── unknown apply_back mode `teleport`
+   │ 
+   │ Help: valid modes: sync, discard, merge
+───╯

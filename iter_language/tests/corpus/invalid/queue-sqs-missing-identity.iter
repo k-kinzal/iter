@@ -1,0 +1,15 @@
+queue sqs {
+  region = "us-east-1"
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

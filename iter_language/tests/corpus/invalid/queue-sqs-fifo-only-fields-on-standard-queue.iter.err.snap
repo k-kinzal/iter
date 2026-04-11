@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-sqs-fifo-only-fields-on-standard-queue.iter
+---
+Error: queue sqs: producer field(s) `message_group_id`, `message_deduplication_id` require a FIFO queue
+   ╭─[queue-sqs-fifo-only-fields-on-standard-queue.iter:1:7]
+   │
+ 1 │ queue sqs {
+   │       ─┬─  
+   │        ╰─── queue sqs: producer field(s) `message_group_id`, `message_deduplication_id` require a FIFO queue
+   │ 
+   │ Help: use a `.fifo` queue URL/name or set `fifo = true`; otherwise drop these fields
+───╯

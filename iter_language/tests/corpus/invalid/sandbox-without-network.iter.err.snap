@@ -1,0 +1,14 @@
+---
+source: iter_language/tests/conformance.rs
+description: sandbox-without-network.iter
+---
+Error: `policy` block requires `network`
+   ╭─[sandbox-without-network.iter:5:38]
+   │
+ 5 │ ╭─▶   apply_back { mode = sync }  policy {
+ 6 │ ├─▶   }
+   │ │         
+   │ ╰───────── `policy` block requires `network`
+   │     
+   │     Help: iter no longer defaults sandbox network access — set `network = off`, `network = all`, or `network = [ "host1", ... ]`. Agent-required hosts are merged in automatically; list only project-additional hosts.
+───╯

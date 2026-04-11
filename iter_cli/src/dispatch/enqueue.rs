@@ -1,0 +1,396 @@
+//! `iter enqueue` — push a single [`Signal`] onto a queue.
+//!
+//! Resolves a queue from one of three sources, in this priority:
+//!
+//! 1. `--queue-url URL` — scheme-dispatched to a [`QueueDecl`] variant and
+//!    built via [`build_queue`].
+//! 2. `-f PATH` (or auto-detected `./compose.iter`/`./Iterfile`) — built
+//!    from the file's queue declaration. Compose files with multiple
+//!    queues require `--queue NAME` to disambiguate.
+//!
+//! Metadata pairs are parsed as `KEY=VALUE` and stored as
+//! [`MetadataValue::String`]. Integer / Bool / JSON values are not accepted;
+//! the runner template renderer interpolates everything as strings anyway.
+
+use std::path::{Path, PathBuf};
+
+use iter_compose::{AnyQueue, ComposeError, build_queue, is_compose_filename, load_compose};
+use iter_core::queue::Priority;
+use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
+use iter_core::{Config, Queue};
+use iter_language::{ComposeRoot, NamedQueue, QueueDecl};
+use percent_encoding::percent_decode_str;
+use thiserror::Error;
+
+use crate::cli::{EnqueueArgs, EnqueuePriority};
+use crate::dispatch::compose::compose_error_exit_code;
+use crate::dispatch::load::DEFAULT_ITERFILE;
+use crate::output::{IntoExitCode, cli_println, exit_codes};
+use crate::telemetry;
+
+/// Errors produced by `iter enqueue`.
+#[derive(Debug, Error)]
+pub enum EnqueueCmdError {
+    /// Resolving / building the queue failed.
+    #[error(transparent)]
+    Compose(#[from] ComposeError),
+    /// A `-m KEY=VALUE` argument did not contain a `=` separator.
+    #[error("metadata `{0}` is missing `=`; expected KEY=VALUE")]
+    MetadataMissingSeparator(String),
+    /// A metadata key was rejected by [`MetadataKey::new`].
+    #[error("invalid metadata key: {0}")]
+    MetadataKey(#[from] MetadataError),
+    /// Neither `--queue-url`, `-f`, nor an auto-detected file is available.
+    #[error(
+        "no queue source: pass --queue-url URL, -f PATH, or run from a directory \
+         containing compose.iter or Iterfile"
+    )]
+    NoQueueSource,
+    /// The compose file declares multiple queues but `--queue NAME` was not
+    /// supplied.
+    #[error("compose file declares multiple queues ({names}); pass --queue NAME to choose one")]
+    AmbiguousQueue {
+        /// Comma-separated declared queue names, for the diagnostic.
+        names: String,
+    },
+    /// The compose file does not contain a queue with the requested name.
+    #[error("queue `{name}` is not declared in {}", path.display())]
+    UnknownQueue {
+        /// Resolved compose path.
+        path: PathBuf,
+        /// Requested queue name.
+        name: String,
+    },
+    /// The compose file declared no queues at all.
+    #[error("compose file {} declares no queues", path.display())]
+    NoQueuesInCompose {
+        /// Resolved compose path.
+        path: PathBuf,
+    },
+    /// The provided `--queue` flag was used with an Iterfile (single-queue file).
+    #[error("--queue is only meaningful when -f points at a compose.iter file")]
+    QueueFlagNotApplicable,
+    /// Pushing the signal onto the queue failed.
+    #[error("queueing signal: {0}")]
+    Queue(String),
+    /// The `--queue-url` scheme is not supported.
+    #[error(
+        "unsupported queue url `{0}`; expected one of memory://, file:///path, redis://..., rediss://..."
+    )]
+    UnsupportedQueueUrl(String),
+    /// `file://` URL with no path component.
+    #[error("file:// queue url is missing a path")]
+    FileUrlMissingPath,
+    /// Iterfile loaded via `-f` had no `queue` section.
+    #[error("iterfile {} has no `queue` section", path.display())]
+    IterfileMissingQueue {
+        /// Iterfile path.
+        path: PathBuf,
+    },
+    /// Loading or parsing an Iterfile failed.
+    #[error(transparent)]
+    Load(#[from] super::load::LoadError),
+}
+
+impl IntoExitCode for EnqueueCmdError {
+    fn exit_code(&self) -> i32 {
+        match self {
+            Self::MetadataMissingSeparator(_)
+            | Self::MetadataKey(_)
+            | Self::NoQueueSource
+            | Self::AmbiguousQueue { .. }
+            | Self::UnknownQueue { .. }
+            | Self::NoQueuesInCompose { .. }
+            | Self::QueueFlagNotApplicable
+            | Self::UnsupportedQueueUrl(_)
+            | Self::FileUrlMissingPath
+            | Self::IterfileMissingQueue { .. } => exit_codes::USER_INPUT,
+            Self::Load(e) => e.exit_code(),
+            Self::Compose(e) => compose_error_exit_code(e),
+            Self::Queue(_) => exit_codes::RUNTIME,
+        }
+    }
+}
+
+/// Handle `iter enqueue`.
+///
+/// Returns `Ok(())` once the signal has been accepted by the queue. The
+/// signal id is printed to stdout on success.
+///
+/// # Errors
+///
+/// See [`EnqueueCmdError`].
+pub async fn run_enqueue(args: EnqueueArgs, config: Config) -> Result<(), EnqueueCmdError> {
+    let _telemetry_guard = telemetry::init(false, &config);
+
+    let queue = resolve_queue(&args)?;
+    let metadata = parse_metadata(&args.metadata)?;
+    let priority = map_priority(args.priority);
+    let signal = Signal::new(metadata);
+    let id = signal.id();
+
+    queue
+        .queue(signal, priority)
+        .await
+        .map_err(|e| EnqueueCmdError::Queue(e.to_string()))?;
+
+    cli_println!("{id}");
+    Ok(())
+}
+
+fn map_priority(p: EnqueuePriority) -> Priority {
+    match p {
+        EnqueuePriority::Low => Priority::LOW,
+        EnqueuePriority::Normal => Priority::NORMAL,
+        EnqueuePriority::High => Priority::HIGH,
+        EnqueuePriority::Critical => Priority::CRITICAL,
+    }
+}
+
+fn parse_metadata(items: &[String]) -> Result<Metadata, EnqueueCmdError> {
+    let mut metadata = Metadata::new();
+    for item in items {
+        let (k, v) = item
+            .split_once('=')
+            .ok_or_else(|| EnqueueCmdError::MetadataMissingSeparator(item.clone()))?;
+        let key = MetadataKey::new(k)?;
+        metadata.insert(key, MetadataValue::String(v.to_owned()));
+    }
+    Ok(metadata)
+}
+
+fn resolve_queue(args: &EnqueueArgs) -> Result<AnyQueue, EnqueueCmdError> {
+    if let Some(url) = args.queue_url.as_deref() {
+        if args.queue.is_some() {
+            return Err(EnqueueCmdError::QueueFlagNotApplicable);
+        }
+        return queue_from_url(url);
+    }
+
+    let path = match args.file.as_deref() {
+        Some(p) => p.to_path_buf(),
+        None => match autodetect_file() {
+            Some(p) => p,
+            None => return Err(EnqueueCmdError::NoQueueSource),
+        },
+    };
+
+    if is_compose_filename(&path) {
+        resolve_from_compose(&path, args.queue.as_deref())
+    } else {
+        if args.queue.is_some() {
+            return Err(EnqueueCmdError::QueueFlagNotApplicable);
+        }
+        let decl = load_iterfile_queue(&path)?;
+        Ok(build_queue(&decl).map_err(ComposeError::from)?)
+    }
+}
+
+fn queue_from_url(url: &str) -> Result<AnyQueue, EnqueueCmdError> {
+    if url == "memory://" || url == "memory:" {
+        return Ok(build_queue(&QueueDecl::Memory).map_err(ComposeError::from)?);
+    }
+    if let Some(rest) = url.strip_prefix("file://") {
+        if rest.is_empty() {
+            return Err(EnqueueCmdError::FileUrlMissingPath);
+        }
+        return Ok(build_queue(&QueueDecl::File {
+            path: rest.to_string(),
+        })
+        .map_err(ComposeError::from)?);
+    }
+    if url.starts_with("redis://") || url.starts_with("rediss://") {
+        let (url_part, key) = split_redis_url(url);
+        return Ok(
+            build_queue(&QueueDecl::Redis { url: url_part, key }).map_err(ComposeError::from)?
+        );
+    }
+    Err(EnqueueCmdError::UnsupportedQueueUrl(url.to_owned()))
+}
+
+fn split_redis_url(url: &str) -> (String, String) {
+    match url.split_once('?') {
+        Some((base, query)) => {
+            let mut key = "iter".to_string();
+            for pair in query.split('&') {
+                if let Some((k, v)) = pair.split_once('=')
+                    && k == "key"
+                {
+                    key = percent_decode_str(v).decode_utf8_lossy().into_owned();
+                }
+            }
+            (base.to_string(), key)
+        }
+        None => (url.to_string(), "iter".to_string()),
+    }
+}
+
+fn load_iterfile_queue(path: &Path) -> Result<QueueDecl, EnqueueCmdError> {
+    let loaded = super::load::load_iterfile(Some(path))?;
+    loaded
+        .iterfile
+        .queue
+        .map(|q| q.node)
+        .ok_or_else(|| EnqueueCmdError::IterfileMissingQueue {
+            path: path.to_path_buf(),
+        })
+}
+
+fn autodetect_file() -> Option<PathBuf> {
+    let compose = PathBuf::from(iter_compose::DEFAULT_COMPOSE_FILE);
+    if compose.exists() {
+        return Some(compose);
+    }
+    let iterfile = PathBuf::from(DEFAULT_ITERFILE);
+    if iterfile.exists() {
+        return Some(iterfile);
+    }
+    None
+}
+
+fn resolve_from_compose(
+    path: &Path,
+    queue_name: Option<&str>,
+) -> Result<AnyQueue, EnqueueCmdError> {
+    let root: ComposeRoot = load_compose(path)?;
+    if root.queues.is_empty() {
+        return Err(EnqueueCmdError::NoQueuesInCompose {
+            path: path.to_path_buf(),
+        });
+    }
+
+    let decl = match queue_name {
+        Some(name) => {
+            find_named_queue(&root, name).ok_or_else(|| EnqueueCmdError::UnknownQueue {
+                path: path.to_path_buf(),
+                name: name.to_owned(),
+            })?
+        }
+        None => {
+            if root.queues.len() == 1 {
+                &root.queues[0].node
+            } else {
+                let names = root
+                    .queues
+                    .iter()
+                    .map(|q| q.node.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(EnqueueCmdError::AmbiguousQueue { names });
+            }
+        }
+    };
+
+    Ok(build_queue(&decl.decl).map_err(ComposeError::from)?)
+}
+
+fn find_named_queue<'a>(root: &'a ComposeRoot, name: &str) -> Option<&'a NamedQueue> {
+    root.queues.iter().map(|q| &q.node).find(|q| q.name == name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_metadata_accepts_kv_pairs() {
+        let m = parse_metadata(&["a=1".into(), "b=hello".into()]).expect("ok");
+        assert_eq!(m.len(), 2);
+        assert_eq!(
+            m.get_str("a"),
+            Some(&MetadataValue::String("1".to_string()))
+        );
+        assert_eq!(
+            m.get_str("b"),
+            Some(&MetadataValue::String("hello".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_metadata_value_may_contain_equals() {
+        let m = parse_metadata(&["expr=a=b=c".into()]).expect("ok");
+        assert_eq!(
+            m.get_str("expr"),
+            Some(&MetadataValue::String("a=b=c".to_string()))
+        );
+    }
+
+    #[test]
+    fn parse_metadata_rejects_missing_separator() {
+        let err = parse_metadata(&["bare".into()]).expect_err("must fail");
+        assert!(matches!(err, EnqueueCmdError::MetadataMissingSeparator(_)));
+    }
+
+    #[test]
+    fn parse_metadata_rejects_invalid_key() {
+        let err = parse_metadata(&["not a key=v".into()]).expect_err("must fail");
+        assert!(matches!(err, EnqueueCmdError::MetadataKey(_)));
+    }
+
+    #[test]
+    fn map_priority_translates_all_variants() {
+        assert_eq!(map_priority(EnqueuePriority::Low), Priority::LOW);
+        assert_eq!(map_priority(EnqueuePriority::Normal), Priority::NORMAL);
+        assert_eq!(map_priority(EnqueuePriority::High), Priority::HIGH);
+        assert_eq!(map_priority(EnqueuePriority::Critical), Priority::CRITICAL);
+    }
+
+    #[test]
+    fn queue_from_url_memory_colon_alias() {
+        let q = queue_from_url("memory:").expect("memory: alias");
+        assert!(matches!(q, AnyQueue::InMemory(_)));
+    }
+
+    #[test]
+    fn queue_from_url_memory_scheme() {
+        let q = queue_from_url("memory://").expect("memory://");
+        assert!(matches!(q, AnyQueue::InMemory(_)));
+    }
+
+    #[test]
+    fn queue_from_url_file_requires_path() {
+        let err = queue_from_url("file://").expect_err("must fail");
+        assert!(matches!(err, EnqueueCmdError::FileUrlMissingPath));
+    }
+
+    #[test]
+    fn queue_from_url_file_absolute() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("queue");
+        let url = format!("file://{}", path.display());
+        let q = queue_from_url(&url).expect("file queue");
+        assert!(matches!(q, AnyQueue::File(_)));
+    }
+
+    #[test]
+    fn queue_from_url_unknown_scheme_errors() {
+        let err = queue_from_url("kafka://x").expect_err("must fail");
+        assert!(matches!(err, EnqueueCmdError::UnsupportedQueueUrl(_)));
+    }
+
+    #[test]
+    fn split_redis_url_extracts_percent_decoded_key() {
+        let (base, key) = split_redis_url("redis://host:6379/0?key=my%20queue");
+        assert_eq!(base, "redis://host:6379/0");
+        assert_eq!(key, "my queue");
+    }
+
+    #[test]
+    fn split_redis_url_defaults_key_to_iter() {
+        let (base, key) = split_redis_url("redis://host:6379/0");
+        assert_eq!(base, "redis://host:6379/0");
+        assert_eq!(key, "iter");
+    }
+
+    #[test]
+    fn split_redis_url_handles_special_chars_in_key() {
+        let (_, key) = split_redis_url("rediss://h?key=main%26aux");
+        assert_eq!(key, "main&aux");
+    }
+
+    #[test]
+    fn split_redis_url_ignores_non_key_params() {
+        let (_, key) = split_redis_url("redis://h?other=x");
+        assert_eq!(key, "iter");
+    }
+}

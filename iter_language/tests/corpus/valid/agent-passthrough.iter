@@ -1,0 +1,19 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent copilot {
+  mode       = print
+  command    = "/opt/bin/gh"
+  subcommand = ["copilot", "explain"]
+  args       = ["--no-color", "--quiet"]
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Pass-through smoke test."

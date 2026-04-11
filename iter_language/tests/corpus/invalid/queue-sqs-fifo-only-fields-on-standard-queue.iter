@@ -1,0 +1,21 @@
+queue sqs {
+  queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/iter-signals"
+  region    = "us-east-1"
+
+  producer {
+    message_group_id        = from_metadata("workspace")
+    message_deduplication_id = from_metadata("dedup_key")
+  }
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

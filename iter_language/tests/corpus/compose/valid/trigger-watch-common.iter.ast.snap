@@ -1,0 +1,53 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-watch-common.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "edits",
+                decl: Watch {
+                    dir: "./src",
+                    include: [
+                        "*.rs",
+                    ],
+                    exclude: [],
+                    per_file: true,
+                    cooldown_secs: Some(
+                        2,
+                    ),
+                    base_metadata: [
+                        (
+                            "source",
+                            "edits",
+                        ),
+                    ],
+                    priority: Some(
+                        Normal,
+                    ),
+                    max_signals: Some(
+                        10,
+                    ),
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..253,
+        },
+    ],
+}

@@ -1,0 +1,66 @@
+queue kinesis {
+  stream_arn = "arn:aws:kinesis:us-east-1:123456789012:stream/iter-signals"
+  region     = "us-east-1"
+  endpoint_url = "https://kinesis.us-east-1.amazonaws.com"
+
+  credentials {
+    kind = "default"
+  }
+
+  http_client {
+    connect_timeout = 5s
+    operation_timeout = 30s
+  }
+
+  producer {
+    partition_key_strategy = from_metadata("workspace")
+    ordering = "strict_per_key"
+    batch_size = 200
+    batch_max_bytes = 5242880
+    batch_linger = 1s
+    aggregation = false
+  }
+
+  consumer {
+    consumer_mode = "polling"
+    iterator_type = "TRIM_HORIZON"
+    fetch_max_records = 1000
+    poll_interval = 1s
+    shard_discovery_interval = 60s
+  }
+
+  checkpoint {
+    store = "file"
+    path = "/var/lib/iter/kinesis-cp"
+    interval = 30s
+    lease_duration = 30s
+  }
+
+  retry {
+    mode = "adaptive"
+    max_attempts = 5
+  }
+
+  dlq {
+    kind = "iter_republish"
+    max_receive_count = 5
+    target {
+      kind = "s3"
+      bucket = "iter-poison-records"
+      prefix = "kinesis/iter-signals/"
+      region = "us-east-1"
+    }
+  }
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

@@ -1,0 +1,23 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back {
+    mode = discard
+    excludes = ["*.md"]
+  }
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "iterate"

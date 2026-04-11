@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: clone-without-excludes.iter
+---
+Error: workspace clone requires `excludes`
+   ╭─[clone-without-excludes.iter:1:11]
+   │
+ 1 │ workspace clone {
+   │           ──┬──  
+   │             ╰──── workspace clone requires `excludes`
+   │ 
+   │ Help: iter no longer ships a default exclude list — `["target", "node_modules", ".venv"]` is a project-shaped decision. Use `excludes = []` for "no exclusions" or list the directories you want skipped.
+───╯

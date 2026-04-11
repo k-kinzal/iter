@@ -1,0 +1,72 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-sqs-minimal.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Sqs(
+                SqsConfig {
+                    identity: Url(
+                        "https://sqs.us-east-1.amazonaws.com/123456789012/iter-signals",
+                    ),
+                    region: Some(
+                        "us-east-1",
+                    ),
+                    endpoint_url: None,
+                    fifo: None,
+                    use_fips: None,
+                    use_dual_stack: None,
+                    sts_regional_endpoints: None,
+                    app_name: None,
+                    credentials: None,
+                    http_client: None,
+                    producer: None,
+                    consumer: None,
+                    retry: None,
+                    dlq: None,
+                },
+            ),
+            span: 0..114,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 116..148,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 150..202,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 226..279,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 204..225,
+        },
+    ],
+    events: [],
+}

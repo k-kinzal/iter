@@ -1,0 +1,33 @@
+{
+  "advisorModel": "off",
+  "permissions": {
+    "deny": [
+      "Read(.claude/**)",
+      "Read(./.claude/**)",
+      "Edit(.claude/**)",
+      "Edit(./.claude/**)",
+      "Edit(./AGENTS.md)",
+      "Edit(./CLAUDE.md)",
+      "Write(.claude/**)",
+      "Write(./.claude/**)",
+      "Write(./AGENTS.md)",
+      "Write(./CLAUDE.md)",
+      "Bash(*.claude/*)",
+      "Bash(* .claude *)",
+      "Bash(*AGENTS.md*)",
+      "Bash(*CLAUDE.md*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/request-codex-review-loop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

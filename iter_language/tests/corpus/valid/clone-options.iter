@@ -1,0 +1,20 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = ["build-output", "vendor-cache", ".scratch", ".vcs"]
+  includes = [".vcs"]
+  preserve_mtime = false
+  apply_back { mode = merge }}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "explore"

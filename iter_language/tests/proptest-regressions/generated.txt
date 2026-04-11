@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3948fa820b4aac9ebdb5403f34d665571f7366cb3b698fd27434d160393736ab # shrinks to file = RawFile { sections: [Prompt { keyword_span: 0..0, guard: Some(And(MetadataNeq { key: "a", value: "", span: 0..0 }, And(MetadataNeq { key: "a", value: "", span: 0..0 }, MetadataNeq { key: "a", value: "", span: 0..0 }, 0..0), 0..0)), body: "", body_span: 0..0, span: 0..0 }] }

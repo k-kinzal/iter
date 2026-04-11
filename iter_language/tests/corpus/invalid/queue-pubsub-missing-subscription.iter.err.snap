@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-pubsub-missing-subscription.iter
+---
+Error: queue pubsub requires `subscription`
+   ╭─[queue-pubsub-missing-subscription.iter:1:7]
+   │
+ 1 │ queue pubsub {
+   │       ───┬──  
+   │          ╰──── queue pubsub requires `subscription`
+   │ 
+   │ Help: add `subscription = "..."`
+───╯

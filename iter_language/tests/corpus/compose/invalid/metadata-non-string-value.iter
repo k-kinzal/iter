@@ -1,0 +1,9 @@
+queue main file { path = "./.iter/queue" }
+
+trigger nightly cron {
+    schedule = "0 0 * * *"
+    metadata {
+        retries = 3
+    }
+    target = main
+}

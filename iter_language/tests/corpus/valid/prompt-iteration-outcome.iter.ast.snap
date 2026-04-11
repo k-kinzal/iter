@@ -1,0 +1,93 @@
+---
+source: iter_language/tests/conformance.rs
+description: prompt-iteration-outcome.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [],
+                includes: [],
+                preserve_mtime: true,
+                apply_back: ApplyBackDecl {
+                    mode: Sync,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..114,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 116..168,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: true,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 170..225,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationOutcomeEq {
+                        value: "none",
+                    },
+                ),
+                body: "first iteration",
+            },
+            span: 227..293,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationOutcomeEq {
+                        value: "errored",
+                    },
+                ),
+                body: "recover from previous error",
+            },
+            span: 294..375,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationOutcomeNeq {
+                        value: "success",
+                    },
+                ),
+                body: "non-success path",
+            },
+            span: 376..446,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "regular run after success",
+            },
+            span: 447..481,
+        },
+    ],
+    events: [],
+}

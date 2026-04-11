@@ -1,0 +1,19 @@
+queue main file { path = "./.iter/queue" }
+
+trigger hook webhook {
+    host = "127.0.0.1"
+    port = 9000
+    path = "/hooks"
+    secret = file("./secret.txt")
+    priority = high
+    metadata {
+        kind = "github"
+    }
+    target = main
+
+    on "push" {
+        metadata {
+            repo = "demo"
+        }
+    }
+}

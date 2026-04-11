@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: apply-back-discard-with-filter.iter
+---
+Error: `apply_back.excludes` has no effect when `mode = discard`
+   ╭─[apply-back-discard-with-filter.iter:9:16]
+   │
+ 9 │     excludes = ["*.md"]
+   │                ────┬───  
+   │                    ╰───── `apply_back.excludes` has no effect when `mode = discard`
+   │ 
+   │ Help: remove the field, or change `mode` from `discard` to `sync` or `merge` so the filter has somewhere to apply.
+───╯

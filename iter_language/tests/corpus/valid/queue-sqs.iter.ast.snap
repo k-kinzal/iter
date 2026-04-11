@@ -1,0 +1,231 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-sqs.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Sqs(
+                SqsConfig {
+                    identity: Url(
+                        "https://sqs.us-east-1.amazonaws.com/123456789012/iter-signals.fifo",
+                    ),
+                    region: Some(
+                        "us-east-1",
+                    ),
+                    endpoint_url: Some(
+                        "https://sqs.us-east-1.amazonaws.com",
+                    ),
+                    fifo: Some(
+                        true,
+                    ),
+                    use_fips: Some(
+                        false,
+                    ),
+                    use_dual_stack: Some(
+                        false,
+                    ),
+                    sts_regional_endpoints: Some(
+                        "regional",
+                    ),
+                    app_name: Some(
+                        "iter",
+                    ),
+                    credentials: Some(
+                        SqsCredentials {
+                            kind: AssumeRole {
+                                role_arn: "arn:aws:iam::123456789012:role/iter-runner",
+                                session_name: Some(
+                                    "iter-runner",
+                                ),
+                                external_id: Some(
+                                    EnvVar(
+                                        "ITER_AWS_EXTERNAL_ID",
+                                    ),
+                                ),
+                                duration_seconds: Some(
+                                    3600,
+                                ),
+                                source_profile: Some(
+                                    "default",
+                                ),
+                            },
+                        },
+                    ),
+                    http_client: Some(
+                        SqsHttpClient {
+                            connect_timeout_secs: Some(
+                                5,
+                            ),
+                            read_timeout_secs: Some(
+                                30,
+                            ),
+                            operation_timeout_secs: Some(
+                                60,
+                            ),
+                            operation_attempt_timeout_secs: Some(
+                                30,
+                            ),
+                            tcp_keepalive_secs: Some(
+                                60,
+                            ),
+                            max_idle_connections_per_host: Some(
+                                10,
+                            ),
+                            connection_pool_idle_timeout_secs: Some(
+                                90,
+                            ),
+                            proxy_url: Some(
+                                "http://proxy.example.com:3128",
+                            ),
+                            no_proxy: Some(
+                                [
+                                    "localhost",
+                                    "127.0.0.1",
+                                ],
+                            ),
+                        },
+                    ),
+                    producer: Some(
+                        SqsProducer {
+                            delay_seconds: Some(
+                                0,
+                            ),
+                            message_attributes: Some(
+                                [
+                                    (
+                                        "source",
+                                        "iter",
+                                    ),
+                                    (
+                                        "version",
+                                        "1",
+                                    ),
+                                ],
+                            ),
+                            trace_header: Some(
+                                true,
+                            ),
+                            message_group_id: Some(
+                                FromMetadata(
+                                    "workspace",
+                                ),
+                            ),
+                            message_deduplication_id: Some(
+                                FromMetadata(
+                                    "dedup_key",
+                                ),
+                            ),
+                            batch_size: Some(
+                                10,
+                            ),
+                            batch_max_bytes: Some(
+                                262144,
+                            ),
+                            batch_linger_secs: Some(
+                                1,
+                            ),
+                        },
+                    ),
+                    consumer: Some(
+                        SqsConsumer {
+                            visibility_timeout_secs: Some(
+                                60,
+                            ),
+                            wait_time_seconds: Some(
+                                20,
+                            ),
+                            max_number_of_messages: Some(
+                                5,
+                            ),
+                            message_attribute_names: Some(
+                                [
+                                    "All",
+                                ],
+                            ),
+                            message_system_attribute_names: Some(
+                                [
+                                    "AWSTraceHeader",
+                                ],
+                            ),
+                            concurrent_receivers: Some(
+                                4,
+                            ),
+                        },
+                    ),
+                    retry: Some(
+                        RetryPolicyDecl {
+                            mode: Some(
+                                "adaptive",
+                            ),
+                            max_attempts: Some(
+                                5,
+                            ),
+                            initial_backoff_secs: Some(
+                                200,
+                            ),
+                            max_backoff_secs: Some(
+                                30,
+                            ),
+                            try_timeout_secs: Some(
+                                10,
+                            ),
+                            retryable_codes: None,
+                        },
+                    ),
+                    dlq: Some(
+                        DlqPolicyDecl {
+                            kind: Some(
+                                "native",
+                            ),
+                            max_receive_count: None,
+                            reason_template: None,
+                            include_headers: None,
+                            target: None,
+                        },
+                    ),
+                },
+            ),
+            span: 0..1630,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 1632..1664,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 1666..1718,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 1742..1795,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 1720..1741,
+        },
+    ],
+    events: [],
+}

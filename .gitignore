@@ -1,0 +1,35 @@
+# Rust build output
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Coverage and profiling output
+/coverage/
+/tarpaulin-report.html
+/cobertura.xml
+/lcov.info
+*.profraw
+*.profdata
+
+# iter local runtime state
+/.iter/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editors and OS metadata
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local Claude Code state
+/.claude/scheduled_tasks.lock
+/.claude/settings.local.json
+
+# Stray local build artifacts that aren't part of any cargo target output.
+/underscore_field

@@ -1,0 +1,53 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-files-multi.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "feed",
+                decl: Files {
+                    sources: [
+                        Path(
+                            "./a.txt",
+                        ),
+                        Path(
+                            "./b.txt",
+                        ),
+                    ],
+                    no_exit_on_eof: true,
+                    base_metadata: [
+                        (
+                            "source",
+                            "files",
+                        ),
+                    ],
+                    priority: Some(
+                        Low,
+                    ),
+                    max_signals: Some(
+                        200,
+                    ),
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..241,
+        },
+    ],
+}

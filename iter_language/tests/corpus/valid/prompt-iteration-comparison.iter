@@ -1,0 +1,22 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = true
+  behavior = wait
+}
+
+prompt when iteration.count == 1 "first run"
+prompt when iteration.consecutive_failures >= 3 "three failures in a row"
+prompt when iteration.previous_exit_code != 0 "previous turn errored exit={{iteration.previous_exit_code}}"
+prompt "regular tick n={{iteration.count}}"

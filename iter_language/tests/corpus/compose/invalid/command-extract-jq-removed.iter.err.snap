@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: command-extract-jq-removed.iter
+---
+Error: unknown extractor `jq`
+   ╭─[command-extract-jq-removed.iter:5:15]
+   │
+ 5 │     extract = jq(".items[]")
+   │               ───────┬──────  
+   │                      ╰──────── unknown extractor `jq`
+   │ 
+   │ Help: supported: regex("...")
+───╯

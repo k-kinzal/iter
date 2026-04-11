@@ -1,0 +1,31 @@
+---
+source: iter_language/tests/conformance.rs
+description: bad-string.iter
+---
+Error: unterminated string literal: newline before closing `"`
+   ╭─[bad-string.iter:1:26]
+   │
+ 1 │ workspace local { base = "unterminated
+   │                          ──────┬──────  
+   │                                ╰──────── unterminated string literal: newline before closing `"`
+   │ 
+   │ Help: use a triple-quoted string `"""..."""` for multi-line content
+───╯
+
+Error: expected a value, found `}`
+   ╭─[bad-string.iter:2:1]
+   │
+ 2 │ }
+   │ ┬  
+   │ ╰── expected a value, found `}`
+───╯
+
+Error: workspace local requires `base`
+   ╭─[bad-string.iter:1:11]
+   │
+ 1 │ workspace local { base = "unterminated
+   │           ──┬──  
+   │             ╰──── workspace local requires `base`
+   │ 
+   │ Help: add `base = "..."`
+───╯

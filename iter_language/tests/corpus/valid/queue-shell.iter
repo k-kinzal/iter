@@ -1,0 +1,19 @@
+queue shell {
+  enqueue = "redis-cli -u $REDIS_URL ZADD myq $ITER_SIGNAL_PRIORITY -"
+  dequeue = "./scripts/poll-myq.sh"
+  close   = "redis-cli -u $REDIS_URL DEL myq"
+  interpreter = "bash -c"
+  enqueue_timeout = 30s
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

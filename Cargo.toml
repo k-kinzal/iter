@@ -1,0 +1,174 @@
+[workspace]
+resolver = "3"
+members = [
+    "iter_core",
+    "iter_tracing",
+    "iter_language",
+    "iter_trigger",
+    "iter_compose",
+    "iter_cli",
+    "iter_command_cli",
+    "iter_cron_cli",
+    "iter_files_cli",
+    "iter_watch_cli",
+    "iter_webhook_cli",
+]
+# `iter_language/fuzz` is a standalone cargo-fuzz package that requires the
+# nightly toolchain and depends on `libfuzzer-sys`. `lints/` is the dylint
+# custom-lint subworkspace and pins its own nightly toolchain (`rustc-dev`
+# component). Excluding both keeps `cargo build --workspace` stable-toolchain-clean.
+exclude = [
+    "iter_language/fuzz",
+    "lints",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/k-kinzal/iter"
+authors = ["iter contributors"]
+
+[workspace.dependencies]
+# Internal crates
+iter_core = { path = "iter_core", version = "0.1.0" }
+iter_tracing = { path = "iter_tracing", version = "0.1.0" }
+iter_language = { path = "iter_language", version = "0.1.0" }
+iter_trigger = { path = "iter_trigger", version = "0.1.0" }
+iter_compose = { path = "iter_compose", version = "0.1.0" }
+iter_cron_cli = { path = "iter_cron_cli", version = "0.1.0" }
+iter_watch_cli = { path = "iter_watch_cli", version = "0.1.0" }
+iter_command_cli = { path = "iter_command_cli", version = "0.1.0" }
+iter_files_cli = { path = "iter_files_cli", version = "0.1.0" }
+iter_webhook_cli = { path = "iter_webhook_cli", version = "0.1.0" }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+async-trait = "0.1"
+bytes = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Utilities
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+ulid = { version = "1", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.9"
+rand = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.32"
+opentelemetry = "0.31"
+opentelemetry-appender-tracing = { version = "0.31.1", features = ["experimental_metadata_attributes", "experimental_use_tracing_span_context"] }
+opentelemetry-otlp = { version = "0.31", default-features = true }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+handlebars = "6"
+
+# Parser (iter_language)
+chumsky = "0.9"
+ariadne = "0.4"
+
+# Queue
+redis = { version = "0.32", features = ["tokio-comp", "aio"] }
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+aws-sdk-sqs = { version = "1" }
+aws-sdk-kinesis = { version = "1" }
+aws-sdk-dynamodb = { version = "1" }
+aws-sdk-s3 = { version = "1" }
+aws-sigv4 = { version = "1" }
+aws-types = { version = "1" }
+aws-smithy-http-client = { version = "1", features = ["rustls-aws-lc"] }
+aws-smithy-types = { version = "1" }
+aws-smithy-runtime-api = { version = "1" }
+google-cloud-pubsub = { version = "0.30" }
+google-cloud-googleapis = { version = "0.16" }
+google-cloud-auth = { version = "0.20" }
+google-cloud-gax = { version = "0.20" }
+rdkafka = { version = "0.36", features = ["cmake-build", "ssl", "sasl"] }
+azservicebus = { version = "0.21" }
+azure_core = { version = "0.22" }
+azure_identity = { version = "0.22" }
+
+# Trigger
+notify = "6"
+globset = "0.4"
+cron = "0.12"
+axum = "0.7"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+percent-encoding = "2"
+regex = "1"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
+tabwriter = "1"
+
+# System (iter_instance)
+nix = { version = "0.28", features = ["process", "signal", "fs"] }
+libc = "0.2"
+
+# Test
+tempfile = "3"
+insta = { version = "1", features = ["yaml"] }
+pretty_assertions = "1"
+pest = "2"
+pest_derive = "2"
+proptest = "1"
+arbitrary = { version = "1", features = ["derive"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+
+# ---------------------------------------------------------------------------
+# Workspace-wide lint policy.
+#
+# Member crates inherit these via `[lints] workspace = true`. Levels are
+# `warn` so existing code still compiles; promote to `deny` once the
+# baseline is clean (or pass `-D warnings` in CI).
+#
+# Group lints carry `priority = -1` so individual `allow`/`deny` overrides
+# applied below take precedence over the group setting.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_code = "warn"
+unreachable_pub = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+trivial_numeric_casts = "warn"
+let_underscore_drop = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# ---------------------------------------------------------------------------
+# Custom lint libraries (dylint).
+#
+# Run with: `cargo dylint --all --workspace`
+# Install once: `cargo install cargo-dylint dylint-link`
+#
+# Each entry under `libraries` is a path glob to a dylint cdylib crate.
+# New custom lints go under `lints/` and are picked up automatically.
+# See `lints/Cargo.toml` for the lint subworkspace layout.
+# ---------------------------------------------------------------------------
+[workspace.metadata.dylint]
+libraries = [
+    { path = "lints/*" },
+]

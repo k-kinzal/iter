@@ -1,0 +1,23 @@
+---
+source: iter_language/tests/conformance.rs
+description: missing-required-field.iter
+---
+Error: queue redis requires `url`
+   ╭─[missing-required-field.iter:1:7]
+   │
+ 1 │ queue redis { }
+   │       ──┬──  
+   │         ╰──── queue redis requires `url`
+   │ 
+   │ Help: add `url = "..."`
+───╯
+
+Error: queue redis requires `key`
+   ╭─[missing-required-field.iter:1:7]
+   │
+ 1 │ queue redis { }
+   │       ──┬──  
+   │         ╰──── queue redis requires `key`
+   │ 
+   │ Help: add `key = "..."`
+───╯

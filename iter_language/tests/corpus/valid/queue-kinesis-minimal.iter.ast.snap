@@ -1,0 +1,68 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-kinesis-minimal.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Kinesis(
+                KinesisConfig {
+                    identity: Arn(
+                        "arn:aws:kinesis:us-east-1:123456789012:stream/iter-signals",
+                    ),
+                    region: Some(
+                        "us-east-1",
+                    ),
+                    endpoint_url: None,
+                    credentials: None,
+                    http_client: None,
+                    producer: None,
+                    consumer: None,
+                    checkpoint: None,
+                    retry: None,
+                    dlq: None,
+                },
+            ),
+            span: 0..120,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 122..154,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 156..208,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 232..285,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 210..231,
+        },
+    ],
+    events: [],
+}

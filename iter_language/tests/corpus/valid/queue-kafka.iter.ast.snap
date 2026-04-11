@@ -1,0 +1,342 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-kafka.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Kafka(
+                KafkaConfig {
+                    bootstrap_servers: "pkc-12345.us-east-1.aws.confluent.cloud:9092",
+                    client_id: Some(
+                        "iter-runner",
+                    ),
+                    client_rack: Some(
+                        "us-east-1a",
+                    ),
+                    broker_address_family: Some(
+                        "any",
+                    ),
+                    broker_address_ttl_secs: Some(
+                        60,
+                    ),
+                    metadata_max_age_secs: Some(
+                        300,
+                    ),
+                    topic_metadata_refresh_interval_secs: Some(
+                        60,
+                    ),
+                    topic_metadata_refresh_fast_interval_ms: Some(
+                        100,
+                    ),
+                    socket_timeout_secs: Some(
+                        30,
+                    ),
+                    socket_keepalive_enable: Some(
+                        true,
+                    ),
+                    socket_nagle_disable: Some(
+                        false,
+                    ),
+                    socket_max_fails: Some(
+                        3,
+                    ),
+                    reconnect_backoff_ms: Some(
+                        100,
+                    ),
+                    reconnect_backoff_max_ms: Some(
+                        10000,
+                    ),
+                    api_version_request: Some(
+                        true,
+                    ),
+                    api_version_request_timeout_ms: Some(
+                        10000,
+                    ),
+                    security: Some(
+                        KafkaSecurity {
+                            security_protocol: Some(
+                                "sasl_ssl",
+                            ),
+                            sasl_mechanism: Some(
+                                "PLAIN",
+                            ),
+                            sasl_username: Some(
+                                EnvVar(
+                                    "CONFLUENT_API_KEY",
+                                ),
+                            ),
+                            sasl_password: Some(
+                                EnvVar(
+                                    "CONFLUENT_API_SECRET",
+                                ),
+                            ),
+                            sasl_kerberos_service_name: None,
+                            sasl_kerberos_principal: None,
+                            sasl_kerberos_keytab: None,
+                            sasl_kerberos_kinit_cmd: None,
+                            sasl_kerberos_min_time_before_relogin_secs: None,
+                            sasl_oauthbearer_method: None,
+                            sasl_oauthbearer_config: None,
+                            sasl_oauthbearer_client_id: None,
+                            sasl_oauthbearer_client_secret: None,
+                            sasl_oauthbearer_token_endpoint_url: None,
+                            sasl_oauthbearer_scope: None,
+                            sasl_oauthbearer_extensions: None,
+                            enable_sasl_oauthbearer_unsecure_jwt: None,
+                            ssl_ca_location: None,
+                            ssl_certificate_location: None,
+                            ssl_key_location: None,
+                            ssl_key_password: None,
+                            ssl_ca_pem: None,
+                            ssl_certificate_pem: None,
+                            ssl_key_pem: None,
+                            ssl_keystore_location: None,
+                            ssl_keystore_password: None,
+                            ssl_crl_location: None,
+                            ssl_cipher_suites: None,
+                            ssl_curves_list: None,
+                            ssl_sigalgs_list: None,
+                            ssl_endpoint_identification_algorithm: Some(
+                                "https",
+                            ),
+                            enable_ssl_certificate_verification: Some(
+                                true,
+                            ),
+                            ssl_engine_id: None,
+                            ssl_engine_location: None,
+                        },
+                    ),
+                    producer: Some(
+                        KafkaProducer {
+                            topic: Some(
+                                "iter-signals",
+                            ),
+                            acks: Some(
+                                "all",
+                            ),
+                            compression_type: Some(
+                                "zstd",
+                            ),
+                            compression_level: Some(
+                                3,
+                            ),
+                            batch_size_bytes: Some(
+                                16384,
+                            ),
+                            batch_num_messages: Some(
+                                10000,
+                            ),
+                            linger_ms: Some(
+                                20,
+                            ),
+                            queue_buffering_max_messages: Some(
+                                100000,
+                            ),
+                            queue_buffering_max_kbytes: Some(
+                                1048576,
+                            ),
+                            message_max_bytes: Some(
+                                1000000,
+                            ),
+                            message_copy_max_bytes: Some(
+                                65535,
+                            ),
+                            max_in_flight_requests_per_connection: Some(
+                                5,
+                            ),
+                            request_timeout_ms: Some(
+                                30000,
+                            ),
+                            message_timeout_ms: Some(
+                                300000,
+                            ),
+                            delivery_timeout_ms: Some(
+                                120000,
+                            ),
+                            transactional_id: None,
+                            transaction_timeout_ms: None,
+                            enable_idempotence: Some(
+                                true,
+                            ),
+                            enable_gapless_guarantee: Some(
+                                true,
+                            ),
+                            partitioner: Some(
+                                "consistent_random",
+                            ),
+                            message_send_max_retries: Some(
+                                2147483647,
+                            ),
+                            retry_backoff_ms: Some(
+                                100,
+                            ),
+                            retry_backoff_max_ms: Some(
+                                1000,
+                            ),
+                            key_strategy: Some(
+                                FromMetadata(
+                                    "workspace",
+                                ),
+                            ),
+                            headers: Some(
+                                [
+                                    (
+                                        "x-source",
+                                        "iter",
+                                    ),
+                                ],
+                            ),
+                            timestamp_strategy: Some(
+                                "signal_created_at",
+                            ),
+                            partition_strategy: Some(
+                                FromMetadata(
+                                    "partition_key",
+                                ),
+                            ),
+                        },
+                    ),
+                    consumer: Some(
+                        KafkaConsumer {
+                            topics: Some(
+                                [
+                                    "iter-signals",
+                                ],
+                            ),
+                            group_id: Some(
+                                "iter-runner",
+                            ),
+                            group_instance_id: Some(
+                                "iter-1",
+                            ),
+                            auto_offset_reset: Some(
+                                "earliest",
+                            ),
+                            enable_auto_commit: Some(
+                                false,
+                            ),
+                            auto_commit_interval_ms: Some(
+                                5000,
+                            ),
+                            enable_auto_offset_store: Some(
+                                false,
+                            ),
+                            fetch_min_bytes: Some(
+                                1,
+                            ),
+                            fetch_max_bytes: Some(
+                                52428800,
+                            ),
+                            max_partition_fetch_bytes: Some(
+                                1048576,
+                            ),
+                            fetch_wait_max_ms: Some(
+                                500,
+                            ),
+                            fetch_queue_backoff_ms: Some(
+                                100,
+                            ),
+                            session_timeout_ms: Some(
+                                45000,
+                            ),
+                            heartbeat_interval_ms: Some(
+                                3000,
+                            ),
+                            max_poll_interval_ms: Some(
+                                600000,
+                            ),
+                            isolation_level: Some(
+                                "read_committed",
+                            ),
+                            partition_assignment_strategy: Some(
+                                "cooperative-sticky",
+                            ),
+                            check_crcs: Some(
+                                true,
+                            ),
+                            queued_min_messages: Some(
+                                100000,
+                            ),
+                            queued_max_messages_kbytes: Some(
+                                65536,
+                            ),
+                            poll_timeout_ms: Some(
+                                100,
+                            ),
+                        },
+                    ),
+                    exactly_once: Some(
+                        true,
+                    ),
+                    extra_config: Some(
+                        [
+                            (
+                                "client.dns.lookup",
+                                "use_all_dns_ips",
+                            ),
+                        ],
+                    ),
+                    dlq: Some(
+                        DlqPolicyDecl {
+                            kind: Some(
+                                "iter_republish",
+                            ),
+                            max_receive_count: Some(
+                                3,
+                            ),
+                            reason_template: None,
+                            include_headers: None,
+                            target: Some(
+                                Kafka {
+                                    brokers: "pkc-12345.us-east-1.aws.confluent.cloud:9092",
+                                    topic: "iter-signals.dlq",
+                                },
+                            ),
+                        },
+                    ),
+                },
+            ),
+            span: 0..2719,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 2721..2753,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 2755..2807,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 2831..2884,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 2809..2830,
+        },
+    ],
+    events: [],
+}

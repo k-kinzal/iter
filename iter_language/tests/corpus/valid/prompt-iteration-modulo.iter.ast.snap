@@ -1,0 +1,76 @@
+---
+source: iter_language/tests/conformance.rs
+description: prompt-iteration-modulo.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [],
+                includes: [],
+                preserve_mtime: true,
+                apply_back: ApplyBackDecl {
+                    mode: Sync,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..114,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 116..168,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: true,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 170..225,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: Some(
+                    IterationCmp {
+                        field: Count,
+                        modulus: Some(
+                            10,
+                        ),
+                        op: Eq,
+                        rhs: 0,
+                    },
+                ),
+                body: "every-tenth tick n={{iteration.count}}",
+            },
+            span: 227..305,
+        },
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "tick n={{iteration.count}}",
+            },
+            span: 306..341,
+        },
+    ],
+    events: [],
+}

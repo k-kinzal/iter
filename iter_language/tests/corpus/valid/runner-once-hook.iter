@@ -1,0 +1,27 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Iterate on the workspace once."
+
+on runner_starting {
+  shell "test -d .iter/wt || git worktree add .iter/wt HEAD"
+}
+
+on runner_finished {
+  shell "echo 'runner done; worktree retained at .iter/wt'"
+}

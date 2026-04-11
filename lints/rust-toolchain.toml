@@ -1,0 +1,9 @@
+# Pinned to match dylint v5.0.0's reference toolchain. The `rustc-dev` and
+# `llvm-tools-preview` components are required for libraries that link
+# against `rustc_*` crates via `feature(rustc_private)`.
+#
+# Bump in lockstep with `dylint_linting` / `dylint_testing` major versions.
+[toolchain]
+channel = "nightly-2025-09-18"
+components = ["llvm-tools-preview", "rustc-dev", "rust-src"]
+profile = "minimal"

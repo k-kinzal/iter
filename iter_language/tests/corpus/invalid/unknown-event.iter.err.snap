@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: unknown-event.iter
+---
+Error: unknown event name `no_such_event`
+   ╭─[unknown-event.iter:2:4]
+   │
+ 2 │ on no_such_event {
+   │    ──────┬──────  
+   │          ╰──────── unknown event name `no_such_event`
+───╯

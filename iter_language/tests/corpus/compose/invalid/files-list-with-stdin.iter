@@ -1,0 +1,6 @@
+queue main file { path = "./.iter/queue" }
+
+trigger feed files {
+    from = [stdin, "path:./a.txt"]
+    target = main
+}

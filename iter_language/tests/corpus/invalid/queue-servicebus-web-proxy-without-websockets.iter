@@ -1,0 +1,22 @@
+queue servicebus {
+  fully_qualified_namespace = "iter-bus.servicebus.windows.net"
+  entity_kind = "queue"
+  queue_name  = "signals"
+  transport   = "amqp_tcp"
+  web_proxy {
+    url = "http://proxy.corp:3128"
+  }
+  auth { kind = "aad_default" }
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

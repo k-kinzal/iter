@@ -1,0 +1,59 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-passthrough.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 14..46,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Copilot {
+                mode: Print,
+                command: "/opt/bin/gh",
+                subcommand: Some(
+                    [
+                        "copilot",
+                        "explain",
+                    ],
+                ),
+                args: [
+                    "--no-color",
+                    "--quiet",
+                ],
+            },
+            span: 48..194,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 196..252,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "Pass-through smoke test.",
+            },
+            span: 254..287,
+        },
+    ],
+    events: [],
+}

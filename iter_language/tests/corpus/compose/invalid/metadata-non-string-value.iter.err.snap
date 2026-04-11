@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: metadata-non-string-value.iter
+---
+Error: `metadata.retries` must be a string
+   ╭─[metadata-non-string-value.iter:6:19]
+   │
+ 6 │         retries = 3
+   │                   ┬  
+   │                   ╰── `metadata.retries` must be a string
+───╯

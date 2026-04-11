@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger batch files {
+    from = ["path:./inbox.txt"]
+    target = main
+    terminate_on_completion = true
+}

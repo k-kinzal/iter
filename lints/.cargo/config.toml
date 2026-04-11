@@ -1,0 +1,5 @@
+# Use `dylint-link` as the linker so cdylib outputs get the
+# `<name>@<toolchain>` suffix that `cargo dylint` expects.
+# `cargo install dylint-link` provides the binary.
+[target.'cfg(all())']
+linker = "dylint-link"

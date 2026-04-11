@@ -1,0 +1,8 @@
+workspace sandbox {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }  policy {
+  }
+}
+runner { continue_on_error = false  behavior = wait }

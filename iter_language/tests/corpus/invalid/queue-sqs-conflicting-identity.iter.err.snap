@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-sqs-conflicting-identity.iter
+---
+Error: queue sqs: `queue_url` and `queue_name`/`account_id` are mutually exclusive
+   ╭─[queue-sqs-conflicting-identity.iter:1:7]
+   │
+ 1 │ queue sqs {
+   │       ─┬─  
+   │        ╰─── queue sqs: `queue_url` and `queue_name`/`account_id` are mutually exclusive
+   │ 
+   │ Help: set either `queue_url` OR both `queue_name` and `account_id`
+───╯

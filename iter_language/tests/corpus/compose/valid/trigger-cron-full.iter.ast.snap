@@ -1,0 +1,55 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-cron-full.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "nightly",
+                decl: Cron {
+                    schedule: "0 0 * * *",
+                    timezone: Some(
+                        "Asia/Tokyo",
+                    ),
+                    at_startup: true,
+                    catch_up_secs: Some(
+                        300,
+                    ),
+                    jitter_secs: Some(
+                        5,
+                    ),
+                    base_metadata: [
+                        (
+                            "source",
+                            "nightly-cron",
+                        ),
+                    ],
+                    priority: Some(
+                        High,
+                    ),
+                    max_signals: Some(
+                        100,
+                    ),
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..294,
+        },
+    ],
+}

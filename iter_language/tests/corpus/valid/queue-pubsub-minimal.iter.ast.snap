@@ -1,0 +1,69 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-pubsub-minimal.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: PubSub(
+                PubSubConfig {
+                    project: "my-gcp-project",
+                    topic: "iter-signals",
+                    subscription: "iter-runner",
+                    endpoint: None,
+                    user_agent: None,
+                    connect_timeout_secs: None,
+                    request_timeout_secs: None,
+                    keepalive: None,
+                    quota_project: None,
+                    scopes: None,
+                    credentials: None,
+                    publisher: None,
+                    subscriber: None,
+                    initial_seek: None,
+                    dlq: None,
+                },
+            ),
+            span: 0..101,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 103..135,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 137..189,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 213..266,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 191..212,
+        },
+    ],
+    events: [],
+}

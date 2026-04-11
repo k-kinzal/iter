@@ -1,0 +1,40 @@
+[package]
+name = "iter_cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "iter CLI — composition root for the iter agent control framework"
+
+[[bin]]
+name = "iter"
+path = "src/main.rs"
+
+[dependencies]
+iter_core.workspace = true
+iter_tracing.workspace = true
+iter_language.workspace = true
+iter_compose.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+clap.workspace = true
+clap_complete.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+tabwriter.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono = { workspace = true }
+percent-encoding.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+nix = { workspace = true }
+
+[lints]
+workspace = true

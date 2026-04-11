@@ -1,0 +1,43 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-webhook-bind.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "hook",
+                decl: Webhook {
+                    host: None,
+                    port: None,
+                    bind: Some(
+                        "127.0.0.1:9000",
+                    ),
+                    path: "/hooks",
+                    secret: None,
+                    routes: [],
+                    base_metadata: [],
+                    priority: None,
+                    max_signals: None,
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: false,
+            },
+            span: 44..134,
+        },
+    ],
+}

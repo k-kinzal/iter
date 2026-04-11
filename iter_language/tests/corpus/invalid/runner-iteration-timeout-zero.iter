@@ -1,0 +1,20 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = true
+  behavior = wait
+  iteration_timeout_secs = 0
+}
+
+prompt "iterate"

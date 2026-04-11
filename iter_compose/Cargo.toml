@@ -1,0 +1,41 @@
+[package]
+name = "iter_compose"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "iter compose layer — AnyQueue/AnyAgent/AnyWorkspace builders shared by `iter` and per-trigger CLIs"
+
+[lib]
+name = "iter_compose"
+path = "src/lib.rs"
+
+[dependencies]
+iter_core.workspace = true
+iter_tracing.workspace = true
+iter_language.workspace = true
+iter_cron_cli.workspace = true
+iter_watch_cli.workspace = true
+iter_command_cli.workspace = true
+iter_files_cli.workspace = true
+iter_webhook_cli.workspace = true
+chrono.workspace = true
+globset.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_json.workspace = true
+percent-encoding.workspace = true
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+pretty_assertions.workspace = true
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

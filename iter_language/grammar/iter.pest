@@ -1,0 +1,270 @@
+// ============================================================================
+// THE SPEC — iter workflow definition language formal grammar
+// ============================================================================
+//
+// This file is the authoritative grammar for the iter language. It is
+// consumed by `pest_derive::Parser` inside the crate's differential test
+// harness as a second, independent implementation of the surface syntax,
+// and diffed against the hand-written lexer/parser in `src/lexer.rs` and
+// `src/parser.rs` over the conformance corpus, proptest-generated inputs,
+// mutation inputs, and libFuzzer inputs.
+//
+// Stability: changes to this file are part of `iter_language::GRAMMAR_VERSION`
+// and follow semantic versioning against the concrete syntax tree shape
+// returned by `iter_language::parse_to_cst`.
+//
+// Conventions:
+//   * Implicit whitespace (`WHITESPACE`) and comments (`COMMENT`) are skipped
+//     between every term of every non-atomic rule. Atomic rules (prefixed
+//     with `@`) turn that off so lexical tokens stay contiguous — this is
+//     how "no whitespace inside an identifier" is encoded.
+//   * Silent rules (prefixed with `_`) disappear from the parse tree.
+//   * Longest-match for multi-character operators (`==`, `!=`, `&&`, `||`)
+//     is enforced by writing the long form *before* any shorter alternative
+//     in every ordered-choice that could otherwise split the token. Since
+//     the grammar never puts `=` and `==` into the same alternation, and
+//     since every mention of those operators uses the two-character form
+//     directly, a split cannot occur.
+//   * Word boundaries on reserved words are enforced via
+//     `"<word>" ~ !ident_continue`; this is the mechanism that distinguishes
+//     `when` (keyword) from `whenever` (an identifier starting with the
+//     same letters).
+
+// ----------------------------------------------------------------------------
+// Implicit inter-token filler.
+// ----------------------------------------------------------------------------
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ "#" ~ (!"\n" ~ ANY)* }
+
+// ============================================================================
+// Top level
+// ============================================================================
+file = { SOI ~ section* ~ EOI }
+
+// Section dispatch. `prompt`/`on` are cleanly distinguishable from the
+// block-style keywords (`queue`/`workspace`/`agent`/`trigger`/`runner`) by
+// their leading keyword, so ordering matters only for readability.
+section = {
+      prompt_section
+    | on_section
+    | block_section
+}
+
+// ============================================================================
+// Block-style sections: `runner` (no kind) and any other top-level keyword
+// ============================================================================
+// `runner` takes no kind and has an optional body; every other block-style
+// section is `<keyword> <kind> [<kind2>] [{ ... }]`. The parser is
+// intentionally domain-agnostic about which keyword spellings are valid —
+// the semantic layer rejects unknown ones with a tailored diagnostic. The
+// lone exception is `runner` itself, which is split into its own rule
+// because it never carries a leading `kind`.
+//
+// `kind2` (the optional second identifier) is the compose.iter shape
+// `queue main file { ... }`. It is only consumed when followed by a `{`
+// AND is not itself a reserved top-level section keyword — that lookahead
+// disambiguates `queue main file { ... }` (one section, kind2 = file) from
+// `queue main\nfile { ... }` (two sections back-to-back) when the lexer
+// has already discarded the intervening newline.
+block_section = { runner_section | kinded_section }
+
+runner_section = { kw_runner ~ block? }
+kinded_section = {
+      block_keyword
+    ~ ident
+    ~ ( kind2_with_block | block )?
+}
+
+// `kind2 + body` consumed atomically: the second ident only counts when a
+// block immediately follows it. Mirrors the hand-written parser's
+// `peek_at(1) == LBrace` lookahead and the same reserved-keyword filter
+// (see `RESERVED_SECTION_KEYWORDS` in `src/parser/section.rs`).
+kind2_with_block = { !reserved_section_keyword ~ ident ~ block }
+
+reserved_section_keyword = @{
+    ( "queue"
+    | "workspace"
+    | "agent"
+    | "trigger"
+    | "runner"
+    | "service"
+    | "prompt"
+    | "on"
+    ) ~ !ident_continue
+}
+
+// Any identifier that does not collide with a contextual reserved word.
+// `runner` is excluded because `runner_section` handles it. `prompt`/`on`
+// are excluded because they have their own top-level rules; allowing them
+// here would let `prompt { ... }` parse as a generic block on backtrack.
+// `when`/`shell`/`metadata` are contextual block-entry keywords — keeping
+// them out of section-keyword position avoids cross-grammar surprises.
+block_keyword = @{
+    !( ( "runner"
+       | "prompt"
+       | "on"
+       | "when"
+       | "shell"
+       | "metadata"
+       ) ~ !ident_continue )
+    ~ ident_start ~ ident_continue*
+}
+
+// ============================================================================
+// Prompt: `prompt [when <guard>] <string>`
+// ============================================================================
+prompt_section = { kw_prompt ~ prompt_guard? ~ string_literal }
+prompt_guard   = { kw_when ~ guard }
+
+guard       = { guard_or }
+guard_or    = { guard_and  ~ ( "||" ~ guard_and  )* }
+guard_and   = { guard_atom ~ ( "&&" ~ guard_atom )* }
+guard_atom  = { guard_paren | guard_iter | guard_meta }
+guard_paren = { "(" ~ guard_or ~ ")" }
+guard_meta  = { kw_metadata ~ "." ~ ident ~ guard_op ~ string }
+guard_op    = { "==" | "!=" }
+
+// `iteration.<field> [% N] <op> <integer | string>`. The hand-written
+// parser distinguishes numeric and outcome forms by the RHS literal kind;
+// the pest grammar accepts both shapes and lets the semantic layer enforce
+// "string RHS only on `previous_outcome ==`/`!=`" so the two
+// implementations stay differentially equivalent on syntactically valid
+// input.
+//
+// Longest-match for `<=`/`>=` against `<`/`>` is enforced by ordering: the
+// two-character forms appear *before* the one-character forms in
+// `guard_iter_op`.
+guard_iter         = { kw_iteration ~ "." ~ ident ~ guard_iter_modulus? ~ guard_iter_op ~ guard_iter_rhs }
+guard_iter_modulus = { "%" ~ integer }
+guard_iter_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
+guard_iter_rhs     = { integer | string }
+
+// ============================================================================
+// Top-level `on <event>` handler
+// ============================================================================
+on_section = { kw_on ~ ident ~ block }
+
+// ============================================================================
+// Block bodies
+// ============================================================================
+block       = { "{" ~ block_entry* ~ "}" }
+block_entry = { nested_route | action | field }
+
+// `on "<pattern>" [when "<expr>"] { ... }`  (webhook routes).
+nested_route = { kw_on ~ string ~ route_when? ~ block }
+route_when   = { kw_when ~ string }
+
+// `shell "<command>"`  (event-handler action shorthand).
+action = { kw_shell ~ string }
+
+// `<ident> = <value>` OR `<ident> { ... }`  (shorthand nested block).
+//
+// `field_name` excludes the contextual block-entry keywords `on` and
+// `shell`: writing `on = "x"` or `shell = "x"` is NOT a field — it is a
+// malformed route/action, matching the hand-written parser which dispatches
+// on the literal spelling of those words before reaching the field path.
+field      = { field_name ~ field_rhs }
+// `field_name` is a compound-atomic (`$`) rule: no whitespace is allowed
+// between its parts, but the inner `ident` or `string` pair is preserved
+// in the tree so the oracle's lowering pass can pick it up by rule kind.
+//
+// String-literal field names exist for map-shaped DSL surfaces where the
+// natural keys contain characters that aren't legal in identifiers — Kafka
+// header names (`"x-source"`) and librdkafka extra-config keys
+// (`"client.dns.lookup"`) are the motivating cases. Semantic helpers that
+// accept identifier-only fields reject string keys at lowering time; the
+// concrete syntax is uniformly permitted.
+field_name = ${ !(kw_on | kw_shell) ~ (ident | string) }
+field_rhs  = { block | ("=" ~ value) }
+
+// ============================================================================
+// Values
+// ============================================================================
+// Order matters:
+//   * `call` must precede `ident` because a call starts with an identifier.
+//   * `duration` must precede `integer` because both start with digits.
+//   * `boolean` must precede `ident` because `true`/`false` would otherwise
+//     be consumed as bareword identifiers in value position. (They are
+//     intentionally still accepted as identifiers in ident position — see
+//     `ident` below.)
+value = {
+      call
+    | list
+    | block
+    | string_literal
+    | duration
+    | integer
+    | boolean
+    | ident
+}
+
+call      = { ident ~ "(" ~ call_args? ~ ")" }
+call_args = { value ~ ( "," ~ value )* }
+
+list       = { "[" ~ list_items? ~ "]" }
+list_items = { value ~ ( "," ~ value )* }
+
+string_literal = { triple_string | string }
+
+// ============================================================================
+// Reserved keywords (word boundaries enforced)
+// ============================================================================
+kw_queue     = @{ "queue"     ~ !ident_continue }
+kw_workspace = @{ "workspace" ~ !ident_continue }
+kw_agent     = @{ "agent"     ~ !ident_continue }
+kw_trigger   = @{ "trigger"   ~ !ident_continue }
+kw_runner    = @{ "runner"    ~ !ident_continue }
+kw_prompt    = @{ "prompt"    ~ !ident_continue }
+kw_on        = @{ "on"        ~ !ident_continue }
+kw_when      = @{ "when"      ~ !ident_continue }
+kw_shell     = @{ "shell"     ~ !ident_continue }
+kw_metadata  = @{ "metadata"  ~ !ident_continue }
+kw_iteration = @{ "iteration" ~ !ident_continue }
+
+// ============================================================================
+// Literals
+// ============================================================================
+
+// Boolean. Word-boundary guarded so `trueish` is an ident, not `true`+`ish`.
+boolean = @{ ("true" | "false") ~ !ident_continue }
+
+// Duration: digits immediately followed by exactly one unit suffix.
+// No word boundary after the suffix is required: the hand-written lexer
+// reads `10ms` as `Duration(10m)` followed by `Ident("s")`, and this rule
+// reproduces that behavior (duration captures `10m`, leaving `s` for the
+// containing context).
+duration = @{ ASCII_DIGIT+ ~ duration_suffix }
+duration_suffix = _{ "s" | "m" | "h" | "d" }
+
+// Plain integer literal. No word boundary required for the same reason as
+// above: `12abc` tokenises as `Integer(12)` + `Ident("abc")`.
+integer = @{ ASCII_DIGIT+ }
+
+// Identifier. Bareword of ASCII letters, digits, and underscores starting
+// with a letter or underscore.
+//
+// Note: `ident` is NOT reserved against `true`/`false`. In every *value*
+// context the grammar tries `boolean` before `ident`, so `mode = true`
+// parses as `Bool(true)`. But in every *identifier* context (section
+// kind, field name, top-level `on <event>`, guard `metadata.<key>`) the
+// hand-written parser accepts `true`/`false` as bareword identifiers, and
+// this grammar must match that to keep the two implementations
+// differentially equivalent.
+ident          = @{ ident_start ~ ident_continue* }
+ident_start    = _{ ASCII_ALPHA | "_" }
+ident_continue = _{ ASCII_ALPHANUMERIC | "_" }
+
+// Strings. Pest captures the raw source for atomic rules; escape processing
+// and triple-string dedent are done by the oracle lowering pass.
+//
+// The escape whitelist (`\"`, `\\`, `\n`, `\t`, `\r`, `\0`, `\u{HEX+}`)
+// mirrors the hand-written lexer — any other `\X` is a lexical error and
+// the grammar must reject it so mutation fuzzing sees the same verdict on
+// both sides.
+string         = @{ "\"" ~ string_char* ~ "\"" }
+string_char    = _{ string_escape | !("\"" | "\n" | "\\") ~ ANY }
+string_escape  = _{ "\\" ~ ( "u" ~ "{" ~ ASCII_HEX_DIGIT+ ~ "}" | escape_char ) }
+escape_char    = _{ "\"" | "\\" | "n" | "t" | "r" | "0" }
+
+triple_string = @{ "\"\"\"" ~ triple_body ~ "\"\"\"" }
+triple_body   = _{ ( !"\"\"\"" ~ ANY )* }

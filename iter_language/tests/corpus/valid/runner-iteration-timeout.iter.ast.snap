@@ -1,0 +1,64 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-iteration-timeout.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Clone {
+                base: ".",
+                remote: None,
+                excludes: [],
+                includes: [],
+                preserve_mtime: true,
+                apply_back: ApplyBackDecl {
+                    mode: Sync,
+                    excludes: [],
+                    includes: [],
+                },
+            },
+            span: 14..114,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 116..168,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: true,
+                behavior: Loop {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: Some(
+                    900,
+                ),
+            },
+            span: 170..256,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "iterate",
+            },
+            span: 258..274,
+        },
+    ],
+    events: [],
+}

@@ -1,0 +1,22 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  continue_on_error = true
+  behavior = wait
+}
+
+prompt when iteration.previous_outcome == "none" "first iteration"
+prompt when iteration.previous_outcome == "errored" "recover from previous error"
+prompt when iteration.previous_outcome != "success" "non-success path"
+prompt "regular run after success"

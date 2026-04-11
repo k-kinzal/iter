@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: command-on-error-unknown.iter
+---
+Error: unknown `on_error` value `halt`
+   ╭─[command-on-error-unknown.iter:5:16]
+   │
+ 5 │     on_error = halt
+   │                ──┬─  
+   │                  ╰─── unknown `on_error` value `halt`
+   │ 
+   │ Help: valid: continue, abort, skip
+───╯

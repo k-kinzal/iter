@@ -1,0 +1,37 @@
+//! Change-event classification for the watch trigger.
+
+use std::path::PathBuf;
+
+use notify::event::EventKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ChangeKind {
+    Created,
+    Modified,
+    Removed,
+}
+
+impl ChangeKind {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::Modified => "modified",
+            Self::Removed => "removed",
+        }
+    }
+
+    pub(super) fn from_event_kind(kind: EventKind) -> Option<Self> {
+        match kind {
+            EventKind::Create(_) => Some(Self::Created),
+            EventKind::Modify(_) => Some(Self::Modified),
+            EventKind::Remove(_) => Some(Self::Removed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ChangeRecord {
+    pub(super) path: PathBuf,
+    pub(super) kind: ChangeKind,
+}

@@ -1,0 +1,81 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-servicebus-minimal.iter
+---
+Root {
+    queue: Some(
+        Spanned {
+            node: ServiceBus(
+                ServiceBusConfig {
+                    fully_qualified_namespace: Some(
+                        "iter-bus.servicebus.windows.net",
+                    ),
+                    entity_kind: Some(
+                        "queue",
+                    ),
+                    queue_name: Some(
+                        "signals",
+                    ),
+                    topic_name: None,
+                    subscription_name: None,
+                    transport: None,
+                    custom_endpoint_address: None,
+                    web_proxy: None,
+                    connection_idle_timeout_secs: None,
+                    identifier: None,
+                    authority_host: None,
+                    auth: Some(
+                        ServiceBusAuth {
+                            kind: AadDefault,
+                        },
+                    ),
+                    sender: None,
+                    receiver: None,
+                    session: None,
+                    retry: None,
+                    dlq: None,
+                },
+            ),
+            span: 0..171,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 173..205,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Claude {
+                mode: Print,
+                command: "claude",
+                args: [],
+                session_id_file: None,
+            },
+            span: 207..259,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 283..336,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "do the thing",
+            },
+            span: 261..282,
+        },
+    ],
+    events: [],
+}

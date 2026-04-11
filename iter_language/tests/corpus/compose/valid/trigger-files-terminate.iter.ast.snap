@@ -1,0 +1,41 @@
+---
+source: iter_language/tests/conformance.rs
+description: trigger-files-terminate.iter
+---
+ComposeRoot {
+    queues: [
+        Spanned {
+            node: NamedQueue {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 0..42,
+        },
+    ],
+    services: [],
+    triggers: [
+        Spanned {
+            node: NamedTrigger {
+                name: "batch",
+                decl: Files {
+                    sources: [
+                        Path(
+                            "./inbox.txt",
+                        ),
+                    ],
+                    no_exit_on_eof: false,
+                    base_metadata: [],
+                    priority: None,
+                    max_signals: None,
+                },
+                target: Named(
+                    "main",
+                ),
+                terminate_on_completion: true,
+            },
+            span: 44..152,
+        },
+    ],
+}

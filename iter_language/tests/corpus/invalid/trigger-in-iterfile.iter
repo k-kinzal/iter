@@ -1,0 +1,9 @@
+queue memory
+workspace local { base = "." }
+agent claude {
+  mode = print
+  command = "claude"
+}
+runner { continue_on_error = false  behavior = wait }
+trigger cron { schedule = "0 0 * * *" }
+prompt "test"

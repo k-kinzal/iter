@@ -1,0 +1,12 @@
+queue main file { path = "./.iter/queue" }
+
+trigger feed files {
+    from = ["path:./a.txt", "path:./b.txt"]
+    no_exit_on_eof = true
+    priority = low
+    max_signals = 200
+    metadata {
+        source = "files"
+    }
+    target = main
+}

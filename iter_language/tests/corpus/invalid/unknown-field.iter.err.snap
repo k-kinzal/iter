@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: unknown-field.iter
+---
+Error: unknown field `flavor` in queue memory
+   ╭─[unknown-field.iter:1:16]
+   │
+ 1 │ queue memory { flavor = "chocolate" }
+   │                ───┬──  
+   │                   ╰──── unknown field `flavor` in queue memory
+───╯

@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger hook webhook {
+    bind = "127.0.0.1:9000"
+    path = "/hooks"
+    target = main
+}

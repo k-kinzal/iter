@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-kafka-missing-bootstrap.iter
+---
+Error: queue kafka requires `bootstrap_servers`
+   ╭─[queue-kafka-missing-bootstrap.iter:1:7]
+   │
+ 1 │ queue kafka {
+   │       ──┬──  
+   │         ╰──── queue kafka requires `bootstrap_servers`
+   │ 
+   │ Help: add `bootstrap_servers = "..."`
+───╯

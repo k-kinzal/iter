@@ -1,0 +1,78 @@
+queue sqs {
+  queue_url    = "https://sqs.us-east-1.amazonaws.com/123456789012/iter-signals.fifo"
+  region       = "us-east-1"
+  endpoint_url = "https://sqs.us-east-1.amazonaws.com"
+  fifo         = true
+  use_fips     = false
+  use_dual_stack = false
+  sts_regional_endpoints = "regional"
+  app_name     = "iter"
+
+  credentials {
+    kind            = "assume_role"
+    role_arn        = "arn:aws:iam::123456789012:role/iter-runner"
+    session_name    = "iter-runner"
+    external_id     = env("ITER_AWS_EXTERNAL_ID")
+    duration_seconds = 3600
+    source_profile  = "default"
+  }
+
+  http_client {
+    connect_timeout   = 5s
+    read_timeout      = 30s
+    operation_timeout = 60s
+    operation_attempt_timeout = 30s
+    tcp_keepalive     = 60s
+    max_idle_connections_per_host = 10
+    connection_pool_idle_timeout  = 90s
+    proxy_url = "http://proxy.example.com:3128"
+    no_proxy  = ["localhost", "127.0.0.1"]
+  }
+
+  producer {
+    delay_seconds = 0s
+    message_attributes {
+      source = "iter"
+      version = "1"
+    }
+    trace_header = true
+    message_group_id = from_metadata("workspace")
+    message_deduplication_id = from_metadata("dedup_key")
+    batch_size = 10
+    batch_max_bytes = 262144
+    batch_linger = 1s
+  }
+
+  consumer {
+    visibility_timeout = 60s
+    wait_time_seconds = 20
+    max_number_of_messages = 5
+    message_attribute_names = ["All"]
+    message_system_attribute_names = ["AWSTraceHeader"]
+    concurrent_receivers = 4
+  }
+
+  retry {
+    mode = "adaptive"
+    max_attempts = 5
+    initial_backoff = 200s
+    max_backoff = 30s
+    try_timeout = 10s
+  }
+
+  dlq {
+    kind = "native"
+  }
+}
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+prompt "do the thing"
+runner { continue_on_error = false  behavior = wait }

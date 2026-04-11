@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-kinesis-conflicting-identity.iter
+---
+Error: queue kinesis: `stream_arn` and `stream_name` are mutually exclusive
+   ╭─[queue-kinesis-conflicting-identity.iter:1:7]
+   │
+ 1 │ queue kinesis {
+   │       ───┬───  
+   │          ╰───── queue kinesis: `stream_arn` and `stream_name` are mutually exclusive
+   │ 
+   │ Help: supply only one (ARN preferred)
+───╯

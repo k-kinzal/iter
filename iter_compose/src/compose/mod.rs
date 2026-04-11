@@ -1,0 +1,118 @@
+//! Top-level orchestration for `compose.iter`: load → build → run.
+//!
+//! This module is the compose-side counterpart to
+//! [`iter_cli::dispatch::run`]: it parses a `compose.iter` source file,
+//! constructs every named queue and service declared in it,
+//! and spawns them concurrently behind a single
+//! [`tokio_util::sync::CancellationToken`].
+//!
+//! The split between [`build`] and [`run`] mirrors the Iterfile path
+//! (`load_iterfile` → `Runner::build` → `Runner::run`): construction is
+//! synchronous and fallible; the async loop runs only after every
+//! pre-flight check succeeds.
+
+mod error;
+mod plan;
+mod run;
+mod service;
+pub(crate) mod trigger;
+
+use std::path::Path;
+
+use iter_language::{ComposeRoot, parse_compose};
+
+pub use error::{ComposeError, ServiceRunError, ServiceSubprocessError};
+pub use plan::{ComposePlan, SingleServiceBuild, build, build_single_service};
+pub use run::run;
+pub use service::{
+    ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID,
+    LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TaskOutcome,
+};
+pub use trigger::TriggerRunError;
+
+/// Default basename used by `iter compose` when no `-f` flag is supplied.
+pub const DEFAULT_COMPOSE_FILE: &str = "compose.iter";
+
+/// Return `true` when `path`'s basename identifies a compose file
+/// (`compose.iter` or any `*.compose.iter`).
+#[must_use]
+pub fn is_compose_filename(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n == DEFAULT_COMPOSE_FILE || n.ends_with(".compose.iter"))
+}
+
+/// Load and validate the `compose.iter` file at `path`.
+///
+/// # Errors
+///
+/// * The file does not exist or cannot be read.
+/// * The parser produced one or more error-severity diagnostics.
+pub fn load_compose(path: &Path) -> Result<ComposeRoot, ComposeError> {
+    let source = std::fs::read_to_string(path).map_err(|e| ComposeError::io(path, e))?;
+    parse_compose(&source).map_err(|diags| ComposeError::parse(path, &source, &diags))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_compose_returns_root() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("compose.iter");
+        std::fs::write(
+            &path,
+            r#"queue main file { path = "./.iter/queue" }
+
+service worker {
+    queue = main
+    workspace_local { base = "." }
+    agent_claude {
+        mode = print
+        command = "claude"
+    }
+    runner {
+        continue_on_error = false
+        behavior = wait
+    }
+}
+"#,
+        )
+        .expect("write");
+        let root = load_compose(&path).expect("load");
+        assert_eq!(root.queues.len(), 1);
+        assert_eq!(root.services.len(), 1);
+    }
+
+    #[test]
+    fn load_compose_renders_diagnostics_on_error() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("compose.iter");
+        std::fs::write(&path, "queue main\n").expect("write");
+        let err = load_compose(&path).expect_err("must fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("queue") || msg.contains("backend"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn build_rejects_compose_with_zero_services() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("compose.iter");
+        std::fs::write(
+            &path,
+            r#"queue main file { path = "./.iter/queue" }
+"#,
+        )
+        .expect("write");
+        let root = load_compose(&path).expect("load");
+        let err = build(&root, &path).expect_err("zero services must reject");
+        assert!(
+            matches!(err, ComposeError::NoServices { .. }),
+            "expected NoServices, got: {err:?}"
+        );
+    }
+}

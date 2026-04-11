@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: queue-sqs-missing-identity.iter
+---
+Error: queue sqs requires `queue_url` or `queue_name` + `account_id`
+   ╭─[queue-sqs-missing-identity.iter:1:7]
+   │
+ 1 │ queue sqs {
+   │       ─┬─  
+   │        ╰─── queue sqs requires `queue_url` or `queue_name` + `account_id`
+   │ 
+   │ Help: add `queue_url = "https://sqs.<region>.amazonaws.com/<account>/<name>"`
+───╯

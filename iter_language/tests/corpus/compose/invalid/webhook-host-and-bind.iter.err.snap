@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: webhook-host-and-bind.iter
+---
+Error: trigger webhook: `bind` is mutually exclusive with `host`/`port`
+   ╭─[webhook-host-and-bind.iter:3:14]
+   │
+ 3 │ trigger hook webhook {
+   │              ───┬───  
+   │                 ╰───── trigger webhook: `bind` is mutually exclusive with `host`/`port`
+   │ 
+   │ Help: use either `bind = "0.0.0.0:8080"` or `host`/`port`
+───╯
