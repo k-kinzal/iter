@@ -6,9 +6,10 @@ use crate::diagnostic::Diagnostic;
 
 impl Analyzer {
     /// Walk a string body looking for `{{...}}` placeholders and ensure each
-    /// reference is `metadata.<ident>`, `signal.<ident>`, `event.<path>`,
-    /// `iteration.<field>`, or `today`. Unknown references emit warnings
-    /// (since the runner ultimately decides) — malformed syntax is an error.
+    /// reference is `arg.<name>`, `metadata.<ident>`, `signal.<ident>`,
+    /// `event.<path>`, `iteration.<field>`, or `today`. Unknown references
+    /// emit warnings (since the runner ultimately decides) — malformed
+    /// syntax is an error.
     pub(super) fn validate_template(&mut self, body: &str, span: &Span) {
         let bytes = body.as_bytes();
         let mut i = 0;
@@ -45,7 +46,7 @@ impl Analyzer {
                             format!("invalid template reference `{inner}`"),
                         )
                         .with_hint(
-                            "valid forms: `metadata.<key>`, `signal.<field>`, `event.<path>`, `iteration.<field>`, `today`",
+                            "valid forms: `arg.<name>`, `metadata.<key>`, `signal.<field>`, `event.<path>`, `iteration.<field>`, `today`",
                         ),
                     );
                 }
@@ -66,7 +67,7 @@ fn is_valid_template_ref(text: &str) -> bool {
     let Some(head) = parts.next() else {
         return false;
     };
-    if !matches!(head, "metadata" | "signal" | "event" | "iteration") {
+    if !matches!(head, "arg" | "metadata" | "signal" | "event" | "iteration") {
         return false;
     }
     let mut tail_count = 0;
@@ -91,6 +92,7 @@ mod tests {
 
     #[test]
     fn template_ref_validation() {
+        assert!(is_valid_template_ref("arg.worktree_name"));
         assert!(is_valid_template_ref("metadata.foo"));
         assert!(is_valid_template_ref("signal.id"));
         assert!(is_valid_template_ref("event.repository.full_name"));
@@ -98,6 +100,7 @@ mod tests {
         assert!(is_valid_template_ref("iteration.previous_outcome"));
         assert!(is_valid_template_ref("today"));
         assert!(!is_valid_template_ref(""));
+        assert!(!is_valid_template_ref("arg"));
         assert!(!is_valid_template_ref("metadata"));
         assert!(!is_valid_template_ref("iteration"));
         assert!(!is_valid_template_ref("foo.bar"));

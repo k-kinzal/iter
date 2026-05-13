@@ -1,19 +1,23 @@
 ---
 source: iter_language/tests/conformance.rs
-description: queue-shell-minimal.iter
+description: arg-default.iter
 ---
 Root {
-    args: [],
+    args: [
+        Spanned {
+            node: ArgDecl {
+                name: "model",
+                default: Some(
+                    "gpt-4o",
+                ),
+            },
+            span: 0..20,
+        },
+    ],
     queue: Some(
         Spanned {
-            node: Shell {
-                enqueue: "true",
-                dequeue: "true",
-                close: None,
-                interpreter: None,
-                enqueue_timeout_secs: None,
-            },
-            span: 0..53,
+            node: Memory,
+            span: 22..34,
         },
     ),
     workspace: Some(
@@ -21,18 +25,18 @@ Root {
             node: Local {
                 base: ".",
             },
-            span: 55..87,
+            span: 36..68,
         },
     ),
     agent: Some(
         Spanned {
             node: Claude {
-                mode: Print,
+                mode: Interactive,
                 command: "claude",
                 args: [],
                 session_id_file: None,
             },
-            span: 89..141,
+            span: 70..128,
         },
     ),
     runner: Some(
@@ -42,16 +46,16 @@ Root {
                 behavior: Wait,
                 iteration_timeout_secs: None,
             },
-            span: 165..218,
+            span: 130..186,
         },
     ),
     prompts: [
         Spanned {
             node: PromptDecl {
                 guard: None,
-                body: "do the thing",
+                body: "Use {{arg.model}} for this task.",
             },
-            span: 143..164,
+            span: 188..229,
         },
     ],
     events: [],

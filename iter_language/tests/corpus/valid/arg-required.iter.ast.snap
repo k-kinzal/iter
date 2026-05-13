@@ -1,19 +1,21 @@
 ---
 source: iter_language/tests/conformance.rs
-description: queue-shell-minimal.iter
+description: arg-required.iter
 ---
 Root {
-    args: [],
+    args: [
+        Spanned {
+            node: ArgDecl {
+                name: "worktree_name",
+                default: None,
+            },
+            span: 0..17,
+        },
+    ],
     queue: Some(
         Spanned {
-            node: Shell {
-                enqueue: "true",
-                dequeue: "true",
-                close: None,
-                interpreter: None,
-                enqueue_timeout_secs: None,
-            },
-            span: 0..53,
+            node: Memory,
+            span: 19..31,
         },
     ),
     workspace: Some(
@@ -21,18 +23,18 @@ Root {
             node: Local {
                 base: ".",
             },
-            span: 55..87,
+            span: 33..65,
         },
     ),
     agent: Some(
         Spanned {
             node: Claude {
-                mode: Print,
+                mode: Interactive,
                 command: "claude",
                 args: [],
                 session_id_file: None,
             },
-            span: 89..141,
+            span: 67..125,
         },
     ),
     runner: Some(
@@ -42,16 +44,16 @@ Root {
                 behavior: Wait,
                 iteration_timeout_secs: None,
             },
-            span: 165..218,
+            span: 127..183,
         },
     ),
     prompts: [
         Spanned {
             node: PromptDecl {
                 guard: None,
-                body: "do the thing",
+                body: "Working on {{arg.worktree_name}}.",
             },
-            span: 143..164,
+            span: 185..227,
         },
     ],
     events: [],

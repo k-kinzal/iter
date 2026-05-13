@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: queue-kinesis.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: Kinesis(

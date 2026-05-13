@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: arg-invalid-name.iter
+---
+Error: expected an identifier, found integer literal
+   ╭─[arg-invalid-name.iter:1:5]
+   │
+ 1 │ arg 123bad
+   │     ─┬─  
+   │      ╰─── expected an identifier, found integer literal
+───╯

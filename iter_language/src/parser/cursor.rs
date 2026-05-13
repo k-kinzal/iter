@@ -146,7 +146,7 @@ impl<'a> Parser<'a> {
                 Token::Ident(name)
                 if matches!(
                     name.as_str(),
-                    "queue" | "workspace" | "agent" | "trigger" | "runner" | "prompt" | "on"
+                    "queue" | "workspace" | "agent" | "trigger" | "runner" | "prompt" | "on" | "arg"
                 )
             ) {
                 return;

@@ -13,6 +13,7 @@
 //! invalid Iterfile still flips the record to a terminal state via the
 //! handler's finalize-on-return path.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use iter_compose::iterfile::{
@@ -63,6 +64,12 @@ pub enum RunCmdError {
         #[source]
         source: std::io::Error,
     },
+    /// A `--arg` value was malformed (missing `=`).
+    #[error("invalid --arg `{raw}`: expected KEY=VALUE format")]
+    BadArgOverride {
+        /// The malformed value.
+        raw: String,
+    },
     /// The iterfile run handler returned an error.
     #[error(transparent)]
     Iterfile(#[from] IterfileError),
@@ -71,7 +78,9 @@ pub enum RunCmdError {
 impl IntoExitCode for RunCmdError {
     fn exit_code(&self) -> i32 {
         match self {
-            Self::ParseProcessId { .. } | Self::IterfileMissing { .. } => exit_codes::USER_INPUT,
+            Self::ParseProcessId { .. }
+            | Self::IterfileMissing { .. }
+            | Self::BadArgOverride { .. } => exit_codes::USER_INPUT,
             // `canonicalize` is reached only after `raw.exists()` returned
             // true at the preflight check, so a failure here means a TOCTOU
             // race or a permission flip — a runtime/I/O fault, not bad
@@ -100,6 +109,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         | IterfileError::Lifecycle(_) => exit_codes::RUNTIME,
         IterfileError::Parse { .. }
         | IterfileError::MissingSection(_)
+        | IterfileError::Arg(_)
         | IterfileError::AgentBuild(_)
         | IterfileError::PromptBuild(_)
         | IterfileError::EventTemplate(_)
@@ -165,6 +175,8 @@ pub async fn run_run(args: RunArgs, config: Config) -> Result<(), RunCmdError> {
         None => RunSource::Iterfile,
     };
 
+    let arg_overrides = parse_arg_overrides(&args.arg)?;
+
     let input = RunInput {
         iterfile_path,
         source,
@@ -175,6 +187,7 @@ pub async fn run_run(args: RunArgs, config: Config) -> Result<(), RunCmdError> {
             subcommand: "run".into(),
             debug: args.debug,
         },
+        arg_overrides,
     };
 
     Box::pin(iterfile::handle(input)).await?;
@@ -222,6 +235,18 @@ fn canonical_iterfile_for_run(raw: &Path) -> Result<PathBuf, RunCmdError> {
         })
 }
 
+fn parse_arg_overrides(raw: &[String]) -> Result<BTreeMap<String, String>, RunCmdError> {
+    let mut map = BTreeMap::new();
+    for entry in raw {
+        let (key, value) = entry
+            .split_once('=')
+            .filter(|(k, _)| !k.is_empty())
+            .ok_or_else(|| RunCmdError::BadArgOverride { raw: entry.clone() })?;
+        map.insert(key.to_owned(), value.to_owned());
+    }
+    Ok(map)
+}
+
 fn rebuild_argv(args: &RunArgs) -> Vec<String> {
     let mut out = vec!["run".to_owned()];
     if let Some(p) = args.iterfile.as_ref() {
@@ -244,6 +269,10 @@ fn rebuild_argv(args: &RunArgs) -> Vec<String> {
     if let Some(svc) = args.service.as_ref() {
         out.push("--service".into());
         out.push(svc.clone());
+    }
+    for entry in &args.arg {
+        out.push("--arg".into());
+        out.push(entry.clone());
     }
     out
 }

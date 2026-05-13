@@ -518,6 +518,14 @@ pub struct RunArgs {
     /// up in `iter ps` / `iter logs` independently.
     #[arg(long = "service")]
     pub service: Option<String>,
+
+    /// Override an Iterfile `arg` default. Repeatable.
+    ///
+    /// Format: `--arg key=value`. Overrides the `arg <key> = "<default>"`
+    /// declaration in the Iterfile. If the Iterfile declares `arg <key>`
+    /// with no default, the override is required.
+    #[arg(long = "arg", value_name = "KEY=VALUE")]
+    pub arg: Vec<String>,
 }
 
 /// Arguments accepted by `iter enqueue` / `iter signal push`.

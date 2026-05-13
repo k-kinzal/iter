@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: prompt-iteration-outcome.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: Memory,

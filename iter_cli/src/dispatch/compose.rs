@@ -19,10 +19,10 @@ use iter_compose::iterfile::RunRecordMetadata;
 use iter_compose::signals::SignalsError;
 use iter_compose::{
     ComposeError, ComposePlan, DEFAULT_COMPOSE_FILE, DiscoveryError, FailurePolicy,
-    OrchestratorContext, ProjectLockError, ProjectMember, ProjectSlugError,
-    acquire_project_lock, build, find_active_orchestrator, install_shutdown_handler,
-    is_compose_filename, list_all_members_by_project, list_project_members, load_compose,
-    project_slug, read_trigger_status, run, trigger_state_root,
+    OrchestratorContext, ProjectLockError, ProjectMember, ProjectSlugError, acquire_project_lock,
+    build, find_active_orchestrator, install_shutdown_handler, is_compose_filename,
+    list_all_members_by_project, list_project_members, load_compose, project_slug,
+    read_trigger_status, run, trigger_state_root,
 };
 use iter_core::process::{
     PidFileState, ProcessError, ProcessHandle, ProcessRegistry, SignalDelivery, UnmanagedChild,
@@ -319,9 +319,7 @@ impl IntoExitCode for ComposeRuntimeError {
             | Self::UnknownTargets { .. }
             | Self::UnsupportedResourceType { .. }
             | Self::SourceNoMatch { .. } => exit_codes::USER_INPUT,
-            Self::Discovery(_) | Self::Process(_) => {
-                exit_codes::RUNTIME
-            }
+            Self::Discovery(_) | Self::Process(_) => exit_codes::RUNTIME,
             Self::Compose(e) => compose_error_exit_code(e),
             Self::JsonSerialize(_) => exit_codes::INTERNAL,
         }
@@ -343,6 +341,7 @@ pub(crate) fn compose_error_exit_code(e: &ComposeError) -> i32 {
         ComposeError::Parse { .. }
         | ComposeError::BuildTargetHasQueue { .. }
         | ComposeError::ServiceMissingSection { .. }
+        | ComposeError::ArgResolve { .. }
         | ComposeError::AgentBuild { .. }
         | ComposeError::PromptBuild { .. }
         | ComposeError::EventTemplate { .. }
@@ -517,8 +516,8 @@ async fn run_compose_up_targeted(args: ComposeUpArgs) -> Result<(), ComposeUpErr
             identity: active.identity,
         }
     } else {
-        let identity = current_identity()
-            .map_err(|e| ComposeUpError::OrchestratorIdentity(Box::new(e)))?;
+        let identity =
+            current_identity().map_err(|e| ComposeUpError::OrchestratorIdentity(Box::new(e)))?;
         OrchestratorContext {
             project: slug.clone(),
             identity,
@@ -526,8 +525,8 @@ async fn run_compose_up_targeted(args: ComposeUpArgs) -> Result<(), ComposeUpErr
     };
 
     for name in &target_names {
-        let id = spawn_targeted_service(&plan, name, &compose_path, &orchestrator, args.debug)
-            .await?;
+        let id =
+            spawn_targeted_service(&plan, name, &compose_path, &orchestrator, args.debug).await?;
         cli_eprintln!("project {slug:?}: started service {name:?} ({id})");
     }
 
@@ -1299,10 +1298,8 @@ fn parse_target_name_raw(target: &str) -> Result<&str, &str> {
 /// Accepts bare names (`worker-a`) and explicit resource references
 /// (`service/worker-a`). Rejects unknown resource type prefixes.
 fn parse_target_name(target: &str) -> Result<&str, ComposeRuntimeError> {
-    parse_target_name_raw(target).map_err(|target| {
-        ComposeRuntimeError::UnsupportedResourceType {
-            target: target.to_owned(),
-        }
+    parse_target_name_raw(target).map_err(|target| ComposeRuntimeError::UnsupportedResourceType {
+        target: target.to_owned(),
     })
 }
 
@@ -1328,8 +1325,8 @@ fn resolve_down_targets(
 
     if let Some(source) = &args.source {
         let raw_compose = resolve_compose_path(args.file.as_deref());
-        let compose_path = canonicalize_compose_path(&raw_compose)
-            .unwrap_or_else(|_| raw_compose.clone());
+        let compose_path =
+            canonicalize_compose_path(&raw_compose).unwrap_or_else(|_| raw_compose.clone());
         let root = load_compose(&compose_path)?;
         let plan = build(&root, &compose_path)?;
         let source_names = plan.services_for_source(source);

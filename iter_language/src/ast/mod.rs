@@ -29,6 +29,7 @@
 //! semantic rules that govern each variant.
 
 mod agent;
+mod arg;
 mod compose;
 mod event;
 mod prompt;
@@ -40,6 +41,7 @@ mod value;
 mod workspace;
 
 pub use agent::{AgentDecl, AgentMode};
+pub use arg::ArgDecl;
 pub use compose::{
     ComposeRoot, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,
     NamedQueue, NamedService, NamedTrigger, QueueRef, ServiceSource,
@@ -104,6 +106,8 @@ impl<T> Spanned<T> {
 /// error guiding the user toward `compose.iter`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Root {
+    /// `arg <name> [= "<default>"]` declarations in source order.
+    pub args: Vec<Spanned<ArgDecl>>,
     /// `queue <kind> { ... }` declaration, if present.
     pub queue: Option<Spanned<QueueDecl>>,
     /// `workspace <kind> { ... }` declaration, if present.

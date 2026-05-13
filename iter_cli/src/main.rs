@@ -317,6 +317,10 @@ async fn spawn_child(
     if args.debug {
         child_args.push("--debug".into());
     }
+    for entry in &args.arg {
+        child_args.push("--arg".into());
+        child_args.push(entry.clone());
+    }
 
     let spec = DetachedSpec {
         name,

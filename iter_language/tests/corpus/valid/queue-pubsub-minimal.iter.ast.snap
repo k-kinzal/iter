@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: queue-pubsub-minimal.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: PubSub(

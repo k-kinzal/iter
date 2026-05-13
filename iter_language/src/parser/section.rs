@@ -2,7 +2,7 @@
 //! agent / trigger / runner) and their shared block parser.
 
 use super::Parser;
-use super::cst::{RawBlock, RawFile, RawSection};
+use super::cst::{RawBlock, RawField, RawFile, RawIdent, RawSection, RawValue};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
@@ -25,6 +25,16 @@ impl Parser<'_> {
                     }
                     "on" => {
                         if let Some(section) = self.parse_top_on_section() {
+                            sections.push(section);
+                        } else {
+                            if self.pos == saved {
+                                self.bump();
+                            }
+                            self.recover_to_top_level();
+                        }
+                    }
+                    "arg" => {
+                        if let Some(section) = self.parse_arg_section() {
                             sections.push(section);
                         } else {
                             if self.pos == saved {
@@ -85,6 +95,7 @@ impl Parser<'_> {
             "telemetry",
             "prompt",
             "on",
+            "arg",
         ];
         let keyword_tok = self.bump()?.clone();
         let Token::Ident(keyword) = keyword_tok.token else {
@@ -122,6 +133,47 @@ impl Parser<'_> {
             keyword_span: keyword_span.clone(),
             kind,
             kind2,
+            body,
+            span: keyword_span.start..span_end,
+        })
+    }
+
+    /// Parse `arg <name> [= "<default>"]`.
+    ///
+    /// Produces a [`RawSection::Block`] with keyword `"arg"`, kind set to
+    /// the argument name, and an optional body carrying a single `default`
+    /// field when a `= "value"` follows the name.
+    pub(super) fn parse_arg_section(&mut self) -> Option<RawSection> {
+        let keyword_tok = self.bump()?.clone();
+        let keyword_span = keyword_tok.span;
+        let name = self.expect_ident()?;
+        let mut span_end = name.span.end;
+        let body = if matches!(self.peek(), Some(Token::Equals)) {
+            self.bump();
+            let (value, value_span) = self.expect_string()?;
+            span_end = value_span.end;
+            let field_span = name.span.start..value_span.end;
+            Some(RawBlock {
+                fields: vec![RawField {
+                    name: RawIdent {
+                        name: "default".to_string(),
+                        span: value_span.clone(),
+                    },
+                    value: RawValue::String(value, value_span),
+                    span: field_span,
+                }],
+                routes: Vec::new(),
+                actions: Vec::new(),
+                span: name.span.start..span_end,
+            })
+        } else {
+            None
+        };
+        Some(RawSection::Block {
+            keyword: "arg".to_string(),
+            keyword_span: keyword_span.clone(),
+            kind: Some(name),
+            kind2: None,
             body,
             span: keyword_span.start..span_end,
         })

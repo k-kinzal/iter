@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: runner-iteration-timeout.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: Memory,

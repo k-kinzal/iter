@@ -34,8 +34,51 @@ fn lower_section(pair: Pair<Rule>) -> RawSection {
     match inner.as_rule() {
         Rule::prompt_section => lower_prompt_section(inner),
         Rule::on_section => lower_top_on_section(inner),
+        Rule::arg_section => lower_arg_section(inner),
         Rule::block_section => lower_block_section(inner),
         other => panic!("unexpected rule under `section`: {other:?}"),
+    }
+}
+
+fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
+    assert_eq!(pair.as_rule(), Rule::arg_section);
+    let span = pair_span(&pair);
+    let mut children = pair.into_inner();
+
+    let kw = children.next().expect("kw_arg");
+    let keyword_span = pair_span(&kw);
+
+    let name_pair = children.next().expect("arg name ident");
+    let name = lower_ident(&name_pair);
+
+    let body = children.next().map(|default_pair| {
+        assert_eq!(default_pair.as_rule(), Rule::arg_default);
+        let val_pair = first_child(default_pair);
+        let value = lower_string_literal(val_pair.clone());
+        let value_span = pair_span(&val_pair);
+        let field_span = name.span.start..value_span.end;
+        RawBlock {
+            fields: vec![RawField {
+                name: RawIdent {
+                    name: "default".to_string(),
+                    span: value_span.clone(),
+                },
+                value: RawValue::String(value, value_span),
+                span: field_span,
+            }],
+            routes: Vec::new(),
+            actions: Vec::new(),
+            span: name.span.start..span.end,
+        }
+    });
+
+    RawSection::Block {
+        keyword: "arg".to_string(),
+        keyword_span: keyword_span.clone(),
+        kind: Some(name),
+        kind2: None,
+        body,
+        span,
     }
 }
 

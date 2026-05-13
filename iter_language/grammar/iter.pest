@@ -47,6 +47,7 @@ file = { SOI ~ section* ~ EOI }
 section = {
       prompt_section
     | on_section
+    | arg_section
     | block_section
 }
 
@@ -90,6 +91,7 @@ reserved_section_keyword = @{
     | "service"
     | "prompt"
     | "on"
+    | "arg"
     ) ~ !ident_continue
 }
 
@@ -106,6 +108,7 @@ block_keyword = @{
        | "when"
        | "shell"
        | "metadata"
+       | "arg"
        ) ~ !ident_continue )
     ~ ident_start ~ ident_continue*
 }
@@ -138,6 +141,12 @@ guard_iter         = { kw_iteration ~ "." ~ ident ~ guard_iter_modulus? ~ guard_
 guard_iter_modulus = { "%" ~ integer }
 guard_iter_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 guard_iter_rhs     = { integer | string }
+
+// ============================================================================
+// Arg: `arg <name> [= "<default>"]`
+// ============================================================================
+arg_section = { kw_arg ~ ident ~ arg_default? }
+arg_default = { "=" ~ string_literal }
 
 // ============================================================================
 // Top-level `on <event>` handler
@@ -209,6 +218,7 @@ string_literal = { triple_string | string }
 // ============================================================================
 // Reserved keywords (word boundaries enforced)
 // ============================================================================
+kw_arg       = @{ "arg"       ~ !ident_continue }
 kw_queue     = @{ "queue"     ~ !ident_continue }
 kw_workspace = @{ "workspace" ~ !ident_continue }
 kw_agent     = @{ "agent"     ~ !ident_continue }

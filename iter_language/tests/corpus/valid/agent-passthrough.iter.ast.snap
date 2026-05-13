@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: agent-passthrough.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: Memory,

@@ -21,9 +21,9 @@ pub(crate) use compose::lower_compose_and_check;
 use guard::lower_guard_pure;
 use suggest::{closest, parse_priority};
 
-use crate::ast::{Root, Span, Spanned};
+use crate::ast::{ArgDecl, Root, Span, Spanned};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawFile, RawSection};
+use crate::parser::{RawBlock, RawFile, RawIdent, RawSection};
 
 // Hint strings for diagnostics about removed project-shaped defaults. The
 // text is intentionally verbose because each explains *why* iter no longer
@@ -130,6 +130,9 @@ impl Analyzer {
             ).with_hint("Iterfile sections take a single kind identifier; named sections (`queue main file { ... }`) belong in `compose.iter`."));
         }
         match keyword.as_str() {
+            "arg" => {
+                self.lower_arg_section(root, seen, kind, keyword_span, body, span);
+            }
             "queue" => {
                 if self.reject_duplicate(seen.queue.as_ref(), &span, "queue") {
                     return;
@@ -185,6 +188,61 @@ impl Analyzer {
         }
     }
 
+    fn lower_arg_section(
+        &mut self,
+        root: &mut Root,
+        seen: &mut SectionSeen,
+        kind: Option<RawIdent>,
+        keyword_span: Span,
+        body: Option<RawBlock>,
+        span: Span,
+    ) {
+        let Some(name_ident) = kind else {
+            self.errors
+                .push(Diagnostic::error(keyword_span, "`arg` requires a name"));
+            return;
+        };
+        if let Some(prev_span) = seen.args.get(&name_ident.name) {
+            self.errors.push(
+                Diagnostic::error(
+                    span.clone(),
+                    format!("duplicate `arg` declaration for `{}`", name_ident.name),
+                )
+                .with_hint(format!(
+                    "previous declaration at bytes {}..{}",
+                    prev_span.start, prev_span.end
+                )),
+            );
+            return;
+        }
+        if !is_valid_arg_name(&name_ident.name) {
+            self.errors.push(
+                Diagnostic::error(
+                    name_ident.span.clone(),
+                    format!("invalid arg name `{}`", name_ident.name),
+                )
+                .with_hint(
+                    "arg names must start with a letter or underscore and contain only ASCII alphanumerics and underscores",
+                ),
+            );
+            return;
+        }
+        seen.args.insert(name_ident.name.clone(), span.clone());
+        let default = body.and_then(|block| {
+            let mut fields = self.collect_fields(Some(block));
+            let val = self.take_optional_string(&mut fields, "default");
+            self.reject_unknown_fields(&mut fields, &["default"], "arg");
+            val
+        });
+        root.args.push(Spanned::new(
+            ArgDecl {
+                name: name_ident.name,
+                default,
+            },
+            span,
+        ));
+    }
+
     fn reject_duplicate(&mut self, prev: Option<&Span>, span: &Span, label: &str) -> bool {
         if let Some(p) = prev {
             self.errors.push(
@@ -203,6 +261,7 @@ impl Analyzer {
 
 #[derive(Default)]
 struct SectionSeen {
+    args: std::collections::BTreeMap<String, Span>,
     queue: Option<Span>,
     workspace: Option<Span>,
     agent: Option<Span>,
@@ -212,8 +271,17 @@ struct SectionSeen {
 struct BlockSectionParts {
     keyword: String,
     keyword_span: Span,
-    kind: Option<crate::parser::RawIdent>,
-    kind2: Option<crate::parser::RawIdent>,
-    body: Option<crate::parser::RawBlock>,
+    kind: Option<RawIdent>,
+    kind2: Option<RawIdent>,
+    body: Option<RawBlock>,
     span: Span,
+}
+
+fn is_valid_arg_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }

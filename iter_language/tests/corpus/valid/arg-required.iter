@@ -1,0 +1,19 @@
+arg worktree_name
+
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = interactive
+  command = "claude"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Working on {{arg.worktree_name}}."

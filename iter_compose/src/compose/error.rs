@@ -9,6 +9,7 @@ use thiserror::Error;
 use iter_core::process::{ProcessError, ProcessStatus, SpawnError};
 
 use crate::agent::AgentBuildError;
+use crate::arg::ArgError;
 use crate::prompt::PromptBuildError;
 use crate::queue::QueueBuildError;
 
@@ -73,6 +74,15 @@ pub enum ComposeError {
     /// Building a queue from a connection URL failed.
     #[error(transparent)]
     Queue(#[from] QueueBuildError),
+    /// Resolving Iterfile `arg` declarations for a service failed.
+    #[error("resolving args for service `{service}`: {source}")]
+    ArgResolve {
+        /// Service name.
+        service: String,
+        /// Underlying arg-resolution error.
+        #[source]
+        source: ArgError,
+    },
     /// Building an agent for a service failed.
     #[error("building service `{service}`: {source}")]
     AgentBuild {

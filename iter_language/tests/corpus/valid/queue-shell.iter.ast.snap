@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: queue-shell.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: Shell {

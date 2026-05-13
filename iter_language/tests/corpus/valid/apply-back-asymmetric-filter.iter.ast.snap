@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: apply-back-asymmetric-filter.iter
 ---
 Root {
+    args: [],
     queue: Some(
         Spanned {
             node: Memory,

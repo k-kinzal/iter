@@ -56,7 +56,7 @@ mod parser;
 mod semantic;
 
 pub use ast::{
-    Action, AgentDecl, AgentMode, ApplyBackDecl, CloneApplyBackMode, CmpOp, ComposeRoot,
+    Action, AgentDecl, AgentMode, ApplyBackDecl, ArgDecl, CloneApplyBackMode, CmpOp, ComposeRoot,
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDecl, DlqTargetDecl, EventHandlerDecl,
     EventName, ExtractExpr, FilesSource, InlineService, IterationField, KafkaConfig, KafkaConsumer,
     KafkaProducer, KafkaSecurity, KinesisCheckpoint, KinesisConfig, KinesisConsumer,

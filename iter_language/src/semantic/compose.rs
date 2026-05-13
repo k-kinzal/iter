@@ -734,6 +734,7 @@ impl Analyzer {
 
         let mut build_path: Option<(String, Span)> = None;
         let mut queue_ref: Option<QueueRef> = None;
+        let mut arg_overrides: BTreeMap<String, String> = BTreeMap::new();
         let mut workspace_section: Option<Spanned<crate::ast::WorkspaceDecl>> = None;
         let mut agent_section: Option<Spanned<crate::ast::AgentDecl>> = None;
         let mut runner_section: Option<Spanned<crate::ast::RunnerDecl>> = None;
@@ -765,6 +766,29 @@ impl Analyzer {
                         ));
                     }
                 },
+                "args" => match field.value {
+                    RawValue::Block(args_block) => {
+                        for args_field in args_block.fields {
+                            match args_field.value {
+                                RawValue::String(s, _) => {
+                                    arg_overrides.insert(args_field.name.name.clone(), s);
+                                }
+                                other => {
+                                    self.errors.push(Diagnostic::error(
+                                        other.span(),
+                                        "service `args` values must be strings",
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    other => {
+                        self.errors.push(Diagnostic::error(
+                            other.span(),
+                            "service `args` must be a block of key = \"value\" pairs",
+                        ));
+                    }
+                },
                 _ => leftover_fields.push(field),
             }
         }
@@ -783,6 +807,7 @@ impl Analyzer {
             Some(ServiceSource::Build {
                 path: PathBuf::from(path),
                 queue: queue_ref,
+                args: arg_overrides,
             })
         } else {
             Some(ServiceSource::Inline(Box::new(InlineService {

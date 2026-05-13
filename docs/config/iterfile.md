@@ -9,6 +9,7 @@ An `Iterfile` defines a **single self-contained iter service**. It is the Docker
 
 | Section | Count | Required | Page |
 | --- | :---: | :---: | --- |
+| `arg <name>` | 0–N | Optional | (below) |
 | `queue <kind>` | 0–1 | Optional | [`iterfile/queue.md`](iterfile/queue.md) |
 | `workspace <kind>` | 0–1 | Optional (see below) | [`iterfile/workspace.md`](iterfile/workspace.md) |
 | `agent <kind>` | 0–1 | Optional (see below) | [`iterfile/agent.md`](iterfile/agent.md) |
@@ -40,6 +41,42 @@ runner {
 prompt "Improve the codebase."
 ```
 
+## Arg Declarations
+
+`arg` declares a named parameter whose value is resolved at load time, before the runner starts. Args are referenced in string fields via `{{arg.<name>}}`.
+
+```hcl
+arg model = "gpt-4o"
+arg worktree_name
+```
+
+- With a default: `arg <name> = "<value>"`. The default is used when no override is supplied.
+- Without a default (required): `arg <name>`. The caller must supply a value via `--arg <name>=<value>` (CLI) or `args { <name> = "<value>" }` (compose).
+
+Arg names must start with a letter or underscore and contain only ASCII alphanumerics and underscores. Duplicate names are rejected at parse time.
+
+### Overrides
+
+**CLI:** `iter run --arg model=claude-sonnet --arg worktree_name=exp-1`
+
+**Compose:**
+
+```hcl
+service explorer {
+  build = "./Iterfile"
+  args {
+    model          = "claude-sonnet"
+    worktree_name  = "exp-1"
+  }
+}
+```
+
+Overrides take precedence over Iterfile defaults. An override naming an undeclared arg is an error.
+
+### Template Rendering
+
+`{{arg.*}}` references are expanded in all string fields at load time: workspace paths, agent command/args, queue URLs, prompt bodies, and event shell commands. They are distinct from runtime templates like `{{signal.*}}` and `{{metadata.*}}`, which are rendered per-iteration.
+
 ## Execution Model
 
 The runner loop shape is determined by `runner.behavior`:
@@ -68,6 +105,9 @@ Each section page documents its own fields and the events it emits.
 Every top-level section present, every optional field populated. Uses `workspace sandbox` (the most feature-rich workspace kind) and declares a handler for every lifecycle event.
 
 ```hcl
+arg environment = "staging"
+arg repo_url
+
 queue redis {
   url = "redis://localhost:6379"
   key = "iter:signals"
@@ -75,7 +115,7 @@ queue redis {
 
 workspace sandbox {
   base           = "."
-  remote         = "https://github.com/example/repo.git"
+  remote         = "{{arg.repo_url}}"
   excludes       = ["node_modules", ".git", "build"]
   includes       = [".important"]
   preserve_mtime = true

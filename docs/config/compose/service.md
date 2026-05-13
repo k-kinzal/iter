@@ -13,6 +13,9 @@ A service body takes one of two shapes — **external** (points at an Iterfile) 
 service <name> {
   build = "<path-to-Iterfile>"
   queue = "<queue-name>"   # optional when there is only one queue
+  args {                   # optional overrides for Iterfile arg declarations
+    <key> = "<value>"
+  }
 }
 
 # Inline
@@ -40,6 +43,23 @@ A single service body must be entirely external or entirely inline — `build` a
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `build` | `string` | Required | — | Path to the Iterfile that defines the service, resolved relative to the `compose.iter` file. |
+| `args` | `block` | Optional | `{}` | Key-value overrides for `arg` declarations in the referenced Iterfile. See [Arg overrides](#arg-overrides). |
+
+### Arg overrides
+
+When the referenced Iterfile declares `arg` sections, the `args` block supplies values that override the Iterfile defaults. An override naming an undeclared arg is an error; a required arg (no default) that is not overridden is also an error.
+
+```hcl
+service explorer {
+  build = "./explore.Iterfile"
+  args {
+    model         = "claude-sonnet"
+    worktree_name = "exp-1"
+  }
+}
+```
+
+See [`iterfile.md` — Arg Declarations](../iterfile.md#arg-declarations) for `arg` syntax and template rendering.
 
 ### Queue override
 

@@ -108,7 +108,8 @@ impl ComposePlan {
     /// symlinks and relative segments do not cause mismatches.
     #[must_use]
     pub fn services_for_source(&self, source: &Path) -> Vec<String> {
-        let canonical_source = std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+        let canonical_source =
+            std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
         self.services
             .iter()
             .filter(|s| {
@@ -344,7 +345,7 @@ fn build_service(
     queue_decl: QueueDecl,
 ) -> Result<ComposeService, ComposeError> {
     match source {
-        ServiceSource::Build { path, queue } => {
+        ServiceSource::Build { path, queue, args } => {
             let absolute = if path.is_absolute() {
                 path.clone()
             } else {
@@ -352,7 +353,7 @@ fn build_service(
             };
             let source_text =
                 std::fs::read_to_string(&absolute).map_err(|e| ComposeError::io(&absolute, e))?;
-            let root = parse(&source_text)
+            let mut root = parse(&source_text)
                 .map_err(|diags| ComposeError::parse(&absolute, &source_text, &diags))?;
             if root.queue.is_some() {
                 return Err(ComposeError::BuildTargetHasQueue {
@@ -360,6 +361,10 @@ fn build_service(
                     path: absolute,
                 });
             }
+            crate::arg::resolve_args(&mut root, args).map_err(|e| ComposeError::ArgResolve {
+                service: name.to_owned(),
+                source: e,
+            })?;
             let queue_ref = queue
                 .as_ref()
                 .ok_or_else(|| ComposeError::UnresolvedServiceQueue(name.to_owned()))?;
@@ -1252,5 +1257,4 @@ service alpha { build = "./Iterfile" }
         let unmatched = plan.services_for_source(Path::new("/nonexistent/Iterfile"));
         assert!(unmatched.is_empty());
     }
-
 }

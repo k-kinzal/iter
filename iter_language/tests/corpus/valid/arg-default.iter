@@ -1,0 +1,19 @@
+arg model = "gpt-4o"
+
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode = interactive
+  command = "claude"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Use {{arg.model}} for this task."

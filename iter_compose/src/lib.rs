@@ -15,6 +15,7 @@
 #![deny(rust_2018_idioms)]
 
 pub mod agent;
+pub mod arg;
 pub mod compose;
 pub mod config;
 pub mod discovery;

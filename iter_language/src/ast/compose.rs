@@ -84,6 +84,9 @@ pub enum ServiceSource {
         /// Compose-level queue binding. `None` means "use the single queue in
         /// this compose file" (a `compose.iter`-validation error otherwise).
         queue: Option<QueueRef>,
+        /// Arg overrides passed to the referenced Iterfile. Overrides
+        /// Iterfile-level `arg` defaults at build time.
+        args: BTreeMap<String, String>,
     },
     /// `service <name> { workspace ... agent ... runner ... }` — every
     /// runner-side section is declared inline. Boxed to keep

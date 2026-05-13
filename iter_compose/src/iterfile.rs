@@ -16,6 +16,7 @@
 //! See [`crate::compose`] for the analogous handler that runs a
 //! `compose.iter` plan.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -26,6 +27,7 @@ use thiserror::Error;
 use tracing::{error, info};
 
 use crate::agent::{AgentBuildError, AnyAgent, build_agent};
+use crate::arg::{ArgError, resolve_args};
 use crate::compose::{ComposeError, build_single_service, load_compose};
 use crate::config::build_runner_config;
 use crate::events::register_event_handlers;
@@ -57,6 +59,8 @@ pub struct RunInput {
     pub mode: RunMode,
     /// Bookkeeping recorded into the process registry entry.
     pub metadata: RunRecordMetadata,
+    /// CLI `--arg key=value` overrides for Iterfile arg declarations.
+    pub arg_overrides: BTreeMap<String, String>,
 }
 
 /// What [`RunInput::iterfile_path`] points at.
@@ -127,6 +131,10 @@ pub enum IterfileError {
     /// A required section is missing from the iterfile.
     #[error("iterfile is missing the `{0}` section")]
     MissingSection(&'static str),
+    /// Arg resolution failed (missing required arg, unknown override, or
+    /// render error).
+    #[error(transparent)]
+    Arg(#[from] ArgError),
     /// Building a queue declaration failed.
     #[error(transparent)]
     QueueBuild(#[from] QueueBuildError),
@@ -244,7 +252,9 @@ async fn run_inner(
     // differ from `canonical_path` for compose-service builds whose
     // service points at a separate `build = ...` Iterfile).
     let (mut builder, record_path) = match &input.source {
-        RunSource::Iterfile => build_iterfile_builder(&canonical_path, input.once)?,
+        RunSource::Iterfile => {
+            build_iterfile_builder(&canonical_path, input.once, &input.arg_overrides)?
+        }
         RunSource::ComposeService { service_name } => {
             build_compose_service_builder(&canonical_path, service_name, input.once)?
         }
@@ -313,6 +323,7 @@ async fn run_inner(
 fn build_iterfile_builder(
     iterfile_path: &Path,
     once: bool,
+    arg_overrides: &BTreeMap<String, String>,
 ) -> Result<
     (
         iter_core::RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
@@ -320,7 +331,8 @@ fn build_iterfile_builder(
     ),
     IterfileError,
 > {
-    let iterfile = load_and_parse(iterfile_path)?;
+    let mut iterfile = load_and_parse(iterfile_path)?;
+    resolve_args(&mut iterfile, arg_overrides)?;
 
     let workspace_decl = iterfile
         .workspace
