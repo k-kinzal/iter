@@ -182,11 +182,15 @@ pub enum Command {
 /// Subcommands grouped under `iter compose`.
 #[derive(Debug, Subcommand)]
 pub enum ComposeCmd {
-    /// Build and spawn every service and trigger declared in `compose.iter`.
+    /// Build and spawn services and triggers declared in `compose.iter`.
+    /// When targets are given, only the named services are started
+    /// (requires `--detach`).
     #[command(after_help = "EXAMPLES:\n  \
                       iter compose up\n  \
                       iter compose up -f dev.compose.iter\n  \
-                      iter compose up --on-failure continue")]
+                      iter compose up --on-failure continue\n  \
+                      iter compose up worker-a --detach\n  \
+                      iter compose up --source ./worker-a/Iterfile --detach")]
     Up(ComposeUpArgs),
     /// Parse and semantic-check a `compose.iter` and exit.
     #[command(after_help = "EXAMPLES:\n  \
@@ -239,17 +243,23 @@ pub enum ComposeCmd {
                       iter compose ps -p my-project --format json"
     )]
     Ps(ComposePsArgs),
-    /// Stop every runner in a compose project plus its orchestrator
-    /// (mirrors `docker compose down`).
+    /// Stop runners in a compose project (mirrors `docker compose down`).
+    /// When targets are given, only the named services are stopped;
+    /// the orchestrator and siblings are left running.
     #[command(
         long_about = "Send `SIGTERM` to every runner in a compose project, then \
                       to the orchestrator process discovered through any \
                       runner's `iter.compose.orchestrator_pid` label. Escalates \
-                      to `SIGKILL` after `--timeout` seconds (default 30).",
+                      to `SIGKILL` after `--timeout` seconds (default 30).\n\n\
+                      When one or more service targets are given, only those \
+                      services are stopped; the orchestrator and sibling \
+                      services are left running.",
         after_help = "EXAMPLES:\n  \
                       iter compose down\n  \
                       iter compose down -f dev.compose.iter\n  \
-                      iter compose down -p my-project --timeout 5"
+                      iter compose down -p my-project --timeout 5\n  \
+                      iter compose down worker-a\n  \
+                      iter compose down --source ./worker-a/Iterfile"
     )]
     Down(ComposeDownArgs),
 }
@@ -375,6 +385,13 @@ pub struct ComposePsArgs {
 /// Arguments accepted by `iter compose down`.
 #[derive(Debug, Parser, Clone)]
 pub struct ComposeDownArgs {
+    /// Optional service targets. When given, only the named services are
+    /// stopped; the orchestrator and sibling services are left running.
+    /// Accepts bare service names (`worker-a`) or explicit resource
+    /// references (`service/worker-a`).
+    #[arg(value_name = "TARGET")]
+    pub targets: Vec<String>,
+
     /// Path to the compose file used to derive the project slug
     /// (defaults to `./compose.iter`). Ignored when `-p` is given.
     #[arg(short = 'f', long = "file")]
@@ -384,6 +401,13 @@ pub struct ComposeDownArgs {
     /// precedence over the compose file's directory basename.
     #[arg(short = 'p', long = "project-name")]
     pub project_name: Option<String>,
+
+    /// Stop services built from the given Iterfile path. Resolved
+    /// against `service { build = ... }` declarations in the compose
+    /// file. If multiple services share the same Iterfile, all are
+    /// stopped.
+    #[arg(long = "source")]
+    pub source: Option<PathBuf>,
 
     /// Seconds to wait for graceful `SIGTERM` shutdown before
     /// escalating to `SIGKILL`. Mirrors `docker compose down --timeout`.
@@ -398,6 +422,12 @@ pub struct ComposeDownArgs {
 /// Arguments accepted by `iter compose up`.
 #[derive(Debug, Parser, Clone)]
 pub struct ComposeUpArgs {
+    /// Optional service targets. When given, only the named services are
+    /// started. Requires `--detach`. Accepts bare service names
+    /// (`worker-a`) or explicit resource references (`service/worker-a`).
+    #[arg(value_name = "TARGET")]
+    pub targets: Vec<String>,
+
     /// Path to the compose file (defaults to `./compose.iter`).
     #[arg(short = 'f', long = "file")]
     pub file: Option<PathBuf>,
@@ -420,6 +450,12 @@ pub struct ComposeUpArgs {
     /// in different directories happen to share a basename.
     #[arg(short = 'p', long = "project-name")]
     pub project_name: Option<String>,
+
+    /// Start services built from the given Iterfile path. Resolved
+    /// against `service { build = ... }` declarations in the compose
+    /// file. Requires `--detach`.
+    #[arg(long = "source")]
+    pub source: Option<PathBuf>,
 
     /// Enable debug-level tracing output.
     #[arg(long)]

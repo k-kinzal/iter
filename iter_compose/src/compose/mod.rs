@@ -21,9 +21,9 @@ use std::path::Path;
 
 use iter_language::{ComposeRoot, parse_compose};
 
-pub use error::{ComposeError, ServiceRunError, ServiceSubprocessError};
+pub use error::{ComposeError, ServiceRunError, ServiceSubprocessError, TargetedSpawnError};
 pub use plan::{ComposePlan, SingleServiceBuild, build, build_single_service};
-pub use run::run;
+pub use run::{run, spawn_targeted_service};
 pub use service::{
     ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID,
     LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TaskOutcome,

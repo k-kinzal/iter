@@ -260,13 +260,46 @@ Same slug = same project. Two compose files in different directories whose basen
 | Command | Purpose |
 | --- | --- |
 | `iter compose up [-d]` | Start the orchestrator (foreground or detached). With `-d`, the orchestrator forks, sets a new session, redirects stdio to `/dev/null`, and exits the parent shell. |
+| `iter compose up SERVICE [...] -d` | Start only the named service(s) as detached subprocesses. Requires a URL-addressable queue. |
 | `iter compose validate` | Parse and semantic-check the compose file. |
 | `iter compose config` | List the telemetry, queues, services, and triggers declared in the file (static plan listing — no runtime queries). |
 | `iter compose ls` | List every active project, grouped from runner labels across the local registry. |
 | `iter compose ps` | List the runners belonging to a single project. |
 | `iter compose down` | Send `SIGTERM` to every runner in a project and to its orchestrator (discovered via labels). Escalates to `SIGKILL` after `--timeout` seconds (default 30). |
+| `iter compose down SERVICE [...]` | Send `SIGTERM` only to the named service runner(s), leaving the orchestrator and siblings running. |
 
 `iter compose up -d` refuses to start a second orchestrator for a project whose previous orchestrator is still alive — the check uses the same labels-based discovery as `compose ls`.
+
+### Targeted Service Restart
+
+When one Iterfile referenced by a `compose.iter` changes, targeted up/down lets the operator restart only the affected service:
+
+```sh
+iter compose down worker-a
+iter compose up worker-a --detach
+```
+
+Both commands accept bare service names and explicit `service/NAME` references. Multiple services can be targeted in one invocation:
+
+```sh
+iter compose down worker-a worker-b
+iter compose up worker-a worker-b --detach
+```
+
+The `--source` flag selects services by their Iterfile path instead of by name:
+
+```sh
+iter compose down --source ./worker-a/Iterfile
+iter compose up --source ./worker-a/Iterfile --detach
+```
+
+If multiple services share the same Iterfile, all matching services are selected.
+
+Targeted `compose up` requires `--detach` because each service runs as its own subprocess. The service's queue must be URL-addressable (`file://`, `redis://`, etc.); non-addressable queues fail with an actionable diagnostic.
+
+When the project already has a live orchestrator, targeted `up` reuses its identity in the service labels so `compose ps` and `compose down` see the new service as part of the same project.
+
+When no targets are supplied, `compose up` and `compose down` retain their project-wide behaviour.
 
 ### Logs
 

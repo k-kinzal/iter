@@ -35,8 +35,8 @@ pub use agent::{AnyAgent, build_agent};
 pub use compose::{
     ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,
     LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME,
-    LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TaskOutcome, TriggerRunError, build,
-    is_compose_filename, load_compose, run,
+    LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TargetedSpawnError, TaskOutcome,
+    TriggerRunError, build, is_compose_filename, load_compose, run, spawn_targeted_service,
 };
 pub use config::build_runner_config;
 pub use discovery::{

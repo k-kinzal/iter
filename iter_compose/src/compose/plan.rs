@@ -96,6 +96,30 @@ impl ComposePlan {
         self.triggers.iter().map(|t| t.name.as_str())
     }
 
+    /// Collect all declared service names as owned strings.
+    #[must_use]
+    pub fn all_service_names(&self) -> Vec<String> {
+        self.services.iter().map(|s| s.name.clone()).collect()
+    }
+
+    /// Return service names whose `iterfile_path` matches `source`.
+    ///
+    /// Both paths are canonicalized best-effort before comparison so
+    /// symlinks and relative segments do not cause mismatches.
+    #[must_use]
+    pub fn services_for_source(&self, source: &Path) -> Vec<String> {
+        let canonical_source = std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+        self.services
+            .iter()
+            .filter(|s| {
+                let canonical_iterfile = std::fs::canonicalize(&s.iterfile_path)
+                    .unwrap_or_else(|_| s.iterfile_path.clone());
+                canonical_iterfile == canonical_source
+            })
+            .map(|s| s.name.clone())
+            .collect()
+    }
+
     /// Borrow the project-wide telemetry declaration, when present.
     #[must_use]
     pub fn telemetry(&self) -> Option<&TelemetryDecl> {
@@ -1170,4 +1194,63 @@ mod tests {
             "expected UnknownChildQueue for 'grandchild_q', got: {err:?}"
         );
     }
+
+    #[test]
+    fn all_service_names_returns_declared_names() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let iterfile = dir.path().join("Iterfile");
+        std::fs::write(
+            &iterfile,
+            r#"
+workspace local { base = "." }
+agent claude { mode = print command = "claude" }
+runner { continue_on_error = false behavior = wait }
+prompt "noop"
+"#,
+        )
+        .expect("write iterfile");
+        let path = write_compose(
+            dir.path(),
+            r#"
+queue main file { path = "./.iter/queue" }
+service alpha { build = "./Iterfile" }
+"#,
+        );
+        let root = load_compose(&path).expect("load");
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        let plan = build(&root, &canonical).expect("build");
+        let names = plan.all_service_names();
+        assert_eq!(names, vec!["alpha"]);
+    }
+
+    #[test]
+    fn services_for_source_matches_iterfile_path() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let iterfile = dir.path().join("Iterfile");
+        std::fs::write(
+            &iterfile,
+            r#"
+workspace local { base = "." }
+agent claude { mode = print command = "claude" }
+runner { continue_on_error = false behavior = wait }
+prompt "noop"
+"#,
+        )
+        .expect("write iterfile");
+        let path = write_compose(
+            dir.path(),
+            r#"
+queue main file { path = "./.iter/queue" }
+service alpha { build = "./Iterfile" }
+"#,
+        );
+        let root = load_compose(&path).expect("load");
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        let plan = build(&root, &canonical).expect("build");
+        let matched = plan.services_for_source(&iterfile);
+        assert_eq!(matched, vec!["alpha"]);
+        let unmatched = plan.services_for_source(Path::new("/nonexistent/Iterfile"));
+        assert!(unmatched.is_empty());
+    }
+
 }

@@ -130,6 +130,42 @@ pub enum ComposeUpError {
         /// pid that exited.
         orchestrator_pid: u32,
     },
+    /// Targeted `compose up SERVICE` requires `--detach`.
+    #[error("targeted compose up requires --detach; foreground mode is project-wide only")]
+    TargetedRequiresDetach,
+    /// One or more service targets are unknown.
+    #[error(
+        "unknown service target(s): {unknown}; valid services: {valid}",
+        unknown = unknown.join(", "),
+        valid = if valid.is_empty() { "(none)".to_owned() } else { valid.join(", ") }
+    )]
+    UnknownTargets {
+        /// Targets that did not match any service.
+        unknown: Vec<String>,
+        /// Valid service names for the diagnostic.
+        valid: Vec<String>,
+    },
+    /// A target string uses an unsupported resource type prefix.
+    #[error(
+        "unsupported resource type in target `{target}`; only bare names \
+         and `service/NAME` are supported"
+    )]
+    UnsupportedResourceType {
+        /// The full target string.
+        target: String,
+    },
+    /// A targeted service's queue is not URL-addressable.
+    #[error(transparent)]
+    TargetedSpawn(#[from] iter_compose::TargetedSpawnError),
+    /// `--source` did not match any service's build path.
+    #[error(
+        "--source {} does not match any service's build path in the compose file",
+        path.display()
+    )]
+    SourceNoMatch {
+        /// The path the user named.
+        path: PathBuf,
+    },
     /// Acquiring or releasing the per-project advisory lock failed.
     /// `AlreadyHeld` collapses to a clearer "another invocation is
     /// starting this project" message; the variant carries the source
@@ -170,13 +206,14 @@ impl IntoExitCode for ComposeUpError {
             | Self::OrchestratorStartupTimeout { .. }
             | Self::OrchestratorExitedEarly { .. }
             | Self::ProjectLock(_) => exit_codes::RUNTIME,
-            // `ComposeFileMissing` mirrors `compose validate`/`compose ls`'s
-            // mapping of `ComposeError::Io` → `USER_INPUT (1)` so the
-            // `--detach` fork path agrees with the foreground path on
-            // bad-path exit codes (per `compose_subcommands_agree_on_...`).
             Self::ComposeFileMissing { .. }
             | Self::ProjectSlug(_)
-            | Self::ProjectAlreadyUp { .. } => exit_codes::USER_INPUT,
+            | Self::ProjectAlreadyUp { .. }
+            | Self::TargetedRequiresDetach
+            | Self::UnknownTargets { .. }
+            | Self::UnsupportedResourceType { .. }
+            | Self::TargetedSpawn(_)
+            | Self::SourceNoMatch { .. } => exit_codes::USER_INPUT,
             Self::CurrentExe(_) | Self::OrchestratorIdentity(_) | Self::Discovery(_) => {
                 exit_codes::INTERNAL
             }
@@ -223,6 +260,43 @@ pub enum ComposeRuntimeError {
     /// Serialising the listing to JSON failed.
     #[error("serializing compose listing: {0}")]
     JsonSerialize(#[source] serde_json::Error),
+    /// One or more service targets have no registered runner in the
+    /// project. The service may exist in the compose plan but has no
+    /// live or terminal process record — use `iter compose ps --all`
+    /// to inspect the registry.
+    #[error(
+        "no runners registered for service target(s): {unknown}; \
+         currently running services: {valid}",
+        unknown = unknown.join(", "),
+        valid = if valid.is_empty() { "(none)".to_owned() } else { valid.join(", ") }
+    )]
+    UnknownTargets {
+        /// Targets that did not match any registered runner.
+        unknown: Vec<String>,
+        /// Non-terminal service names for the diagnostic.
+        valid: Vec<String>,
+    },
+    /// A target string uses an unsupported resource type prefix.
+    #[error(
+        "unsupported resource type in target `{target}`; only bare names \
+         and `service/NAME` are supported"
+    )]
+    UnsupportedResourceType {
+        /// The full target string.
+        target: String,
+    },
+    /// Loading or building the compose file failed (needed by `--source`).
+    #[error(transparent)]
+    Compose(Box<ComposeError>),
+    /// `--source` did not match any service's build path.
+    #[error(
+        "--source {} does not match any service's build path in the compose file",
+        path.display()
+    )]
+    SourceNoMatch {
+        /// The path the user named.
+        path: PathBuf,
+    },
 }
 
 impl From<ProjectSlugError> for ComposeRuntimeError {
@@ -231,11 +305,23 @@ impl From<ProjectSlugError> for ComposeRuntimeError {
     }
 }
 
+impl From<ComposeError> for ComposeRuntimeError {
+    fn from(value: ComposeError) -> Self {
+        Self::Compose(Box::new(value))
+    }
+}
+
 impl IntoExitCode for ComposeRuntimeError {
     fn exit_code(&self) -> i32 {
         match self {
-            Self::ProjectSlug(_) => exit_codes::USER_INPUT,
-            Self::Discovery(_) | Self::Process(_) => exit_codes::RUNTIME,
+            Self::ProjectSlug(_)
+            | Self::UnknownTargets { .. }
+            | Self::UnsupportedResourceType { .. }
+            | Self::SourceNoMatch { .. } => exit_codes::USER_INPUT,
+            Self::Discovery(_) | Self::Process(_) => {
+                exit_codes::RUNTIME
+            }
+            Self::Compose(e) => compose_error_exit_code(e),
             Self::JsonSerialize(_) => exit_codes::INTERNAL,
         }
     }
@@ -351,11 +437,108 @@ impl IntoExitCode for ComposeCmdError {
 /// * One or more services/triggers fail to build.
 /// * Any task returns an error and the failure policy is `Abort`.
 pub async fn run_compose_up(args: ComposeUpArgs) -> Result<(), ComposeUpError> {
+    let has_targets = !args.targets.is_empty() || args.source.is_some();
+    if has_targets {
+        return run_compose_up_targeted(args).await;
+    }
     if args.detach {
         return spawn_compose_detached(&args);
     }
-
     run_compose_up_inline(args).await
+}
+
+/// Targeted `compose up SERVICE [SERVICE...] --detach`.
+///
+/// Spawns only the named services as independent subprocesses, without
+/// starting a new orchestrator. Requires `--detach` because each service
+/// runs as its own process; foreground targeted up is rejected.
+///
+/// If the project already has an active orchestrator, the new services
+/// reuse its identity in their labels so `compose ps` / `compose down`
+/// see them as part of the same project. If no orchestrator exists, the
+/// current process's identity is used as a fallback.
+async fn run_compose_up_targeted(args: ComposeUpArgs) -> Result<(), ComposeUpError> {
+    use iter_compose::spawn_targeted_service;
+
+    if !args.detach {
+        return Err(ComposeUpError::TargetedRequiresDetach);
+    }
+
+    let raw_path = resolve_compose_path(args.file.as_deref());
+    let compose_path = canonical_compose_path(&raw_path)?;
+    let root = load_compose(&compose_path)?;
+    let plan = build(&root, &compose_path)?;
+    let slug = project_slug(&compose_path, args.project_name.as_deref())?;
+
+    let mut target_names = Vec::new();
+    for target in &args.targets {
+        let name = parse_target_name_for_up(target)?;
+        if !target_names.contains(&name.to_owned()) {
+            target_names.push(name.to_owned());
+        }
+    }
+
+    if let Some(source) = &args.source {
+        let source_names = plan.services_for_source(source);
+        if source_names.is_empty() {
+            return Err(ComposeUpError::SourceNoMatch {
+                path: source.clone(),
+            });
+        }
+        cli_eprintln!(
+            "--source {} resolved to service(s): {}",
+            source.display(),
+            source_names.join(", ")
+        );
+        for name in source_names {
+            if !target_names.contains(&name) {
+                target_names.push(name);
+            }
+        }
+    }
+
+    let valid_names = plan.all_service_names();
+    let unknown: Vec<String> = target_names
+        .iter()
+        .filter(|t| !valid_names.contains(t))
+        .cloned()
+        .collect();
+    if !unknown.is_empty() {
+        return Err(ComposeUpError::UnknownTargets {
+            unknown,
+            valid: valid_names,
+        });
+    }
+
+    let orchestrator = match find_active_orchestrator(&slug)? {
+        Some(active) => OrchestratorContext {
+            project: slug.clone(),
+            identity: active.identity,
+        },
+        None => {
+            let identity = current_identity()
+                .map_err(|e| ComposeUpError::OrchestratorIdentity(Box::new(e)))?;
+            OrchestratorContext {
+                project: slug.clone(),
+                identity,
+            }
+        }
+    };
+
+    for name in &target_names {
+        let id = spawn_targeted_service(&plan, name, &compose_path, &orchestrator, args.debug)
+            .await?;
+        cli_eprintln!("project {slug:?}: started service {name:?} ({id})");
+    }
+
+    Ok(())
+}
+
+/// [`parse_target_name`] mirror for [`ComposeUpError`].
+fn parse_target_name_for_up(target: &str) -> Result<&str, ComposeUpError> {
+    parse_target_name_raw(target).map_err(|target| ComposeUpError::UnsupportedResourceType {
+        target: target.to_owned(),
+    })
 }
 
 /// In-process orchestrator path. Used directly by foreground `compose up`,
@@ -1029,7 +1212,123 @@ pub fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
     Ok(())
 }
 
+/// Extract the service name from a target string, returning `Err(target)`
+/// when the target uses an unsupported resource type prefix.
+///
+/// Accepts bare names (`worker-a`) and explicit `service/NAME` references.
+/// Rejects empty names, names containing `/` after the prefix (e.g.
+/// `service/service/foo`), and unknown resource type prefixes.
+fn parse_target_name_raw(target: &str) -> Result<&str, &str> {
+    if let Some(name) = target.strip_prefix("service/") {
+        if name.is_empty() || name.contains('/') {
+            return Err(target);
+        }
+        Ok(name)
+    } else if target.is_empty() || target.contains('/') {
+        Err(target)
+    } else {
+        Ok(target)
+    }
+}
+
+/// Parse a target string into a service name.
+///
+/// Accepts bare names (`worker-a`) and explicit resource references
+/// (`service/worker-a`). Rejects unknown resource type prefixes.
+fn parse_target_name(target: &str) -> Result<&str, ComposeRuntimeError> {
+    parse_target_name_raw(target).map_err(|target| {
+        ComposeRuntimeError::UnsupportedResourceType {
+            target: target.to_owned(),
+        }
+    })
+}
+
+/// Resolve positional targets and `--source` into a deduplicated list of
+/// service names. Returns `None` when no selectors were given (project-wide).
+fn resolve_down_targets(
+    args: &ComposeDownArgs,
+) -> Result<Option<Vec<String>>, ComposeRuntimeError> {
+    let has_positional = !args.targets.is_empty();
+    let has_source = args.source.is_some();
+    if !has_positional && !has_source {
+        return Ok(None);
+    }
+
+    let mut names: Vec<String> = Vec::new();
+
+    for target in &args.targets {
+        let name = parse_target_name(target)?;
+        if !names.iter().any(|n| n == name) {
+            names.push(name.to_owned());
+        }
+    }
+
+    if let Some(source) = &args.source {
+        let raw_compose = resolve_compose_path(args.file.as_deref());
+        let compose_path = canonicalize_compose_path(&raw_compose)
+            .unwrap_or_else(|_| raw_compose.clone());
+        let root = load_compose(&compose_path)?;
+        let plan = build(&root, &compose_path)?;
+        let source_names = plan.services_for_source(source);
+        if source_names.is_empty() {
+            return Err(ComposeRuntimeError::SourceNoMatch {
+                path: source.clone(),
+            });
+        }
+        if !args.quiet {
+            cli_eprintln!(
+                "--source {} resolved to service(s): {}",
+                source.display(),
+                source_names.join(", ")
+            );
+        }
+        for name in source_names {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+
+    Ok(Some(names))
+}
+
+/// Validate that every target name exists among the discovered project
+/// members. Returns the unknown names if any are missing.
+fn validate_targets_against_members(
+    targets: &[String],
+    members: &[ProjectMember],
+) -> Result<(), ComposeRuntimeError> {
+    use std::collections::BTreeSet;
+    let known: BTreeSet<&str> = members
+        .iter()
+        .filter(|m| !m.service.is_empty())
+        .map(|m| m.service.as_str())
+        .collect();
+    let unknown: Vec<String> = targets
+        .iter()
+        .filter(|t| !known.contains(t.as_str()))
+        .cloned()
+        .collect();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        let live: Vec<String> = members
+            .iter()
+            .filter(|m| !m.service.is_empty() && !m.status.is_terminal())
+            .map(|m| m.service.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Err(ComposeRuntimeError::UnknownTargets {
+            unknown,
+            valid: live,
+        })
+    }
+}
+
 /// Handle `iter compose down`. Mirrors `docker compose down`.
+///
+/// When no targets are given, project-wide behaviour is unchanged:
 ///
 /// 1. Resolve the project slug.
 /// 2. Discover the orchestrator from any compose-tagged runner's labels;
@@ -1038,35 +1337,53 @@ pub fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
 /// 4. Poll until everything is terminal or `--timeout` elapses, escalating
 ///    to `SIGKILL` on timeout.
 ///
+/// When targets are given, only the named services are stopped. The
+/// orchestrator and sibling services are left running.
+///
 /// # Errors
 ///
 /// Forwarded from [`ComposeRuntimeError`].
 pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRuntimeError> {
     let slug = runtime_project_slug(args.file.as_deref(), args.project_name.as_deref())?;
-    let members = list_project_members(&slug)?;
+    let all_members = list_project_members(&slug)?;
+    let targets = resolve_down_targets(args)?;
+    let targeted = targets.is_some();
 
-    if members.is_empty() {
+    if let Some(ref target_names) = targets {
+        validate_targets_against_members(target_names, &all_members)?;
+    }
+
+    if all_members.is_empty() {
         if !args.quiet {
             cli_eprintln!("project {slug:?}: no runners registered");
         }
         return Ok(());
     }
 
-    let orchestrator = find_active_orchestrator(&slug)?;
-    if let Some(active) = orchestrator.as_ref() {
-        // signal_identity re-checks the pid+start_time fingerprint right
-        // before kill(2), narrowing the TOCTOU window left open by
-        // find_active_orchestrator. The window is not zero — see the
-        // signal_identity docs for the pidfd follow-up — but for the
-        // user-local trust model it is acceptable.
-        let signalled = signal_identity(&active.identity, SignalDelivery::Term)?;
-        if signalled && !args.quiet {
-            cli_eprintln!(
-                "project {slug:?}: SIGTERM orchestrator pid {pid}",
-                pid = active.identity.pid.as_raw()
-            );
+    let members: Vec<&ProjectMember> = match targets {
+        Some(ref names) => all_members
+            .iter()
+            .filter(|m| names.contains(&m.service))
+            .collect(),
+        None => all_members.iter().collect(),
+    };
+
+    // Signal orchestrator only for project-wide down.
+    let orchestrator = if targeted {
+        None
+    } else {
+        let orch = find_active_orchestrator(&slug)?;
+        if let Some(active) = orch.as_ref() {
+            let signalled = signal_identity(&active.identity, SignalDelivery::Term)?;
+            if signalled && !args.quiet {
+                cli_eprintln!(
+                    "project {slug:?}: SIGTERM orchestrator pid {pid}",
+                    pid = active.identity.pid.as_raw()
+                );
+            }
         }
-    }
+        orch
+    };
 
     let registry = ProcessRegistry::open_default()?;
     let mut handles: Vec<(String, String, ProcessHandle)> = Vec::with_capacity(members.len());
@@ -1075,14 +1392,14 @@ pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRunti
         let handle = ProcessHandle::open(registry.proc_root(), id).await?;
         let status = handle.refresh_status().await?;
         if status.is_terminal() {
+            if targeted && !args.quiet {
+                cli_eprintln!(
+                    "project {slug:?}: service {service:?} already stopped",
+                    service = member.service,
+                );
+            }
             continue;
         }
-        // Race window: the orchestrator's own SIGTERM cascade may have
-        // moved this runner to a terminal state between the
-        // `refresh_status` above and the `stop` below. Treat that as
-        // success (the goal — the runner is no longer running — has
-        // already been met), the same way `docker compose down`
-        // tolerates a container that races past `stop`.
         match handle.stop().await {
             Ok(_) => {}
             Err(ProcessError::IllegalTransition {
@@ -1105,11 +1422,6 @@ pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRunti
     let timeout = Duration::from_secs(args.timeout);
     let deadline = Instant::now() + timeout;
     let mut still_alive: Vec<(String, String, ProcessHandle)> = handles;
-    // Mirror docker compose down: wait until *both* the services and the
-    // orchestrator process are gone before returning. Otherwise the caller
-    // observes an inconsistent state where the runners are reaped but
-    // `pgrep -f "iter compose up"` still reports a live orchestrator
-    // mid-shutdown.
     let orchestrator_identity = orchestrator.as_ref().map(|a| a.identity.clone());
     loop {
         if !still_alive.is_empty() {
@@ -1117,24 +1429,12 @@ pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRunti
                 Vec::with_capacity(still_alive.len());
             for (id, service, handle) in still_alive {
                 let status = handle.refresh_status().await?;
-                // Keep the handle alive for SIGKILL escalation as long as
-                // *either* the record is non-terminal *or* the OS pid is
-                // still up. `handle.stop()` flips the record to `Killed`
-                // synchronously without waiting for the kernel exit, so a
-                // subprocess that ignored SIGTERM looks "done" by status
-                // alone (Codex iter-9 Major 4) — without the OS-side
-                // check we drop it from `still_alive`, never escalate,
-                // and leak a live OS pid past the timeout.
                 if !status.is_terminal() || record_pid_alive(&handle) {
                     next.push((id, service, handle));
                 }
             }
             still_alive = next;
         }
-        // Treat probe failures as "presumed alive" so a transient
-        // `/proc/<pid>/stat` glitch never aborts cleanup mid-loop
-        // (Codex iter-9 Minor 2). The deadline + escalation pass below
-        // is the safety net.
         let orch_alive = orchestrator_identity
             .as_ref()
             .is_some_and(|id| process_is_alive_with_start_time(id).unwrap_or(true));
@@ -1149,12 +1449,10 @@ pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRunti
 
     escalate_to_sigkill(&slug, &still_alive, orchestrator_identity.as_ref(), args).await?;
 
-    // After SIGTERM-grace + escalate finished, the orchestrator may have
-    // spawned new services in the gap between our `list_project_members`
-    // snapshot and its own SIGTERM-driven shutdown (Codex iter-9
-    // Major 2). Re-list and signal any latecomers we missed; since the
-    // orchestrator is now down or being SIGKILLed, this loop is finite.
-    sweep_late_members(&slug, &members, args).await?;
+    // Sweep late members only for project-wide down.
+    if !targeted {
+        sweep_late_members(&slug, &all_members, args).await?;
+    }
     Ok(())
 }
 

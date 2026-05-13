@@ -1368,3 +1368,244 @@ fn inspect_format_table_is_rejected_by_clap_with_exit_two() {
         "stderr should carry clap's unknown-flag message; got:\n{stderr}"
     );
 }
+
+// -- Targeted compose up/down contract tests ---------------------------------
+
+/// `iter compose down <unknown-service>` must fail with a clear
+/// diagnostic when the target does not match any registered service.
+#[test]
+fn compose_down_unknown_target_fails() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, _service) = write_compose_project(home.path(), "demo-unk-tgt");
+    let (_guard, _records) = compose_up_and_wait(home.path(), &project_dir, "demo-unk-tgt");
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "down", "nonexistent", "-t", "5"])
+        .output()
+        .expect("spawn iter");
+    assert!(
+        !out.status.success(),
+        "compose down of unknown target must fail; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no runners registered for service target"),
+        "stderr should mention unregistered target; got:\n{stderr}"
+    );
+}
+
+/// `iter compose up <target>` without `--detach` must fail.
+#[test]
+fn compose_up_targeted_without_detach_fails() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, service) = write_compose_project(home.path(), "demo-no-detach");
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up", &service])
+        .output()
+        .expect("spawn iter");
+    assert!(
+        !out.status.success(),
+        "targeted compose up without --detach must fail; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--detach") || stderr.contains("detach"),
+        "stderr should mention --detach requirement; got:\n{stderr}"
+    );
+}
+
+/// `iter compose up <unknown> --detach` must fail when the target
+/// service does not exist in the compose file.
+#[test]
+fn compose_up_unknown_target_fails() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, _service) = write_compose_project(home.path(), "demo-unk-up");
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up", "nonexistent", "--detach"])
+        .output()
+        .expect("spawn iter");
+    assert!(
+        !out.status.success(),
+        "compose up of unknown target must fail; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unknown service target"),
+        "stderr should mention unknown target; got:\n{stderr}"
+    );
+}
+
+/// `iter compose down service/NAME` accepts the explicit resource
+/// reference syntax. On an empty registry the operation is a no-op.
+#[test]
+fn compose_down_accepts_service_prefix() {
+    let dir = TempDir::new().expect("tempdir");
+    let out = Command::new(iter_bin())
+        .current_dir(dir.path())
+        .env("HOME", dir.path())
+        .args(["compose", "down", "service/worker", "-p", "demo"])
+        .output()
+        .expect("spawn iter");
+    // Targeted down on empty registry should fail with "no runners registered"
+    // rather than "unsupported resource type" — confirming prefix parsing works.
+    assert!(
+        !out.status.success(),
+        "compose down service/worker on empty registry should fail; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no runners registered for service target"),
+        "should report unknown target, not unsupported resource type; got:\n{stderr}"
+    );
+}
+
+/// `iter compose down trigger/NAME` or `queue/NAME` must fail with
+/// an unsupported resource type diagnostic.
+#[test]
+fn compose_down_rejects_non_service_resource_types() {
+    let dir = TempDir::new().expect("tempdir");
+    for target in ["trigger/tick", "queue/main"] {
+        let out = Command::new(iter_bin())
+            .current_dir(dir.path())
+            .env("HOME", dir.path())
+            .args(["compose", "down", target, "-p", "demo"])
+            .output()
+            .expect("spawn iter");
+        assert!(
+            !out.status.success(),
+            "compose down {target} must fail; stderr=\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("unsupported resource type"),
+            "stderr should mention unsupported resource type for {target}; got:\n{stderr}"
+        );
+    }
+}
+
+/// `service/service/foo` is rejected as an unsupported resource type —
+/// nested slashes after the `service/` prefix are not valid service names.
+#[test]
+fn compose_down_rejects_nested_service_slash() {
+    let dir = TempDir::new().expect("tempdir");
+    let out = Command::new(iter_bin())
+        .current_dir(dir.path())
+        .env("HOME", dir.path())
+        .args(["compose", "down", "service/service/foo", "-p", "demo"])
+        .output()
+        .expect("spawn iter");
+    assert!(
+        !out.status.success(),
+        "compose down service/service/foo must fail; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unsupported resource type"),
+        "stderr should mention unsupported resource type; got:\n{stderr}"
+    );
+}
+
+/// `iter compose up --help` advertises the new `--source` flag.
+#[test]
+fn compose_up_help_advertises_source_flag() {
+    let dir = TempDir::new().expect("tempdir");
+    let out = run_iter(dir.path(), &["compose", "up", "--help"]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("--source"),
+        "compose up --help must mention --source; got:\n{stdout}"
+    );
+}
+
+/// `iter compose down --help` advertises the `--source` flag and
+/// positional targets.
+#[test]
+fn compose_down_help_advertises_target_and_source() {
+    let dir = TempDir::new().expect("tempdir");
+    let out = run_iter(dir.path(), &["compose", "down", "--help"]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("--source"),
+        "compose down --help must mention --source; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("TARGET"),
+        "compose down --help must mention TARGET; got:\n{stdout}"
+    );
+}
+
+/// `iter compose down` without targets still stops the whole project.
+/// This is a regression guard ensuring targeted-down changes don't
+/// break the project-wide path.
+#[test]
+fn compose_down_without_targets_stops_whole_project() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, _service) = write_compose_project(home.path(), "demo-full-down");
+    let (guard, records) = compose_up_and_wait(home.path(), &project_dir, "demo-full-down");
+
+    let orch_pid: u32 = records[0]
+        .get("labels")
+        .and_then(|l| l.get("iter.compose.orchestrator_pid"))
+        .and_then(|v| v.as_str())
+        .expect("orchestrator_pid label")
+        .parse()
+        .expect("pid parses as u32");
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "down", "-q", "-t", "5"])
+        .output()
+        .expect("iter compose down");
+    assert!(
+        out.status.success(),
+        "compose down exit={:?}; stderr=\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        !pid_alive(orch_pid),
+        "orchestrator pid {orch_pid} must be reaped after `compose down`"
+    );
+
+    let post = compose_records_for_project(home.path(), "demo-full-down");
+    assert_eq!(post.len(), 1);
+    let status = read_runner_status(home.path(), &post[0]);
+    let status_trimmed = status.trim();
+    assert!(
+        matches!(
+            status_trimmed,
+            "stopped" | "killed" | "failed" | "completed"
+        ),
+        "runner status after compose down must be terminal; got {status_trimmed:?}"
+    );
+
+    drop(guard);
+}
+
+/// Read the status file for a compose runner record.
+fn read_runner_status(home: &Path, record: &serde_json::Value) -> String {
+    let id = record
+        .get("id")
+        .and_then(|v| v.as_str())
+        .expect("record has id");
+    let path = home.join(format!(".iter/proc/{id}/status"));
+    std::fs::read_to_string(&path).unwrap_or_else(|_| "unknown".to_owned())
+}

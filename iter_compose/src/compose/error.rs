@@ -256,6 +256,36 @@ pub enum ServiceRunError {
     FinalizeStatus(#[source] ProcessError),
 }
 
+/// Errors produced by [`super::spawn_targeted_service`].
+#[derive(Debug, Error)]
+pub enum TargetedSpawnError {
+    /// The named service does not exist in the plan. Defensive guard for
+    /// callers that skip pre-validation; `run_compose_up_targeted` validates
+    /// names before calling `spawn_targeted_service`, so this is unreachable
+    /// through that path.
+    #[error("compose file has no service named `{0}`")]
+    UnknownService(String),
+    /// The service's queue is not URL-addressable; cross-process restart
+    /// requires `file://`, `redis://`, or another addressable backend.
+    #[error(
+        "service `{service}` uses a non-addressable queue; targeted restart \
+         requires a URL-addressable queue backend (file://, redis://, etc.)"
+    )]
+    NonAddressable {
+        /// The service whose queue lacks a URL form.
+        service: String,
+    },
+    /// Opening the process registry failed.
+    #[error("opening process registry: {0}")]
+    OpenRegistry(#[source] ProcessError),
+    /// Locating the current `iter` binary failed.
+    #[error("locating iter binary: {0}")]
+    Binary(#[source] std::io::Error),
+    /// Spawning the service subprocess failed.
+    #[error("spawning service subprocess: {0}")]
+    Spawn(#[source] SpawnError),
+}
+
 /// Errors a subprocess-spawned service can surface.
 ///
 /// The `Binary {…}` arm carries a runtime-resolved program path

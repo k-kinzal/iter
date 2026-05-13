@@ -391,3 +391,78 @@ async fn run_one_service_inner(
     );
     Ok(summary)
 }
+
+/// Spawn a single named service from a built compose plan as a detached
+/// subprocess.
+///
+/// Used by targeted `compose up SERVICE --detach` to start individual
+/// services without a full orchestrator. The service must use a
+/// URL-addressable queue so the subprocess can connect to it
+/// independently.
+///
+/// Returns the allocated [`ProcessId`] on success. The subprocess
+/// runs `iter run <compose_path> --service <name>` and registers in
+/// `~/.iter/proc/` with the same labels a full `compose up` would
+/// stamp.
+///
+/// # Errors
+///
+/// * The named service does not exist in the plan.
+/// * The service's queue is not URL-addressable.
+/// * Opening the process registry, locating the binary, or spawning
+///   the child fails.
+pub async fn spawn_targeted_service(
+    plan: &ComposePlan,
+    service_name: &str,
+    compose_path: &Path,
+    orchestrator: &OrchestratorContext,
+    debug: bool,
+) -> Result<ProcessId, super::error::TargetedSpawnError> {
+    use super::error::TargetedSpawnError;
+
+    let service = plan
+        .services
+        .iter()
+        .find(|s| s.name == service_name)
+        .ok_or_else(|| TargetedSpawnError::UnknownService(service_name.to_owned()))?;
+
+    if queue_to_url(&service.queue_decl).is_none() {
+        return Err(TargetedSpawnError::NonAddressable {
+            service: service_name.to_owned(),
+        });
+    }
+
+    let registry =
+        ProcessRegistry::open_default().map_err(TargetedSpawnError::OpenRegistry)?;
+
+    let program = std::env::current_exe().map_err(TargetedSpawnError::Binary)?;
+
+    let args = vec![
+        "run".to_string(),
+        compose_path.display().to_string(),
+        "--service".to_string(),
+        service.name.clone(),
+    ];
+
+    let spec = DetachedSpec {
+        name: service.name.clone(),
+        iterfile: compose_path.to_path_buf(),
+        subcommand: "run".to_string(),
+        args,
+        program,
+        env: telemetry::service_env(
+            plan.telemetry.as_ref(),
+            &orchestrator.project,
+            &service.name,
+        ),
+        debug,
+        parent_id: None,
+        labels: orchestrator.labels_for(&service.name),
+    };
+
+    let id = spawn_detached(&registry, spec)
+        .await
+        .map_err(TargetedSpawnError::Spawn)?;
+
+    Ok(id)
+}
