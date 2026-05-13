@@ -64,7 +64,7 @@ trigger <name> watch {
   include  = ["<glob>", ...]
   exclude  = ["<glob>", ...]
   per_file = <bool>
-  cooldown = <duration>
+  interval = <duration>
 
   priority    = <enum>
   metadata    { ... }
@@ -77,12 +77,14 @@ trigger <name> watch {
 | `dir` | ✔ | — | Watched recursively. Resolved relative to the compose file. |
 | `include` | optional | `[]` | gitignore-style globs vs the path relative to `dir`. Empty = watch everything. |
 | `exclude` | optional | `[]` | Same syntax. Wins over `include`. |
-| `per_file` | optional | `false` | `true` → one Signal per file; `false` → batch coalesced by `cooldown`. |
-| `cooldown` | optional | per-mode default | With `per_file=true`: per-path debounce. With `per_file=false`: batch window (library default 250&nbsp;ms; the standalone `iter-watch` CLI defaults `--cooldown 2`). |
+| `per_file` | optional | `false` | `true` → one Signal per file (when no `interval`); `false` → merged by `interval`. |
+| `interval` | optional | per-mode default | Publish interval. After the first event, collect changes for this duration, then emit one merged Signal. No per-path suppression. With `per_file=true` and no interval: every event fires immediately. With `per_file=false` and no interval: library default 250&nbsp;ms. Standalone `iter-watch` defaults `--interval 2`. `cooldown` is a deprecated alias. |
 
 Per-file Signal metadata: `path`, `kind` (`created`/`modified`/`removed`),
 `timestamp` (RFC3339).
-Batched Signal metadata: `files` (JSON array of changed paths).
+Merged Signal metadata: `files` (JSON array of unique paths), `events`
+(JSON array of `{path, kind, timestamp}` objects), `changed_count`,
+`event_count`.
 
 ---
 

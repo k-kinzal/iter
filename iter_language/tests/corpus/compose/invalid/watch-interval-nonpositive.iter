@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger bad watch {
+    dir = "./src"
+    interval = 0s
+    target = main
+}

@@ -62,6 +62,6 @@ trigger changes watch {
   dir      = "./src"
   include  = ["**/*.rs"]
   per_file = false
-  cooldown = 5s
+  interval = 5s
 }
 ```

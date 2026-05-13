@@ -8,12 +8,13 @@ Watches one or more paths for filesystem changes and emits signals when
 files are created, modified, or removed. Supports:
 
 - Glob-based include/exclude filtering.
-- Configurable debounce (cooldown between emissions for the same path).
+- Configurable publish interval (events within an interval are merged).
 - Per-file or batched emission modes.
 - Backend selection (recommended, poll, or inotify/kqueue/FSEvents).
 
-Each emitted signal carries `path`, `kind`, and `timestamp` metadata
-describing the change event.
+Per-file signals carry `path`, `kind`, and `timestamp` metadata.
+Merged signals carry `files` (unique paths), `events` (ordered detail),
+`changed_count`, and `event_count`.
 
 ## Workspace dependencies
 

@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: trigger-watch-exclude.iter
 ---
 ComposeRoot {
+    telemetry: None,
     queues: [
         Spanned {
             node: NamedQueue {
@@ -29,7 +30,7 @@ ComposeRoot {
                         "tmp/**",
                     ],
                     per_file: true,
-                    cooldown_secs: Some(
+                    interval_secs: Some(
                         1800,
                     ),
                     base_metadata: [],
@@ -44,4 +45,5 @@ ComposeRoot {
             span: 44..241,
         },
     ],
+    composes: [],
 }

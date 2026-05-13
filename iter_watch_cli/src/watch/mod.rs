@@ -1,7 +1,6 @@
 //! [`WatchTrigger`] — emits signals from filesystem change events.
 
 mod config;
-mod debounce;
 mod filter;
 mod kind;
 
@@ -18,7 +17,6 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
-use debounce::PathDebouncer;
 use filter::path_matches;
 use kind::{ChangeKind, ChangeRecord};
 
@@ -126,6 +124,9 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         let kind_key = MetadataKey::new("kind")?;
         let timestamp_key = MetadataKey::new("timestamp")?;
         let files_key = MetadataKey::new("files")?;
+        let events_key = MetadataKey::new("events")?;
+        let changed_count_key = MetadataKey::new("changed_count")?;
+        let event_count_key = MetadataKey::new("event_count")?;
 
         let (tx, mut rx) = mpsc::unbounded_channel::<ChangeRecord>();
 
@@ -145,21 +146,18 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                 let Some(kind) = ChangeKind::from_event_kind(event.kind) else {
                     return;
                 };
+                let timestamp = Utc::now();
                 for path in event.paths {
-                    // Match against the path relative to the watch root. If
-                    // the event somehow surfaces a path outside the root,
-                    // reject defensively rather than guess.
                     let Ok(rel) = path.strip_prefix(&watch_root_for_match) else {
                         continue;
                     };
                     if !path_matches(rel, include_empty, &include, &exclude) {
                         continue;
                     }
-                    // Receiver drop just means the trigger task exited; in
-                    // that case the event is intentionally discarded.
                     drop(tx.send(ChangeRecord {
                         path: path.clone(),
                         kind,
+                        timestamp,
                     }));
                 }
             }
@@ -181,26 +179,32 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
 
         watcher.watch(&watch_root, RecursiveMode::Recursive)?;
 
-        if self.config.per_file {
+        if self.config.per_file && self.config.interval.is_none() {
             self.run_per_file(
                 &mut rx,
                 cancel,
-                self.config.cooldown,
                 &path_key,
                 &kind_key,
                 &timestamp_key,
             )
             .await?;
         } else {
-            let cooldown = self
+            let interval = self
                 .config
-                .cooldown
+                .interval
                 .unwrap_or_else(|| Duration::from_millis(250));
-            self.run_batched(&mut rx, cancel, cooldown, &files_key)
-                .await?;
+            self.run_batched(
+                &mut rx,
+                cancel,
+                interval,
+                &files_key,
+                &events_key,
+                &changed_count_key,
+                &event_count_key,
+            )
+            .await?;
         }
 
-        // Drop watcher explicitly so that the `notify` thread exits.
         drop(watcher);
         Ok(())
     }
@@ -209,12 +213,10 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         &self,
         rx: &mut mpsc::UnboundedReceiver<ChangeRecord>,
         cancel: CancellationToken,
-        cooldown: Option<Duration>,
         path_key: &MetadataKey,
         kind_key: &MetadataKey,
         timestamp_key: &MetadataKey,
     ) -> Result<(), WatchTriggerError<Q::Error>> {
-        let mut debouncer = PathDebouncer::default();
         loop {
             tokio::select! {
                 biased;
@@ -223,9 +225,6 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                     let Some(record) = maybe_record else {
                         return Ok(());
                     };
-                    if !debouncer.admit(&record.path, tokio::time::Instant::now(), cooldown) {
-                        continue;
-                    }
                     let mut metadata = self.base_metadata.clone();
                     metadata.insert(
                         path_key.clone(),
@@ -237,7 +236,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                     );
                     metadata.insert(
                         timestamp_key.clone(),
-                        MetadataValue::String(Utc::now().to_rfc3339()),
+                        MetadataValue::String(record.timestamp.to_rfc3339()),
                     );
                     let signal = Signal::new(metadata);
                     let signal_id = signal.id();
@@ -259,15 +258,18 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_batched(
         &self,
         rx: &mut mpsc::UnboundedReceiver<ChangeRecord>,
         cancel: CancellationToken,
-        cooldown: Duration,
+        interval: Duration,
         files_key: &MetadataKey,
+        events_key: &MetadataKey,
+        changed_count_key: &MetadataKey,
+        event_count_key: &MetadataKey,
     ) -> Result<(), WatchTriggerError<Q::Error>> {
         loop {
-            // Wait for the first change or cancellation.
             let first = tokio::select! {
                 biased;
                 () = cancel.cancelled() => return Ok(()),
@@ -278,9 +280,8 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
             };
 
             let mut batch: Vec<ChangeRecord> = vec![first];
-            let deadline = tokio::time::Instant::now() + cooldown;
+            let deadline = tokio::time::Instant::now() + interval;
 
-            // Drain additional events until cooldown elapses.
             loop {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {
@@ -289,8 +290,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => {
-                        // Flush whatever we have, then exit.
-                        self.flush_batch(batch, files_key).await?;
+                        self.flush_batch(batch, files_key, events_key, changed_count_key, event_count_key).await?;
                         return Ok(());
                     }
                     () = tokio::time::sleep(remaining) => break,
@@ -303,7 +303,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                 }
             }
 
-            self.flush_batch(batch, files_key).await?;
+            self.flush_batch(batch, files_key, events_key, changed_count_key, event_count_key).await?;
         }
     }
 
@@ -311,23 +311,48 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         &self,
         batch: Vec<ChangeRecord>,
         files_key: &MetadataKey,
+        events_key: &MetadataKey,
+        changed_count_key: &MetadataKey,
+        event_count_key: &MetadataKey,
     ) -> Result<(), WatchTriggerError<Q::Error>> {
         if batch.is_empty() {
             return Ok(());
         }
-        // Deduplicate paths but preserve insertion order.
-        let mut seen: std::collections::BTreeSet<std::path::PathBuf> =
-            std::collections::BTreeSet::new();
-        let mut paths: Vec<String> = Vec::with_capacity(batch.len());
-        for record in batch {
+
+        let event_count = batch.len();
+
+        // Build ordered event detail and unique file list.
+        let mut seen = std::collections::BTreeSet::<std::path::PathBuf>::new();
+        let mut unique_paths: Vec<String> = Vec::with_capacity(batch.len());
+        let mut event_objects: Vec<serde_json::Value> = Vec::with_capacity(batch.len());
+
+        for record in &batch {
             if seen.insert(record.path.clone()) {
-                paths.push(record.path.to_string_lossy().into_owned());
+                unique_paths.push(record.path.to_string_lossy().into_owned());
             }
+            event_objects.push(serde_json::json!({
+                "path": record.path.to_string_lossy(),
+                "kind": record.kind.as_str(),
+                "timestamp": record.timestamp.to_rfc3339(),
+            }));
         }
-        let file_count = paths.len();
-        let json = serde_json::to_string(&paths)?;
+
+        let changed_count = unique_paths.len();
+        let files_json = serde_json::to_string(&unique_paths)?;
+        let events_json = serde_json::to_string(&event_objects)?;
+
         let mut metadata = self.base_metadata.clone();
-        metadata.insert(files_key.clone(), MetadataValue::String(json));
+        metadata.insert(files_key.clone(), MetadataValue::String(files_json));
+        metadata.insert(events_key.clone(), MetadataValue::String(events_json));
+        metadata.insert(
+            changed_count_key.clone(),
+            MetadataValue::Integer(changed_count as i64),
+        );
+        metadata.insert(
+            event_count_key.clone(),
+            MetadataValue::Integer(event_count as i64),
+        );
+
         let signal = Signal::new(metadata);
         let signal_id = signal.id();
         self.queue_signal(
@@ -337,8 +362,9 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                 iter.trigger.kind = "watch",
                 iter.trigger.name = self.trigger_name.as_deref().unwrap_or(""),
                 iter.signal.id = %signal_id,
-                iter.watch.mode = "batch",
-                iter.watch.file.count = file_count,
+                iter.watch.mode = "interval",
+                iter.watch.file.count = changed_count,
+                iter.watch.event.count = event_count,
             ),
         )
         .await?;
@@ -428,17 +454,11 @@ mod tests {
         let cancel_run = cancel.clone();
         let handle = tokio::spawn(async move { trigger.run(cancel_run).await });
 
-        // Wait for the initial PollWatcher snapshot to settle so the file
-        // creates below are observed as separate change events.
         sleep(Duration::from_millis(800)).await;
         fs::write(&ok_file, "ok-1").unwrap();
         fs::write(&skip_file, "skip-1").unwrap();
 
         wait_for_first_signal(queue.as_ref()).await;
-        // Give the watcher several more poll cycles so any (incorrectly
-        // admitted) skip/ event has time to arrive before we cancel. With an
-        // 80 ms poll interval, 1 s buys 12+ cycles — enough headroom for a
-        // loaded CI runner.
         sleep(Duration::from_millis(1000)).await;
 
         cancel.cancel();
@@ -460,8 +480,6 @@ mod tests {
                 !path.contains("/skip/"),
                 "excluded path leaked into signals: {path}"
             );
-            // Every emitted signal must carry kind + a parseable RFC3339
-            // timestamp.
             assert!(matches!(
                 s.metadata().get(&kind_key),
                 Some(MetadataValue::String(_))
@@ -483,5 +501,159 @@ mod tests {
             "expected at least one ok/ signal, got {}",
             signals.len()
         );
+    }
+
+    #[tokio::test]
+    async fn interval_merges_multiple_files_with_event_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let file_a = tmp.path().join("a.txt");
+        let file_b = tmp.path().join("b.txt");
+
+        let queue = Arc::new(InMemoryQueue::new());
+        let config = WatchConfig::new(
+            tmp.path().to_path_buf(),
+            &["**/*.txt".to_string()],
+            &[],
+            false,
+            Some(Duration::from_secs(4)),
+        )
+        .unwrap();
+        let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
+
+        let cancel = CancellationToken::new();
+        let cancel_run = cancel.clone();
+        let handle = tokio::spawn(async move { trigger.run(cancel_run).await });
+
+        // Let the PollWatcher finish its initial snapshot.
+        sleep(Duration::from_millis(800)).await;
+
+        // Create two files within one interval window.
+        fs::write(&file_a, "v1").unwrap();
+        sleep(Duration::from_millis(500)).await;
+        fs::write(&file_b, "v1").unwrap();
+
+        wait_for_first_signal(queue.as_ref()).await;
+        // Wait for the interval to flush.
+        sleep(Duration::from_secs(5)).await;
+
+        cancel.cancel();
+        handle.await.unwrap().unwrap();
+        queue.close().await.unwrap();
+
+        let signals = drain(queue.as_ref()).await;
+        assert!(!signals.is_empty(), "expected at least one merged signal");
+
+        let files_key = MetadataKey::new("files").unwrap();
+        let events_key = MetadataKey::new("events").unwrap();
+        let changed_count_key = MetadataKey::new("changed_count").unwrap();
+        let event_count_key = MetadataKey::new("event_count").unwrap();
+
+        // Find a signal that contains both files merged together.
+        let mut found_merged = false;
+        for s in &signals {
+            let Some(MetadataValue::String(files_json)) = s.metadata().get(&files_key) else {
+                continue;
+            };
+            let files: Vec<String> =
+                serde_json::from_str(files_json).expect("files is valid JSON array");
+            if files.len() < 2 {
+                continue;
+            }
+            found_merged = true;
+
+            // Verify events metadata.
+            let MetadataValue::String(events_json) =
+                s.metadata().get(&events_key).expect("events metadata")
+            else {
+                panic!("events not a string");
+            };
+            let events: Vec<serde_json::Value> =
+                serde_json::from_str(events_json).expect("events is valid JSON array");
+            assert!(
+                events.len() >= 2,
+                "expected at least 2 events, got {}",
+                events.len()
+            );
+            for ev in &events {
+                assert!(ev.get("path").is_some(), "event missing path");
+                assert!(ev.get("kind").is_some(), "event missing kind");
+                assert!(ev.get("timestamp").is_some(), "event missing timestamp");
+            }
+
+            // Verify count metadata.
+            let MetadataValue::Integer(changed_n) =
+                s.metadata().get(&changed_count_key).expect("changed_count")
+            else {
+                panic!("changed_count not an integer");
+            };
+            let MetadataValue::Integer(ev_n) =
+                s.metadata().get(&event_count_key).expect("event_count")
+            else {
+                panic!("event_count not an integer");
+            };
+            assert!(*changed_n >= 2, "changed_count should be >= 2");
+            assert!(ev_n >= changed_n, "event_count >= changed_count");
+        }
+        assert!(
+            found_merged,
+            "expected at least one signal with multiple files merged"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_interval_per_file_emits_immediately() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("x.txt");
+
+        let queue = Arc::new(InMemoryQueue::new());
+        let config = WatchConfig::new(
+            tmp.path().to_path_buf(),
+            &["**/*.txt".to_string()],
+            &[],
+            true,
+            None,
+        )
+        .unwrap();
+        let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
+
+        let cancel = CancellationToken::new();
+        let cancel_run = cancel.clone();
+        let handle = tokio::spawn(async move { trigger.run(cancel_run).await });
+
+        sleep(Duration::from_millis(800)).await;
+        fs::write(&file, "hello").unwrap();
+
+        wait_for_first_signal(queue.as_ref()).await;
+        sleep(Duration::from_millis(500)).await;
+
+        cancel.cancel();
+        handle.await.unwrap().unwrap();
+        queue.close().await.unwrap();
+
+        let signals = drain(queue.as_ref()).await;
+        assert!(!signals.is_empty(), "expected per-file signal");
+
+        let path_key = MetadataKey::new("path").unwrap();
+        let kind_key = MetadataKey::new("kind").unwrap();
+        let timestamp_key = MetadataKey::new("timestamp").unwrap();
+
+        // Per-file signals carry path/kind/timestamp, not files/events.
+        let s = &signals[0];
+        assert!(
+            s.metadata().get(&path_key).is_some(),
+            "per-file signal must have path"
+        );
+        assert!(
+            s.metadata().get(&kind_key).is_some(),
+            "per-file signal must have kind"
+        );
+        let MetadataValue::String(ts) = s
+            .metadata()
+            .get(&timestamp_key)
+            .expect("timestamp metadata")
+        else {
+            panic!("timestamp not a string");
+        };
+        chrono::DateTime::parse_from_rfc3339(ts).expect("rfc3339 timestamp");
     }
 }

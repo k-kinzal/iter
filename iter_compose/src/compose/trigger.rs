@@ -148,7 +148,7 @@ async fn dispatch_trigger(
             include,
             exclude,
             per_file,
-            cooldown_secs,
+            interval_secs,
             base_metadata,
             priority,
             max_signals: _,
@@ -161,7 +161,7 @@ async fn dispatch_trigger(
                 include,
                 exclude,
                 per_file,
-                cooldown_secs,
+                interval_secs,
                 &base_metadata,
                 priority,
             )
@@ -300,14 +300,14 @@ async fn dispatch_watch(
     include: Vec<String>,
     exclude: Vec<String>,
     per_file: bool,
-    cooldown_secs: Option<i64>,
+    interval_secs: Option<i64>,
     base_metadata: &[(String, String)],
     priority: Option<PriorityKeyword>,
 ) -> Result<(), TriggerRunError> {
-    let cooldown = cooldown_secs
+    let interval = interval_secs
         .and_then(|s| u64::try_from(s).ok())
         .map(Duration::from_secs);
-    let config = WatchConfig::new(PathBuf::from(&dir), &include, &exclude, per_file, cooldown)
+    let config = WatchConfig::new(PathBuf::from(&dir), &include, &exclude, per_file, interval)
         .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
     let metadata = build_metadata(base_metadata);
     let trigger = WatchTrigger::new(queue, config)

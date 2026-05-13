@@ -4,7 +4,7 @@ trigger edits watch {
     dir = "./src"
     include = ["*.rs"]
     per_file = true
-    cooldown = 2s
+    interval = 2s
     priority = normal
     max_signals = 10
     metadata {

@@ -5,6 +5,6 @@ trigger sessions watch {
     include = ["**/*.jsonl"]
     exclude = ["self-loop/**", "tmp/**"]
     per_file = true
-    cooldown = 1800s
+    interval = 1800s
     target = main
 }

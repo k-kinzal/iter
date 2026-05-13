@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: trigger-files-terminate.iter
 ---
 ComposeRoot {
+    telemetry: None,
     queues: [
         Spanned {
             node: NamedQueue {
@@ -38,4 +39,5 @@ ComposeRoot {
             span: 44..152,
         },
     ],
+    composes: [],
 }

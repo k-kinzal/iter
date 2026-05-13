@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use notify::event::EventKind;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,4 +35,5 @@ impl ChangeKind {
 pub(super) struct ChangeRecord {
     pub(super) path: PathBuf,
     pub(super) kind: ChangeKind,
+    pub(super) timestamp: DateTime<Utc>,
 }

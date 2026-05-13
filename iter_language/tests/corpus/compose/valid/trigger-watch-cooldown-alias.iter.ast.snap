@@ -1,6 +1,6 @@
 ---
 source: iter_language/tests/conformance.rs
-description: trigger-webhook-bind.iter
+description: trigger-watch-cooldown-alias.iter
 ---
 ComposeRoot {
     telemetry: None,
@@ -19,16 +19,15 @@ ComposeRoot {
     triggers: [
         Spanned {
             node: NamedTrigger {
-                name: "hook",
-                decl: Webhook {
-                    host: None,
-                    port: None,
-                    bind: Some(
-                        "127.0.0.1:9000",
+                name: "dep",
+                decl: Watch {
+                    dir: "./src",
+                    include: [],
+                    exclude: [],
+                    per_file: false,
+                    interval_secs: Some(
+                        5,
                     ),
-                    path: "/hooks",
-                    secret: None,
-                    routes: [],
                     base_metadata: [],
                     priority: None,
                     max_signals: None,
@@ -38,7 +37,7 @@ ComposeRoot {
                 ),
                 terminate_on_completion: false,
             },
-            span: 44..134,
+            span: 44..119,
         },
     ],
     composes: [],

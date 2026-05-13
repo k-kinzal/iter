@@ -45,8 +45,10 @@ pub enum TriggerDecl {
         exclude: Vec<String>,
         /// Whether to fire one signal per file or batch them.
         per_file: bool,
-        /// Cooldown window between successive signals, in seconds.
-        cooldown_secs: Option<i64>,
+        /// Publish interval in seconds. Events arriving within this window
+        /// are merged into a single signal. Does not suppress per-path
+        /// events — all observed changes are preserved in signal metadata.
+        interval_secs: Option<i64>,
         /// Trigger-level base metadata copied into every emitted signal.
         base_metadata: Vec<(String, String)>,
         /// Priority assigned to every emitted signal.

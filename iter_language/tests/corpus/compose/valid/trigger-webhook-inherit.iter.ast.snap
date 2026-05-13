@@ -3,6 +3,7 @@ source: iter_language/tests/conformance.rs
 description: trigger-webhook-inherit.iter
 ---
 ComposeRoot {
+    telemetry: None,
     queues: [
         Spanned {
             node: NamedQueue {
@@ -65,4 +66,5 @@ ComposeRoot {
             span: 44..322,
         },
     ],
+    composes: [],
 }

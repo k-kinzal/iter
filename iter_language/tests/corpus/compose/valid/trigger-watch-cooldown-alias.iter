@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger dep watch {
+    dir = "./src"
+    cooldown = 5s
+    target = main
+}

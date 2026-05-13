@@ -2,7 +2,7 @@
 //!
 //! Wraps [`WatchTrigger`]: emits a signal whenever a file inside `--dir`
 //! changes (or is created/removed). When `--per-file` is unset, events
-//! arriving inside `--cooldown` are coalesced into a single batch signal.
+//! arriving inside `--interval` are merged into a single signal.
 //!
 //! Startup and shutdown banners go to stderr; stdout is reserved.
 
@@ -79,13 +79,15 @@ impl IntoExitCode for WatchCliError {
     long_about = "iter-watch is the filesystem-watch specialization of `iter trigger run`. \
                   It observes `--dir` for file create / modify / remove events and \
                   publishes signals on every match.\n\n\
-                  By default events inside the same `--cooldown` window are coalesced into a \
-                  single batch signal. Pass `--per-file` to emit one signal per change.\n\n\
+                  By default events inside the same `--interval` window are merged into a \
+                  single signal. Pass `--per-file` to emit one signal per change \
+                  (with no interval applied).\n\n\
                   Startup and shutdown banners are written to stderr; stdout is reserved.",
     after_help = "EXAMPLES:\n  \
                   iter-watch --queue-url memory:// --dir ./src\n  \
                   iter-watch --queue-url memory:// --dir . --include '*.rs' --exclude 'target/**'\n  \
-                  iter-watch --queue-url file:///tmp/q --dir . --per-file --cooldown 0"
+                  iter-watch --queue-url file:///tmp/q --dir . --per-file\n  \
+                  iter-watch --queue-url file:///tmp/q --dir . --per-file --interval 5"
 )]
 struct Args {
     /// Directory to watch.
@@ -102,18 +104,21 @@ struct Args {
     #[arg(long, value_name = "PATTERN")]
     exclude: Vec<String>,
 
-    /// Emit one signal per file change rather than batching by cooldown.
+    /// Emit one signal per file change rather than merging by interval.
+    /// When combined with `--interval`, events are still merged into
+    /// interval signals.
     #[arg(long = "per-file", default_value_t = false)]
     per_file: bool,
 
-    /// Cooldown window in seconds. With `--per-file`, suppresses repeat
-    /// events on the same path inside the window (per-path debounce).
-    /// Without `--per-file`, collects events for a fixed window of this
-    /// length, starting from the first event, then emits one batch signal.
-    /// Pass `0` to disable per-path debounce in `--per-file` mode; in
-    /// batched mode the library still applies a 250 ms internal default.
-    #[arg(long, value_name = "SECS", default_value_t = 2)]
-    cooldown: u64,
+    /// Publish interval in seconds. After the first matching event, collect
+    /// changes for this duration, then emit one merged signal. All observed
+    /// events are preserved — no per-path suppression.
+    /// Defaults to 2 when `--per-file` is not set. With `--per-file` and
+    /// no explicit interval, each event fires its own signal immediately.
+    /// Pass `0` to disable the interval (per-file mode emits immediately;
+    /// batched mode uses the internal 250 ms default).
+    #[arg(long, value_name = "SECS")]
+    interval: Option<u64>,
 
     #[command(flatten)]
     queue_source: QueueSourceArgs,
@@ -161,21 +166,18 @@ async fn run() -> Result<(), WatchCliError> {
         cancel.clone(),
     ));
 
-    // `--cooldown 0` maps to `cooldown = None`. In `--per-file` mode this
-    // turns the per-path debounce off entirely. Without `--per-file` the
-    // library still falls back to its 250 ms internal batch window — set a
-    // non-zero value to override.
-    let cooldown = if args.cooldown == 0 {
-        None
-    } else {
-        Some(Duration::from_secs(args.cooldown))
+    let interval = match args.interval {
+        Some(0) => None,
+        Some(n) => Some(Duration::from_secs(n)),
+        None if args.per_file => None,
+        None => Some(Duration::from_secs(2)),
     };
     let config = WatchConfig::new(
         args.dir.clone(),
         &args.include,
         &args.exclude,
         args.per_file,
-        cooldown,
+        interval,
     )?;
 
     let instance_name = args.banner.instance_name(BINARY);

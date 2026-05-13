@@ -56,22 +56,21 @@ pub struct WatchConfig {
     /// `true` when the user supplied no include patterns. The matcher then
     /// accepts every path that is not in `exclude`.
     pub include_empty: bool,
-    /// When `true`, emit one signal per file change. When `false`, coalesce
-    /// events arriving inside the [`cooldown`](Self::cooldown) window into a
-    /// single signal whose `files` metadata is a JSON array of paths.
+    /// When `true`, emit one signal per file change (unless `interval` merges
+    /// them). When `false`, coalesce events arriving inside the
+    /// [`interval`](Self::interval) window into a single signal.
     pub per_file: bool,
-    /// Window used to coalesce / debounce events.
+    /// Publish interval controlling how often the trigger emits signals.
     ///
-    /// - `per_file = false`: fixed-window batch. The deadline is set when
-    ///   the first event of a batch arrives; further events are accumulated
-    ///   until the deadline elapses, then one batch signal is emitted. The
-    ///   deadline does *not* reset on subsequent events. When `None`, the
-    ///   trigger uses an internal default of 250 ms.
-    /// - `per_file = true`: per-path debounce. Repeated events on the same
-    ///   path arriving inside `cooldown` are suppressed; the next event after
-    ///   the window emits a fresh signal. `None` disables debouncing — every
-    ///   event fires immediately.
-    pub cooldown: Option<Duration>,
+    /// After the first matching filesystem event, the trigger keeps collecting
+    /// events for this duration, then emits one merged signal. No events are
+    /// suppressed — all observed changes are preserved in signal metadata.
+    ///
+    /// - `per_file = false`: when `None`, the trigger uses an internal default
+    ///   of 250 ms.
+    /// - `per_file = true`: when `None`, every event fires its own signal
+    ///   immediately; when `Some`, events are merged into interval signals.
+    pub interval: Option<Duration>,
 }
 
 impl WatchConfig {
@@ -88,7 +87,7 @@ impl WatchConfig {
         include_patterns: &[String],
         exclude_patterns: &[String],
         per_file: bool,
-        cooldown: Option<Duration>,
+        interval: Option<Duration>,
     ) -> Result<Self, globset::Error> {
         let include = compile_globset(include_patterns)?;
         let exclude = compile_globset(exclude_patterns)?;
@@ -98,7 +97,7 @@ impl WatchConfig {
             exclude,
             include_empty: include_patterns.is_empty(),
             per_file,
-            cooldown,
+            interval,
         })
     }
 }

@@ -16,7 +16,7 @@ trigger <name> watch {
   include  = ["<glob>", ...]
   exclude  = ["<glob>", ...]
   per_file = <bool>
-  cooldown = <duration>   # Optional, e.g. 5s
+  interval = <duration>   # Optional, e.g. 5s
 
   priority = low | normal | high | critical   # Optional
   metadata { ... }                            # Optional
@@ -32,15 +32,15 @@ trigger <name> watch {
 | `dir` | string | Required | — | Directory to monitor. Resolved relative to the compose file. Watched recursively. |
 | `include` | `list(string)` | Optional | `[]` | gitignore-style globs evaluated against the changed file's path *relative* to `dir`. `**` traverses directories. Empty means "watch everything". |
 | `exclude` | `list(string)` | Optional | `[]` | gitignore-style globs evaluated against the same relative path. A match here unconditionally rejects the event (wins over `include`). |
-| `per_file` | bool | Optional | `false` | `true` → one Signal per changed file. `false` → one Signal per batch of changes (coalesced by `cooldown`). |
-| `cooldown` | duration | Optional | _see notes_ | With `per_file = true`, suppresses repeat events on the same path inside the window (per-path debounce); when omitted, every event fires immediately. With `per_file = false`, the trigger collects events for a fixed window of this length, starting from the first event in the batch, then emits one Signal; when omitted, the library uses an internal default of 250&nbsp;ms. The standalone `iter-watch` CLI defaults `--cooldown` to `2` seconds; passing `--cooldown 0` only disables per-path debounce when `--per-file` is set — in batched mode the library still applies its 250&nbsp;ms internal default. |
+| `per_file` | bool | Optional | `false` | `true` → one Signal per changed file (when no `interval` is set). `false` → one Signal per batch of changes (merged by `interval`). |
+| `interval` | duration | Optional | _see notes_ | Publish interval. After the first matching event, collect all changes for this duration, then emit one merged Signal. No events are suppressed — all observed changes are preserved in signal metadata. With `per_file = true` and no interval, every event fires its own Signal immediately. With `per_file = false` and no interval, the library uses an internal default of 250&nbsp;ms. The standalone `iter-watch` CLI defaults `--interval` to `2` seconds; passing `--interval 0` disables the interval. `cooldown` is accepted as a deprecated alias for `interval`; using both is a validation error. |
 | `priority` | `low \| normal \| high \| critical` | Optional | `normal` | Signal priority. |
 | `metadata` | block | Optional | `{}` | Metadata applied to every emitted Signal. Per-event placeholders expose `{{path}}`, `{{kind}}`, and `{{timestamp}}`. |
 | `max_signals` | integer | Optional | unbounded | Stop after this many Signals. |
 
 ## Signal metadata
 
-When `per_file = true` the emitted Signal carries:
+When `per_file = true` (no interval) the emitted Signal carries:
 
 | Key | Description |
 | --- | --- |
@@ -48,11 +48,18 @@ When `per_file = true` the emitted Signal carries:
 | `kind` | Event kind: `created`, `modified`, `removed`. |
 | `timestamp` | RFC3339 event timestamp. |
 
-When `per_file = false`, iter emits a Signal whose `files` metadata key holds a JSON array of changed paths.
+When events are merged (either `per_file = false`, or any mode with an `interval`), the Signal carries:
+
+| Key | Description |
+| --- | --- |
+| `files` | JSON array of unique changed paths, preserving first-seen order. |
+| `events` | JSON array of objects, each with `path`, `kind`, and `timestamp`, preserving event order. Repeated changes to the same path appear as separate entries. |
+| `changed_count` | Number of unique files changed (integer). |
+| `event_count` | Total number of events observed in the interval (integer). |
 
 ## Examples
 
-### Per-file, no coalescing
+### Per-file, no interval
 
 ```hcl
 trigger on_source_change watch {
@@ -68,7 +75,7 @@ trigger on_source_change watch {
 }
 ```
 
-### Batched with a 5-second cooldown
+### Batched with a 5-second interval
 
 ```hcl
 trigger on_docs_change watch {
@@ -76,15 +83,16 @@ trigger on_docs_change watch {
   dir      = "./docs"
   include  = ["**/*.md"]
   per_file = false
-  cooldown = 5s
+  interval = 5s
   priority = low
 }
 ```
 
-### Per-file with exclude and a 30-minute per-path debounce
+### Per-file with exclude and a 30-minute interval
 
 A common shape for monitoring agent session logs while ignoring writes the
-runner itself emits underneath the watched root.
+runner itself emits underneath the watched root. Events within each 30-minute
+window are merged into a single Signal with full event detail.
 
 ```hcl
 trigger watch_sessions watch {
@@ -93,7 +101,7 @@ trigger watch_sessions watch {
   include  = ["**/*.jsonl"]
   exclude  = ["self-loop/**"]
   per_file = true
-  cooldown = 1800s
+  interval = 1800s
 }
 ```
 

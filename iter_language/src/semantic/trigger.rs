@@ -107,7 +107,26 @@ impl Analyzer {
             .take_optional_string_list(fields, "exclude")
             .unwrap_or_default();
         let per_file = self.take_optional_bool(fields, "per_file").unwrap_or(false);
+        let interval_secs = self.take_optional_duration(fields, "interval");
         let cooldown_secs = self.take_optional_duration(fields, "cooldown");
+        if interval_secs.is_some() && cooldown_secs.is_some() {
+            self.errors.push(
+                Diagnostic::error(
+                    kind_span.clone(),
+                    "trigger watch: `interval` and `cooldown` are mutually exclusive",
+                )
+                .with_hint("`cooldown` is a deprecated alias for `interval`; use `interval` only"),
+            );
+        }
+        let interval_secs = interval_secs.or(cooldown_secs);
+        if let Some(secs) = interval_secs {
+            if secs <= 0 {
+                self.errors.push(Diagnostic::error(
+                    kind_span.clone(),
+                    "trigger watch: `interval` must be a positive duration",
+                ));
+            }
+        }
         let common = self.take_common_trigger_fields(fields);
         self.reject_unknown_fields(
             fields,
@@ -116,6 +135,7 @@ impl Analyzer {
                 "include",
                 "exclude",
                 "per_file",
+                "interval",
                 "cooldown",
                 "metadata",
                 "priority",
@@ -128,7 +148,7 @@ impl Analyzer {
             include,
             exclude,
             per_file,
-            cooldown_secs,
+            interval_secs,
             base_metadata: common.base_metadata,
             priority: common.priority,
             max_signals: common.max_signals,

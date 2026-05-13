@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: watch-interval-and-cooldown.iter
+---
+Error: trigger watch: `interval` and `cooldown` are mutually exclusive
+   ╭─[watch-interval-and-cooldown.iter:3:13]
+   │
+ 3 │ trigger bad watch {
+   │             ──┬──  
+   │               ╰──── trigger watch: `interval` and `cooldown` are mutually exclusive
+   │ 
+   │ Help: `cooldown` is a deprecated alias for `interval`; use `interval` only
+───╯

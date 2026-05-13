@@ -63,7 +63,7 @@ trigger on_source_change watch {
   dir      = "./src"
   include  = ["**/*.rs"]
   per_file = false
-  cooldown = 5s
+  interval = 5s
 }
 ```
 

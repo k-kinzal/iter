@@ -1,0 +1,11 @@
+---
+source: iter_language/tests/conformance.rs
+description: watch-interval-nonpositive.iter
+---
+Error: trigger watch: `interval` must be a positive duration
+   ╭─[watch-interval-nonpositive.iter:3:13]
+   │
+ 3 │ trigger bad watch {
+   │             ──┬──  
+   │               ╰──── trigger watch: `interval` must be a positive duration
+───╯

@@ -113,7 +113,7 @@ duration_suffix = _{ "s" | "m" | "h" | "d" }
 - No sub-second units. `10ms` tokenises as `Duration(10m)` plus `Ident("s")`, which is a parse error in most positions.
 
 ```hcl
-cooldown = 30s
+interval = 30s
 delay    = 5m
 poll     = 1h
 ```
