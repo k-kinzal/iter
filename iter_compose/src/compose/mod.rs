@@ -15,6 +15,7 @@ mod error;
 mod plan;
 mod run;
 mod service;
+pub(crate) mod supervisor;
 pub(crate) mod trigger;
 
 use std::path::Path;
@@ -27,6 +28,10 @@ pub use run::{run, spawn_targeted_service};
 pub use service::{
     ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID,
     LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TaskOutcome,
+};
+pub use supervisor::{
+    TriggerLifecycleState, TriggerStatus, read_status as read_trigger_status, trigger_state_dir,
+    trigger_state_root,
 };
 pub use trigger::TriggerRunError;
 

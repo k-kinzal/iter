@@ -49,6 +49,7 @@ struct ComposeSectionParts {
 }
 
 impl Analyzer {
+    #[allow(clippy::too_many_lines)]
     fn lower_compose(&mut self, file: RawFile) -> ComposeRoot {
         let mut root = ComposeRoot::default();
         let mut names = ComposeNameSets::default();

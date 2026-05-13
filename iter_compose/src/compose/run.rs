@@ -17,7 +17,7 @@ use tracing::{info, warn};
 use super::error::{ServiceRunError, ServiceSubprocessError};
 use super::plan::{ComposePlan, ComposeService};
 use super::service::{ComposeReport, FailurePolicy, OrchestratorContext, TaskOutcome};
-use super::trigger;
+use super::supervisor;
 use crate::process_lifecycle::{
     self, RunRecordMetadata, derive_finalize_reason, leaves_record_non_terminal,
     log_finalize_report,
@@ -63,6 +63,8 @@ pub async fn run(
         sources: _,
     } = plan;
 
+    let state_root = supervisor::trigger_state_root();
+
     let mut set: JoinSet<TaskOutcome> = JoinSet::new();
 
     for service in services {
@@ -81,10 +83,26 @@ pub async fn run(
 
     for trig in triggers {
         let trigger_cancel = cancel.clone();
-        let name = trig.name.clone();
+        let project = orchestrator.project.clone();
+        let trig_name = trig.name.clone();
+        let state_dir = state_root.as_ref().map(|root| {
+            supervisor::trigger_state_dir(root, &project, &trig.name)
+        });
         set.spawn(async move {
-            let result = trigger::run_trigger(trig, trigger_cancel).await;
-            TaskOutcome::Trigger { name, result }
+            let dir = state_dir.unwrap_or_else(|| {
+                std::env::temp_dir()
+                    .join("iter-trigger-state")
+                    .join(&project)
+                    .join(&trig_name)
+            });
+            let outcome =
+                supervisor::supervise_trigger(trig, trigger_cancel, dir).await;
+            TaskOutcome::Trigger {
+                name: outcome.name,
+                result: outcome.result,
+                final_state: outcome.status.state,
+                restart_count: outcome.status.restart_count,
+            }
         });
     }
 
@@ -116,6 +134,7 @@ pub async fn run(
     ComposeReport { outcomes }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_service_task(
     set: &mut JoinSet<TaskOutcome>,
     service: ComposeService,

@@ -138,7 +138,7 @@ fn init_inner(
     let otel_log_layer = iter_tracing::otel_log_layer(&logger_provider)
         .with_filter(filter_fn(otel_log_target_enabled));
 
-    let installed = tracing_subscriber::registry()
+    let _installed = tracing_subscriber::registry()
         .with(env_filter)
         .with(stderr_layer)
         .with(log_layer)
@@ -147,14 +147,8 @@ fn init_inner(
         .try_init()
         .is_ok();
 
-    if installed {
-        TelemetryGuard {
-            _inner: iter_tracing::TelemetryGuard::new(tracer_provider, logger_provider),
-        }
-    } else {
-        TelemetryGuard {
-            _inner: iter_tracing::TelemetryGuard::new(tracer_provider, logger_provider),
-        }
+    TelemetryGuard {
+        _inner: iter_tracing::TelemetryGuard::new(tracer_provider, logger_provider),
     }
 }
 

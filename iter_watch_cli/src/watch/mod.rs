@@ -58,7 +58,10 @@ pub struct WatchTrigger<Q: Queue> {
     priority: Priority,
     backend: WatchBackend,
     trigger_name: Option<String>,
+    state_dir: Option<std::path::PathBuf>,
 }
+
+const PENDING_BATCH_FILENAME: &str = "pending_batch.json";
 
 impl<Q: Queue> std::fmt::Debug for WatchTrigger<Q> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -81,6 +84,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
             priority: Priority::NORMAL,
             backend: WatchBackend::default(),
             trigger_name: None,
+            state_dir: None,
         }
     }
 
@@ -111,6 +115,16 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
     #[must_use]
     pub fn with_backend(mut self, backend: WatchBackend) -> Self {
         self.backend = backend;
+        self
+    }
+
+    /// Set a state directory for persisting pending batch records across
+    /// restarts.  When set, the trigger writes pending batch data before
+    /// flushing and recovers any un-flushed batch on startup.
+    #[allow(dead_code)]
+    #[must_use]
+    pub fn with_state_dir(mut self, dir: std::path::PathBuf) -> Self {
+        self.state_dir = Some(dir);
         self
     }
 
@@ -178,6 +192,26 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         };
 
         watcher.watch(&watch_root, RecursiveMode::Recursive)?;
+
+        // Recover any pending batch from a previous supervised run.
+        if let Some(recovered) = self.load_pending_batch() {
+            if !recovered.is_empty() {
+                tracing::info!(
+                    trigger = self.trigger_name.as_deref().unwrap_or(""),
+                    count = recovered.len(),
+                    "recovered pending batch from previous run",
+                );
+                self.flush_batch(
+                    recovered,
+                    &files_key,
+                    &events_key,
+                    &changed_count_key,
+                    &event_count_key,
+                )
+                .await?;
+                self.clear_pending_batch();
+            }
+        }
 
         if self.config.per_file && self.config.interval.is_none() {
             self.run_per_file(
@@ -290,7 +324,9 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                 tokio::select! {
                     biased;
                     () = cancel.cancelled() => {
+                        self.save_pending_batch(&batch);
                         self.flush_batch(batch, files_key, events_key, changed_count_key, event_count_key).await?;
+                        self.clear_pending_batch();
                         return Ok(());
                     }
                     () = tokio::time::sleep(remaining) => break,
@@ -303,7 +339,9 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
                 }
             }
 
+            self.save_pending_batch(&batch);
             self.flush_batch(batch, files_key, events_key, changed_count_key, event_count_key).await?;
+            self.clear_pending_batch();
         }
     }
 
@@ -346,11 +384,11 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         metadata.insert(events_key.clone(), MetadataValue::String(events_json));
         metadata.insert(
             changed_count_key.clone(),
-            MetadataValue::Integer(changed_count as i64),
+            MetadataValue::Integer(i64::try_from(changed_count).unwrap_or(i64::MAX)),
         );
         metadata.insert(
             event_count_key.clone(),
-            MetadataValue::Integer(event_count as i64),
+            MetadataValue::Integer(i64::try_from(event_count).unwrap_or(i64::MAX)),
         );
 
         let signal = Signal::new(metadata);
@@ -369,6 +407,46 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         )
         .await?;
         Ok(())
+    }
+
+    fn load_pending_batch(&self) -> Option<Vec<ChangeRecord>> {
+        let dir = self.state_dir.as_ref()?;
+        let path = dir.join(PENDING_BATCH_FILENAME);
+        let data = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    fn save_pending_batch(&self, batch: &[ChangeRecord]) {
+        let Some(dir) = &self.state_dir else {
+            return;
+        };
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            tracing::warn!(error = %e, "failed to create watch trigger state dir");
+            return;
+        }
+        match serde_json::to_string(batch) {
+            Ok(json) => {
+                let tmp = dir.join("pending_batch.json.tmp");
+                let target = dir.join(PENDING_BATCH_FILENAME);
+                if let Err(e) = std::fs::write(&tmp, &json) {
+                    tracing::warn!(error = %e, "failed to write pending batch");
+                    return;
+                }
+                if let Err(e) = std::fs::rename(&tmp, &target) {
+                    tracing::warn!(error = %e, "failed to rename pending batch");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to serialize pending batch");
+            }
+        }
+    }
+
+    fn clear_pending_batch(&self) {
+        let Some(dir) = &self.state_dir else {
+            return;
+        };
+        drop(std::fs::remove_file(dir.join(PENDING_BATCH_FILENAME)));
     }
 
     async fn queue_signal(

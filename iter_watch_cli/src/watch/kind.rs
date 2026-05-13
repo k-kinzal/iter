@@ -4,8 +4,10 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use notify::event::EventKind;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub(super) enum ChangeKind {
     Created,
     Modified,
@@ -31,7 +33,7 @@ impl ChangeKind {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct ChangeRecord {
     pub(super) path: PathBuf,
     pub(super) kind: ChangeKind,

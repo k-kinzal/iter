@@ -7,6 +7,7 @@ use iter_core::RunnerSummary;
 use iter_core::process::{ProcessId, ProcessIdentity};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
+use super::supervisor::TriggerLifecycleState;
 use super::trigger::TriggerRunError;
 
 /// How [`super::run`] reacts to the first failing service.
@@ -48,13 +49,17 @@ pub enum TaskOutcome {
         /// `Ok(())` if the child exited cleanly, `Err(_)` otherwise.
         result: Result<(), ServiceSubprocessError>,
     },
-    /// A trigger task completed (or errored).
+    /// A supervised trigger task completed, stopped, or failed.
     Trigger {
         /// Trigger name from the compose file.
         name: String,
-        /// `Ok(())` if the trigger ran to completion, `Err(_)` on build
-        /// or runtime failure.
+        /// `Ok(())` if the trigger completed or stopped cleanly,
+        /// `Err(_)` on build or unrecoverable runtime failure.
         result: Result<(), TriggerRunError>,
+        /// Final lifecycle state reported by the supervisor.
+        final_state: TriggerLifecycleState,
+        /// Number of supervisor-initiated restarts.
+        restart_count: u32,
     },
     /// A spawned task panicked (or was cancelled by `JoinSet`
     /// teardown). Synthesised in [`super::run`]'s join loop so panics

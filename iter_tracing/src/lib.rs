@@ -211,6 +211,7 @@ pub fn build_logger_provider(
 }
 
 /// Build the tracing layer that exports spans to OpenTelemetry.
+#[must_use]
 pub fn otel_layer<S>(
     provider: &SdkTracerProvider,
     instrumentation_name: &'static str,
@@ -226,7 +227,8 @@ where
 }
 
 /// Build the tracing layer that exports `tracing` events to OpenTelemetry
-/// logs while preserving trace/span IDs from the active OTel span.
+/// logs while preserving trace/span IDs from the active `OTel` span.
+#[must_use]
 pub fn otel_log_layer<S>(provider: &SdkLoggerProvider) -> impl Layer<S> + Send + Sync + 'static
 where
     S: tracing::Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
@@ -236,7 +238,7 @@ where
 
 /// Install a stderr tracing subscriber for standalone trigger CLIs.
 ///
-/// When OTel is enabled via environment variables this also installs trace and
+/// When `OTel` is enabled via environment variables this also installs trace and
 /// log export layers and returns a guard that keeps the providers alive.
 #[must_use]
 pub fn install_stderr_subscriber(env_filter: EnvFilter, json: bool) -> TelemetryGuard {
@@ -381,7 +383,7 @@ pub fn parse_resource_attributes_env() -> BTreeMap<String, String> {
         .collect()
 }
 
-/// Parse an OTel resource attribute list.
+/// Parse an `OTel` resource attribute list.
 ///
 /// The format follows the environment variable convention where entries are
 /// comma-separated `key=value` pairs and separators can be backslash-escaped.

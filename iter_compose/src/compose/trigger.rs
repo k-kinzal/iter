@@ -28,11 +28,41 @@ use crate::secrets::resolve_secret;
 use super::error::ComposeError;
 
 /// A trigger ready for in-process execution by [`super::run`].
+#[derive(Clone)]
 pub(crate) struct ComposeTrigger {
     pub(crate) name: String,
     pub(crate) decl: TriggerDecl,
     pub(crate) queue: Arc<AnyQueue>,
     pub(crate) terminate_on_completion: bool,
+    pub(crate) state_dir: Option<PathBuf>,
+}
+
+impl ComposeTrigger {
+    /// Returns `true` when this trigger kind can complete normally without
+    /// being considered an unexpected exit.  Currently only `files` without
+    /// `no_exit_on_eof` is finite.
+    pub(crate) fn is_finite(&self) -> bool {
+        matches!(
+            self.decl,
+            TriggerDecl::Files {
+                no_exit_on_eof: false,
+                ..
+            }
+        )
+    }
+
+    /// Human-readable kind name for status reporting.
+    pub(crate) fn kind_name(&self) -> &'static str {
+        match &self.decl {
+            TriggerDecl::Cron { .. } => "cron",
+            TriggerDecl::Watch { .. } => "watch",
+            TriggerDecl::Command { .. } => "command",
+            TriggerDecl::Files { .. } => "files",
+            TriggerDecl::Webhook { .. } => "webhook",
+            TriggerDecl::Loop { .. } => "loop",
+            TriggerDecl::External { .. } => "external",
+        }
+    }
 }
 
 impl std::fmt::Debug for ComposeTrigger {
@@ -75,24 +105,27 @@ pub(crate) fn build_trigger(
         decl: named.decl.clone(),
         queue,
         terminate_on_completion: named.terminate_on_completion,
+        state_dir: None,
     })
 }
 
-/// Run a trigger to completion, then optionally enqueue a terminate signal.
-pub(crate) async fn run_trigger(
-    trigger: ComposeTrigger,
+/// Run a single attempt of a trigger to completion (no terminate logic).
+///
+/// The caller (the supervisor) is responsible for deciding whether to
+/// enqueue a terminate signal after the trigger exits.
+pub(crate) async fn run_trigger_once(
+    trigger: &ComposeTrigger,
     cancel: CancellationToken,
 ) -> Result<(), TriggerRunError> {
-    let ComposeTrigger {
+    let name = &trigger.name;
+    let result = dispatch_trigger(
         name,
-        decl,
-        queue,
-        terminate_on_completion,
-    } = trigger;
-
-    info!(trigger = %name, "starting compose trigger");
-
-    let result = dispatch_trigger(&name, decl, queue.clone(), cancel.clone()).await;
+        trigger.decl.clone(),
+        trigger.queue.clone(),
+        cancel,
+        trigger.state_dir.clone(),
+    )
+    .await;
 
     if let Err(ref err) = result {
         warn!(trigger = %name, error = %err, "compose trigger exited with error");
@@ -100,23 +133,28 @@ pub(crate) async fn run_trigger(
         info!(trigger = %name, "compose trigger exited cleanly");
     }
 
-    if result.is_ok() && terminate_on_completion && !cancel.is_cancelled() {
-        let signal = Signal::terminate();
-        queue
-            .queue(signal, Priority::CRITICAL)
-            .await
-            .map_err(|e| TriggerRunError::Terminate(Box::new(e)))?;
-        info!(trigger = %name, "enqueued terminate signal on target queue");
-    }
-
     result
 }
 
+/// Enqueue a terminate signal on the trigger's target queue.
+pub(crate) async fn enqueue_terminate(trigger: &ComposeTrigger) -> Result<(), TriggerRunError> {
+    let signal = Signal::terminate();
+    trigger
+        .queue
+        .queue(signal, Priority::CRITICAL)
+        .await
+        .map_err(|e| TriggerRunError::Terminate(Box::new(e)))?;
+    info!(trigger = %trigger.name, "enqueued terminate signal on target queue");
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)]
 async fn dispatch_trigger(
     name: &str,
     decl: TriggerDecl,
     queue: Arc<AnyQueue>,
     cancel: CancellationToken,
+    state_dir: Option<PathBuf>,
 ) -> Result<(), TriggerRunError> {
     match decl {
         TriggerDecl::Cron {
@@ -164,6 +202,7 @@ async fn dispatch_trigger(
                 interval_secs,
                 &base_metadata,
                 priority,
+                state_dir.clone(),
             )
             .await
         }
@@ -208,6 +247,7 @@ async fn dispatch_trigger(
                 no_exit_on_eof,
                 &base_metadata,
                 priority,
+                state_dir,
             )
             .await
         }
@@ -303,6 +343,7 @@ async fn dispatch_watch(
     interval_secs: Option<i64>,
     base_metadata: &[(String, String)],
     priority: Option<PriorityKeyword>,
+    state_dir: Option<PathBuf>,
 ) -> Result<(), TriggerRunError> {
     let interval = interval_secs
         .and_then(|s| u64::try_from(s).ok())
@@ -310,10 +351,13 @@ async fn dispatch_watch(
     let config = WatchConfig::new(PathBuf::from(&dir), &include, &exclude, per_file, interval)
         .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
     let metadata = build_metadata(base_metadata);
-    let trigger = WatchTrigger::new(queue, config)
+    let mut trigger = WatchTrigger::new(queue, config)
         .with_base_metadata(metadata)
         .with_priority(convert_priority(priority))
         .with_trigger_name(name);
+    if let Some(dir) = state_dir {
+        trigger = trigger.with_state_dir(dir);
+    }
     trigger
         .run(cancel)
         .await
@@ -360,6 +404,7 @@ async fn dispatch_command(
         .map_err(|e| TriggerRunError::Run(Box::new(e)))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_files(
     name: &str,
     queue: Arc<AnyQueue>,
@@ -368,18 +413,22 @@ async fn dispatch_files(
     no_exit_on_eof: bool,
     base_metadata: &[(String, String)],
     priority: Option<PriorityKeyword>,
+    state_dir: Option<PathBuf>,
 ) -> Result<(), TriggerRunError> {
     let metadata = build_metadata(base_metadata);
     let p = convert_priority(priority);
-    for lang_source in &sources {
+    for (idx, lang_source) in sources.iter().enumerate() {
         let source = match lang_source {
             iter_language::FilesSource::Stdin => FilesSource::Stdin,
             iter_language::FilesSource::Path(s) => FilesSource::Path(PathBuf::from(s)),
         };
-        let trigger = FilesTrigger::new(queue.clone(), source)
+        let mut trigger = FilesTrigger::new(queue.clone(), source)
             .with_base_metadata(metadata.clone())
             .with_priority(p)
             .with_trigger_name(name);
+        if let Some(ref dir) = state_dir {
+            trigger = trigger.with_state_dir(dir.join(format!("source_{idx}")));
+        }
         trigger
             .run(cancel.clone())
             .await

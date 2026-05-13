@@ -111,6 +111,60 @@ trigger github webhook {
 }
 ```
 
+## Supervision
+
+Compose-managed triggers run under a supervisor that automatically restarts
+them when they exit unexpectedly or return a runtime error. This keeps
+long-running triggers (`cron`, `watch`, `command`, `webhook`) alive for the
+lifetime of the orchestrator without manual intervention.
+
+### Lifecycle States
+
+| State | Meaning |
+| --- | --- |
+| `Starting` | Initial state before the trigger's first run. |
+| `Running` | The trigger is actively executing. |
+| `Restarting` | The trigger exited and the supervisor is waiting (backoff) before relaunching. |
+| `Completed` | A finite trigger finished normally. No restart. |
+| `Failed` | A build-time error prevented the trigger from starting. No retry. |
+| `Stopped` | The orchestrator was shut down (e.g. Ctrl-C). |
+
+### Restart Policy
+
+- **Runtime errors** and **unexpected exits** are retried with exponential
+  backoff (1 s base, 60 s cap).
+- **Build errors** (`TriggerRunError::Build`) are *not* retried because they
+  indicate a configuration problem that will not resolve on its own.
+- **Finite triggers** — currently only `files` without `no_exit_on_eof` —
+  may complete normally (`Completed`) without triggering a restart. If the
+  trigger has `terminate_on_completion` set, a terminate signal is enqueued
+  on the target queue after completion.
+- Cancellation (orchestrator shutdown) moves the trigger to `Stopped`
+  regardless of its current state.
+
+### State Persistence
+
+The supervisor writes a `status.json` file on every lifecycle transition to:
+
+```
+~/.iter/trigger-state/<project>/<trigger_name>/status.json
+```
+
+This file is a JSON object with fields: `name`, `state`, `kind`,
+`restart_count`, `last_error`, `last_state_change`, and `is_finite`.
+`iter compose ps` reads these files to report trigger health.
+
+Individual trigger kinds may persist their own restart-sensitive state in the
+same directory:
+
+- **`files`** — persists a byte-offset cursor (`cursor.json`) so a
+  restarted trigger resumes from the last successfully emitted line instead
+  of re-reading from the beginning. Delivery is at-least-once: a crash
+  between signal enqueue and cursor save may cause one line to be re-emitted.
+- **`watch`** — persists the pending change batch (`pending_batch.json`)
+  before flushing, so in-flight batches are recovered and re-flushed on
+  restart rather than lost.
+
 ## See Also
 
 - [`trigger/`](../trigger/) — per-kind field reference.

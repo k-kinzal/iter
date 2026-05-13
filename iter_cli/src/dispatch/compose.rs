@@ -19,9 +19,10 @@ use iter_compose::iterfile::RunRecordMetadata;
 use iter_compose::signals::SignalsError;
 use iter_compose::{
     ComposeError, ComposePlan, DEFAULT_COMPOSE_FILE, DiscoveryError, FailurePolicy,
-    OrchestratorContext, ProjectLockError, ProjectMember, ProjectSlugError, acquire_project_lock,
-    build, find_active_orchestrator, install_shutdown_handler, is_compose_filename,
-    list_all_members_by_project, list_project_members, load_compose, project_slug, run,
+    OrchestratorContext, ProjectLockError, ProjectMember, ProjectSlugError,
+    acquire_project_lock, build, find_active_orchestrator, install_shutdown_handler,
+    is_compose_filename, list_all_members_by_project, list_project_members, load_compose,
+    project_slug, read_trigger_status, run, trigger_state_root,
 };
 use iter_core::process::{
     PidFileState, ProcessError, ProcessHandle, ProcessRegistry, SignalDelivery, UnmanagedChild,
@@ -510,18 +511,17 @@ async fn run_compose_up_targeted(args: ComposeUpArgs) -> Result<(), ComposeUpErr
         });
     }
 
-    let orchestrator = match find_active_orchestrator(&slug)? {
-        Some(active) => OrchestratorContext {
+    let orchestrator = if let Some(active) = find_active_orchestrator(&slug)? {
+        OrchestratorContext {
             project: slug.clone(),
             identity: active.identity,
-        },
-        None => {
-            let identity = current_identity()
-                .map_err(|e| ComposeUpError::OrchestratorIdentity(Box::new(e)))?;
-            OrchestratorContext {
-                project: slug.clone(),
-                identity,
-            }
+        }
+    } else {
+        let identity = current_identity()
+            .map_err(|e| ComposeUpError::OrchestratorIdentity(Box::new(e)))?;
+        OrchestratorContext {
+            project: slug.clone(),
+            identity,
         }
     };
 
@@ -1150,6 +1150,18 @@ struct ComposePsRow {
     created_at: DateTime<Utc>,
 }
 
+/// One row for a trigger in the `iter compose ps` output.
+#[derive(Debug, Serialize)]
+struct ComposePsTriggerRow {
+    trigger: String,
+    kind: String,
+    status: String,
+    restart_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_error: Option<String>,
+    last_state_change: DateTime<Utc>,
+}
+
 /// Handle `iter compose ps`. Mirrors `docker compose ps` for a single
 /// project. The project slug is resolved from `-p` or the compose file's
 /// directory basename.
@@ -1182,6 +1194,8 @@ pub fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
         });
     }
 
+    let trigger_rows = collect_trigger_status_rows(&slug);
+
     if args.listing.quiet {
         for row in &rows {
             cli_println!("{}", trunc_id(&row.id, args.listing.no_trunc));
@@ -1193,6 +1207,9 @@ pub fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
         OutputFormat::Json => {
             for row in &rows {
                 print_ndjson_record(row).map_err(ComposeRuntimeError::JsonSerialize)?;
+            }
+            for trow in &trigger_rows {
+                print_ndjson_record(trow).map_err(ComposeRuntimeError::JsonSerialize)?;
             }
         }
         OutputFormat::Table => {
@@ -1206,10 +1223,56 @@ pub fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
                     relative_time(row.created_at),
                 ]);
             }
+            if !trigger_rows.is_empty() {
+                table.row(["---", "TRIGGERS", "---", "---", "---"]);
+                for trow in &trigger_rows {
+                    let restarts = if trow.restart_count > 0 {
+                        format!("({}x)", trow.restart_count)
+                    } else {
+                        String::new()
+                    };
+                    table.row([
+                        format!("[{}]", trow.kind),
+                        trow.trigger.clone(),
+                        format!("{} {restarts}", trow.status),
+                        "-".into(),
+                        relative_time(trow.last_state_change),
+                    ]);
+                }
+            }
             table.print();
         }
     }
     Ok(())
+}
+
+fn collect_trigger_status_rows(project: &str) -> Vec<ComposePsTriggerRow> {
+    let Some(root) = trigger_state_root() else {
+        return Vec::new();
+    };
+    let project_dir = root.join(project);
+    let Ok(entries) = std::fs::read_dir(&project_dir) else {
+        return Vec::new();
+    };
+    let mut rows = Vec::new();
+    for entry in entries.flatten() {
+        let trigger_dir = entry.path();
+        if !trigger_dir.is_dir() {
+            continue;
+        }
+        if let Some(status) = read_trigger_status(&trigger_dir) {
+            rows.push(ComposePsTriggerRow {
+                trigger: status.name,
+                kind: status.kind,
+                status: status.state.to_string(),
+                restart_count: status.restart_count,
+                last_error: status.last_error,
+                last_state_change: status.last_state_change,
+            });
+        }
+    }
+    rows.sort_by(|a, b| a.trigger.cmp(&b.trigger));
+    rows
 }
 
 /// Extract the service name from a target string, returning `Err(target)`
@@ -1343,6 +1406,7 @@ fn validate_targets_against_members(
 /// # Errors
 ///
 /// Forwarded from [`ComposeRuntimeError`].
+#[allow(clippy::too_many_lines)]
 pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRuntimeError> {
     let slug = runtime_project_slug(args.file.as_deref(), args.project_name.as_deref())?;
     let all_members = list_project_members(&slug)?;

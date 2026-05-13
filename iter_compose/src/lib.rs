@@ -36,7 +36,9 @@ pub use compose::{
     ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,
     LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME,
     LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TargetedSpawnError, TaskOutcome,
-    TriggerRunError, build, is_compose_filename, load_compose, run, spawn_targeted_service,
+    TriggerLifecycleState, TriggerRunError, TriggerStatus, build, is_compose_filename,
+    load_compose, read_trigger_status, run, spawn_targeted_service, trigger_state_dir,
+    trigger_state_root,
 };
 pub use config::build_runner_config;
 pub use discovery::{

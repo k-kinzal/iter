@@ -13,25 +13,26 @@ pub fn service_env(
     let Some(decl) = telemetry.filter(|decl| decl.enabled) else {
         return Vec::new();
     };
-    let mut env = Vec::new();
-    env.push((
-        iter_tracing::ITER_OTEL_ENABLED.to_string(),
-        "true".to_string(),
-    ));
-    env.push((
-        "OTEL_SERVICE_NAME".to_string(),
-        component_service_name(decl, project, service_name),
-    ));
-    env.push(("OTEL_TRACES_EXPORTER".to_string(), "otlp".to_string()));
-    env.push(("OTEL_LOGS_EXPORTER".to_string(), "otlp".to_string()));
-    env.push((
-        "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
-        "http/protobuf".to_string(),
-    ));
-    env.push((
-        "OTEL_PROPAGATORS".to_string(),
-        "tracecontext,baggage".to_string(),
-    ));
+    let mut env = vec![
+        (
+            iter_tracing::ITER_OTEL_ENABLED.to_string(),
+            "true".to_string(),
+        ),
+        (
+            "OTEL_SERVICE_NAME".to_string(),
+            component_service_name(decl, project, service_name),
+        ),
+        ("OTEL_TRACES_EXPORTER".to_string(), "otlp".to_string()),
+        ("OTEL_LOGS_EXPORTER".to_string(), "otlp".to_string()),
+        (
+            "OTEL_EXPORTER_OTLP_PROTOCOL".to_string(),
+            "http/protobuf".to_string(),
+        ),
+        (
+            "OTEL_PROPAGATORS".to_string(),
+            "tracecontext,baggage".to_string(),
+        ),
+    ];
     if let Some(endpoint) = &decl.endpoint {
         env.push(("OTEL_EXPORTER_OTLP_ENDPOINT".to_string(), endpoint.clone()));
     }
@@ -66,7 +67,7 @@ pub fn resource_attributes(decl: &TelemetryDecl, project: &str, component: Optio
     )
 }
 
-/// Derive a concrete OTel service name from a project-level declaration.
+/// Derive a concrete `OTel` service name from a project-level declaration.
 #[must_use]
 pub fn component_service_name(decl: &TelemetryDecl, project: &str, component: &str) -> String {
     let base = decl

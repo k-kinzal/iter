@@ -22,6 +22,7 @@ iter_command_cli.workspace = true
 iter_files_cli.workspace = true
 iter_webhook_cli.workspace = true
 chrono.workspace = true
+serde.workspace = true
 globset.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }

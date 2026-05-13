@@ -63,7 +63,7 @@ pub(crate) enum PromptDelivery<'a> {
     Inline,
 }
 
-/// Inject the current OTel trace context into an agent process environment.
+/// Inject the current `OTel` trace context into an agent process environment.
 ///
 /// This is intentionally opt-in at the driver layer. Agent CLIs differ in
 /// whether they read W3C context from environment variables, and injecting a
@@ -76,7 +76,7 @@ pub(crate) fn inject_trace_context_env(command: &mut Command) -> bool {
 /// Inject the current trace context in the form GitHub Copilot CLI consumes.
 ///
 /// The standalone Copilot CLI 1.0.43 does not read `TRACEPARENT` as an
-/// incoming OTel carrier. Its SDK reads `COPILOT_TRACE_PARENT` and forwards it
+/// incoming `OTel` carrier. Its SDK reads `COPILOT_TRACE_PARENT` and forwards it
 /// to Copilot API calls as `X-Copilot-Traceparent`, so keep this path explicit
 /// instead of reusing the generic environment-carrier helper.
 pub(crate) fn inject_copilot_trace_parent_env(command: &mut Command) -> bool {
@@ -87,7 +87,7 @@ pub(crate) fn inject_copilot_trace_parent_env(command: &mut Command) -> bool {
     true
 }
 
-/// Add per-iteration attributes to an agent process' OTel resource.
+/// Add per-iteration attributes to an agent process' `OTel` resource.
 ///
 /// Agent CLIs that produce their own telemetry generally read
 /// `OTEL_RESOURCE_ATTRIBUTES` before emitting spans. Since iter launches a

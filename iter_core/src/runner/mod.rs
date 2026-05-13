@@ -519,6 +519,7 @@ async fn best_effort_teardown<W>(
 
 /// Drive the workspace bracket — setup → agent → teardown — for one
 /// signal, emitting lifecycle events at each step.
+#[allow(clippy::too_many_lines)]
 async fn drive_workspace<Q, W, A>(
     ctx: &RunCtx<'_, Q, W, A>,
     events: &mut RunnerEvents,
@@ -736,6 +737,7 @@ where
 /// failures do NOT bump `iteration_count` and do NOT call
 /// `iter_state.record_failure` — they happen pre-iteration. Only
 /// `process_signal` errors bump the counter and update streak state.
+#[allow(clippy::too_many_lines)]
 async fn run_loop<Q, W, A>(
     ctx: &RunCtx<'_, Q, W, A>,
     events: &mut RunnerEvents,
@@ -806,7 +808,7 @@ where
                     iter.runner.behavior = ?ctx.config.behavior,
                     iter.runner.once = ctx.config.once,
                     iter.runner.continue_on_error = ctx.config.continue_on_error,
-                    iter.runner.iteration_timeout_ms = ?ctx.config.iteration_timeout.map(|d| d.as_millis() as u64),
+                    iter.runner.iteration_timeout_ms = ?ctx.config.iteration_timeout.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
                     iter.runner.outcome = field::Empty,
                 );
                 iter_tracing::set_span_as_trace_root(&span);
