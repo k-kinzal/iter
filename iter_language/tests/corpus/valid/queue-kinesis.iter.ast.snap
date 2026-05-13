@@ -165,6 +165,7 @@ Root {
                 command: "claude",
                 args: [],
                 session_id_file: None,
+                env: {},
             },
             span: 1090..1142,
         },

@@ -69,7 +69,9 @@ mod hook;
 
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
-use crate::agent::process::{PromptDelivery, drive_interactive_with_finalize, run_command};
+use crate::agent::process::{
+    PromptDelivery, apply_user_env, drive_interactive_with_finalize, run_command,
+};
 use hook::HookBundle;
 
 /// Fully-specified configuration for [`GeminiAgent`].
@@ -85,6 +87,8 @@ pub struct GeminiSettings {
     /// (print mode) or after the prompt positional (interactive mode).
     /// Empty is allowed.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 /// Gemini CLI agent configuration.
@@ -97,6 +101,8 @@ pub struct GeminiAgent {
     /// Additional arguments appended after the built-in `-p <prompt>` pair
     /// (print mode) or after the prompt positional (interactive mode).
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 impl GeminiAgent {
@@ -108,11 +114,13 @@ impl GeminiAgent {
             command,
             mode,
             args,
+            env,
         } = settings;
         Self {
             command,
             mode,
             args,
+            env,
         }
     }
 
@@ -154,7 +162,8 @@ impl Agent for GeminiAgent {
         } = ctx;
         match self.mode {
             AgentMode::Print => {
-                let command = self.build_print_command(workspace_path, prompt);
+                let mut command = self.build_print_command(workspace_path, prompt);
+                apply_user_env(&mut command, &self.env);
                 run_command(command, PromptDelivery::Inline, cancel, stdio_sink).await
             }
             AgentMode::Interactive => self.run_interactive(workspace_path, prompt, cancel).await,
@@ -181,6 +190,7 @@ impl GeminiAgent {
         let bundle = HookBundle::install(path).await?;
 
         let mut command = self.build_interactive_command(path, prompt);
+        apply_user_env(&mut command, &self.env);
         let (env_key, state_file) = bundle.env_var();
         command.env(env_key, state_file);
         command
@@ -207,6 +217,7 @@ mod tests {
             command: command.into(),
             mode,
             args: Vec::new(),
+            env: Vec::new(),
         }
     }
 
@@ -297,5 +308,19 @@ exit 0
             !tmp.path().join(".gemini/.iter-bundle").exists(),
             ".iter-bundle must be cleaned up",
         );
+    }
+
+    #[tokio::test]
+    async fn print_mode_env_is_forwarded_to_child() {
+        let (_guard, bin) = fake_binary_script("printf '%s' \"$GEMINI_TEST_ENV_VAR\"");
+        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        s.env = vec![("GEMINI_TEST_ENV_VAR".into(), "env-value".into())];
+        let agent = GeminiAgent::new(s);
+        let prompt = Prompt::from("x");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "env-value",);
     }
 }

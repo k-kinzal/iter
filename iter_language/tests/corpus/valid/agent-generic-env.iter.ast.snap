@@ -1,19 +1,13 @@
 ---
 source: iter_language/tests/conformance.rs
-description: queue-shell-minimal.iter
+description: agent-generic-env.iter
 ---
 Root {
     args: [],
     queue: Some(
         Spanned {
-            node: Shell {
-                enqueue: "true",
-                dequeue: "true",
-                close: None,
-                interpreter: None,
-                enqueue_timeout_secs: None,
-            },
-            span: 0..53,
+            node: Memory,
+            span: 0..12,
         },
     ),
     workspace: Some(
@@ -21,19 +15,22 @@ Root {
             node: Local {
                 base: ".",
             },
-            span: 55..87,
+            span: 14..46,
         },
     ),
     agent: Some(
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: Generic {
+                command: [
+                    "python",
+                    "./agent.py",
+                ],
+                env: {
+                    "API_KEY": "sk-test",
+                    "DEBUG": "1",
+                },
             },
-            span: 89..141,
+            span: 48..156,
         },
     ),
     runner: Some(
@@ -43,16 +40,16 @@ Root {
                 behavior: Wait,
                 iteration_timeout_secs: None,
             },
-            span: 165..218,
+            span: 158..214,
         },
     ),
     prompts: [
         Spanned {
             node: PromptDecl {
                 guard: None,
-                body: "do the thing",
+                body: "Generic env test.",
             },
-            span: 143..164,
+            span: 216..242,
         },
     ],
     events: [],

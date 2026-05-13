@@ -1,0 +1,21 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent claude {
+  mode    = print
+  command = "claude"
+  env {
+    WORKTREE_NAME = "exp-1-20260507"
+    EXP_AXIS      = "design"
+  }
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Env test."

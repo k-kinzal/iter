@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-env-lowercase-key.iter
+---
+Error: invalid env name `lowercase_key`: must match [A-Z][A-Z0-9_]*
+   ╭─[agent-env-lowercase-key.iter:5:5]
+   │
+ 5 │     lowercase_key = "bad"
+   │     ──────┬──────  
+   │           ╰──────── invalid env name `lowercase_key`: must match [A-Z][A-Z0-9_]*
+   │ 
+   │ Help: environment variable names must be uppercase letters, digits, and underscores
+───╯

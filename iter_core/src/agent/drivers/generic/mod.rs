@@ -226,6 +226,25 @@ mod tests {
         assert!(matches!(err, AgentError::EmptyCommand));
     }
 
+    #[tokio::test]
+    async fn dsl_env_is_forwarded_to_child() {
+        let mut agent = GenericAgent::new(vec![
+            "sh".into(),
+            "-c".into(),
+            "printf '%s %s' \"$DSL_VAR_A\" \"$DSL_VAR_B\"".into(),
+        ]);
+        agent.env = vec![
+            ("DSL_VAR_A".into(), "alpha".into()),
+            ("DSL_VAR_B".into(), "beta".into()),
+        ];
+        let prompt = Prompt::from("ignored");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "alpha beta");
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn signal_termination_is_reported() {

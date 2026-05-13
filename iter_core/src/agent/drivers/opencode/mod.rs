@@ -25,7 +25,7 @@ use crate::{Agent, AgentReport, AgentRunContext, Prompt};
 use tokio::process::Command;
 
 use crate::agent::AgentError;
-use crate::agent::process::{PromptDelivery, run_command};
+use crate::agent::process::{PromptDelivery, apply_user_env, run_command};
 
 /// Fully-specified configuration for [`OpenCodeAgent`].
 #[derive(Debug, Clone)]
@@ -35,6 +35,8 @@ pub struct OpenCodeSettings {
     /// Additional arguments inserted between the `run` subcommand and the
     /// positional prompt. Empty is allowed.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 /// `OpenCode` CLI agent configuration.
@@ -45,14 +47,16 @@ pub struct OpenCodeAgent {
     /// Additional arguments inserted between the `run` subcommand and the
     /// positional prompt.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 impl OpenCodeAgent {
     /// Build a fully-specified `OpenCode` agent.
     #[must_use]
     pub fn new(settings: OpenCodeSettings) -> Self {
-        let OpenCodeSettings { command, args } = settings;
-        Self { command, args }
+        let OpenCodeSettings { command, args, env } = settings;
+        Self { command, args, env }
     }
 
     fn build_command(&self, path: &Path, prompt: &Prompt) -> Command {
@@ -63,6 +67,7 @@ impl OpenCodeAgent {
             cmd.arg(arg);
         }
         cmd.arg(prompt.as_str());
+        apply_user_env(&mut cmd, &self.env);
         cmd
     }
 }
@@ -90,6 +95,7 @@ mod tests {
         let agent = OpenCodeAgent::new(OpenCodeSettings {
             command: bin.to_string_lossy().into_owned(),
             args: Vec::new(),
+            env: Vec::new(),
         });
         let prompt = Prompt::from("hello-opencode");
         let report = agent
@@ -100,5 +106,21 @@ mod tests {
         let out = report.last_output.expect("last_output");
         assert!(out.contains("args: run"), "got {out:?}");
         assert!(out.contains("hello-opencode"), "got {out:?}");
+    }
+
+    #[tokio::test]
+    async fn env_is_forwarded_to_child() {
+        let (_guard, bin) = fake_binary_script("printf '%s' \"$OPENCODE_TEST_ENV_VAR\"");
+        let agent = OpenCodeAgent::new(OpenCodeSettings {
+            command: bin.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env: vec![("OPENCODE_TEST_ENV_VAR".into(), "env-value".into())],
+        });
+        let prompt = Prompt::from("x");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "env-value",);
     }
 }

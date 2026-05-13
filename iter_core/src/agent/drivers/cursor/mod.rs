@@ -31,7 +31,7 @@ use crate::{Agent, AgentReport, AgentRunContext};
 use tokio::process::Command;
 
 use crate::agent::AgentError;
-use crate::agent::process::{PromptDelivery, run_command};
+use crate::agent::process::{PromptDelivery, apply_user_env, run_command};
 
 /// Fully-specified configuration for [`CursorAgent`].
 #[derive(Debug, Clone)]
@@ -41,6 +41,8 @@ pub struct CursorSettings {
     /// Additional arguments appended after the built-in `--print` flag.
     /// Empty is allowed.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 /// Cursor `cursor-agent` CLI agent configuration.
@@ -50,14 +52,16 @@ pub struct CursorAgent {
     pub command: String,
     /// Additional arguments appended after the built-in `--print` flag.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 impl CursorAgent {
     /// Build a fully-specified Cursor agent.
     #[must_use]
     pub fn new(settings: CursorSettings) -> Self {
-        let CursorSettings { command, args } = settings;
-        Self { command, args }
+        let CursorSettings { command, args, env } = settings;
+        Self { command, args, env }
     }
 
     fn build_command(&self, path: &Path) -> Command {
@@ -67,6 +71,7 @@ impl CursorAgent {
         for arg in &self.args {
             cmd.arg(arg);
         }
+        apply_user_env(&mut cmd, &self.env);
         cmd
     }
 }
@@ -100,6 +105,7 @@ mod tests {
         let agent = CursorAgent::new(CursorSettings {
             command: bin.to_string_lossy().into_owned(),
             args: Vec::new(),
+            env: Vec::new(),
         });
         let prompt = Prompt::from("hello-cursor");
         let report = agent
@@ -110,5 +116,21 @@ mod tests {
         let out = report.last_output.expect("last_output");
         assert!(out.contains("args: --print"), "got {out:?}");
         assert!(out.contains("hello-cursor"), "got {out:?}");
+    }
+
+    #[tokio::test]
+    async fn env_is_forwarded_to_child() {
+        let (_guard, bin) = fake_binary_script("printf '%s' \"$CURSOR_TEST_ENV_VAR\"");
+        let agent = CursorAgent::new(CursorSettings {
+            command: bin.to_string_lossy().into_owned(),
+            args: Vec::new(),
+            env: vec![("CURSOR_TEST_ENV_VAR".into(), "env-value".into())],
+        });
+        let prompt = Prompt::from("x");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "env-value",);
     }
 }

@@ -1,5 +1,7 @@
 //! `agent` declaration AST.
 
+use std::collections::BTreeMap;
+
 /// Agent backend declaration.
 ///
 /// Every named variant (all but [`AgentDecl::Generic`]) carries a required
@@ -9,6 +11,12 @@
 /// runtime still prepends its mode-specific default flags (e.g. `--print`,
 /// `--oneshot`, `exec`) so the common case — "just pick a mode" — stays
 /// terse; `args` is appended after those defaults.
+///
+/// Every variant also carries an `env` map: key–value pairs that become
+/// environment variables in the spawned agent child process. At runtime,
+/// each declared key `NAME` can be overridden by setting `ITER_NAME` in
+/// the runner process environment; undeclared `ITER_*` variables are
+/// ignored.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentDecl {
     /// Anthropic Claude Code agent.
@@ -32,6 +40,8 @@ pub enum AgentDecl {
         /// later turns inherit prior agent context as well as workspace
         /// state.
         session_id_file: Option<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// `OpenAI` Codex agent.
     Codex {
@@ -41,6 +51,8 @@ pub enum AgentDecl {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// Google Gemini agent.
     Gemini {
@@ -50,6 +62,8 @@ pub enum AgentDecl {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// GitHub Copilot agent.
     Copilot {
@@ -66,6 +80,8 @@ pub enum AgentDecl {
         /// Extra arguments appended between the subcommand and the
         /// positional prompt.
         args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// Cursor agent.
     Cursor {
@@ -73,6 +89,8 @@ pub enum AgentDecl {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// Cline agent.
     Cline {
@@ -80,6 +98,8 @@ pub enum AgentDecl {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// `opencode` agent.
     OpenCode {
@@ -87,12 +107,16 @@ pub enum AgentDecl {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
     /// Generic agent invoked through an arbitrary command vector.
     Generic {
         /// Argv-style command. The first element is the program; subsequent
         /// elements are arguments.
         command: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
     },
 }
 

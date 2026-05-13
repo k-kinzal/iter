@@ -52,6 +52,7 @@
 //!       mode: AgentMode::Interactive,
 //!       subcommand: Some(Vec::<String>::new()),
 //!       args: Vec::new(),
+//!       env: Vec::new(),
 //!   });
 //!   ```
 //!
@@ -92,8 +93,8 @@ mod hook;
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
-    PromptDelivery, drive_interactive_with_finalize, inject_agent_otel_resource_attrs,
-    inject_copilot_trace_parent_env, run_command,
+    PromptDelivery, apply_user_env, drive_interactive_with_finalize,
+    inject_agent_otel_resource_attrs, inject_copilot_trace_parent_env, run_command,
 };
 use hook::HookBundle;
 
@@ -120,6 +121,8 @@ pub struct CopilotSettings {
     /// Additional arguments inserted between the subcommand and the prompt.
     /// Empty is allowed.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 /// GitHub Copilot CLI agent configuration.
@@ -136,6 +139,8 @@ pub struct CopilotAgent {
     pub subcommand: Option<Vec<String>>,
     /// Additional arguments inserted between the subcommand and the prompt.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 impl CopilotAgent {
@@ -148,12 +153,14 @@ impl CopilotAgent {
             mode,
             subcommand,
             args,
+            env,
         } = settings;
         Self {
             command,
             mode,
             subcommand,
             args,
+            env,
         }
     }
 
@@ -201,6 +208,7 @@ impl Agent for CopilotAgent {
         match self.mode {
             AgentMode::Print => {
                 let mut command = self.build_command(workspace_path, prompt);
+                apply_user_env(&mut command, &self.env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
                     signal_id,
@@ -240,6 +248,7 @@ impl CopilotAgent {
         let bundle = HookBundle::install(path).await?;
 
         let mut command = self.build_command(path, prompt);
+        apply_user_env(&mut command, &self.env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "copilot");
         inject_copilot_trace_parent_env(&mut command);
         let (env_key, state_file) = bundle.env_var();
@@ -269,6 +278,7 @@ mod tests {
             mode,
             subcommand: None,
             args: Vec::new(),
+            env: Vec::new(),
         }
     }
 
@@ -408,5 +418,19 @@ exit 0
             !tmp.path().join(".github/hooks/.iter-bundle").exists(),
             ".iter-bundle must be cleaned up",
         );
+    }
+
+    #[tokio::test]
+    async fn print_mode_env_is_forwarded_to_child() {
+        let (_guard, bin) = fake_binary_script("printf '%s' \"$COPILOT_TEST_ENV_VAR\"");
+        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        s.env = vec![("COPILOT_TEST_ENV_VAR".into(), "env-value".into())];
+        let agent = CopilotAgent::new(s);
+        let prompt = Prompt::from("x");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "env-value",);
     }
 }

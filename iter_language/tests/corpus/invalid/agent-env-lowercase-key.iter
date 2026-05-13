@@ -1,0 +1,8 @@
+agent claude {
+  mode    = print
+  command = "claude"
+  env {
+    lowercase_key = "bad"
+  }
+}
+runner { continue_on_error = false  behavior = wait }

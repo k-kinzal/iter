@@ -56,8 +56,8 @@ mod session;
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
-    PromptDelivery, drive_interactive_with_finalize, inject_agent_otel_resource_attrs,
-    inject_trace_context_env, run_command,
+    PromptDelivery, apply_user_env, drive_interactive_with_finalize,
+    inject_agent_otel_resource_attrs, inject_trace_context_env, run_command,
 };
 use hook::HookBundle;
 use session::SessionIdFile;
@@ -83,6 +83,8 @@ pub struct ClaudeSettings {
     /// Genuinely optional: `None` means "no session persistence", `Some`
     /// means "persist the session id at this path".
     pub session_id_file: Option<PathBuf>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 /// Claude Code agent configuration.
@@ -114,6 +116,8 @@ pub struct ClaudeAgent {
     /// the file on the final iteration. iter does not own that decision
     /// because it has no notion of "end of exploration".
     pub session_id_file: Option<PathBuf>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 fn home_subpath(leaf: &str) -> Option<PathBuf> {
@@ -130,12 +134,14 @@ impl ClaudeAgent {
             mode,
             args,
             session_id_file,
+            env,
         } = settings;
         Self {
             command,
             mode,
             args,
             session_id_file,
+            env,
         }
     }
 
@@ -268,6 +274,7 @@ impl Agent for ClaudeAgent {
         match self.mode {
             AgentMode::Print => {
                 let mut command = self.build_print_command(workspace_path, session_id.as_deref());
+                apply_user_env(&mut command, &self.env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
                     signal_id,
@@ -330,6 +337,7 @@ impl ClaudeAgent {
         // We fork an io::inherit() instead of piping because claude TUI
         // renders to a terminal and refuses to start without one.
         let mut command = self.build_interactive_command(path, prompt, session_id);
+        apply_user_env(&mut command, &self.env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "claude");
         let (env_key, state_file) = bundle.env_var();
         command.env(env_key, state_file);
@@ -358,6 +366,7 @@ mod tests {
             mode,
             args: Vec::new(),
             session_id_file: None,
+            env: Vec::new(),
         }
     }
 
@@ -393,6 +402,20 @@ mod tests {
             out.contains("--permission-mode bypassPermissions"),
             "print mode must emit --permission-mode bypassPermissions, got {out:?}",
         );
+    }
+
+    #[tokio::test]
+    async fn print_mode_env_is_forwarded_to_child() {
+        let (_guard, bin) = fake_binary_script("printf '%s' \"$ITER_TEST_ENV_VAR\"");
+        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        s.env = vec![("ITER_TEST_ENV_VAR".into(), "env-value".into())];
+        let agent = ClaudeAgent::new(s);
+        let prompt = Prompt::from("x");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "env-value",);
     }
 
     #[tokio::test]

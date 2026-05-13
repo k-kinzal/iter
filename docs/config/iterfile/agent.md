@@ -29,6 +29,51 @@ Every named kind (all but `generic`) carries a required `command` field plus a p
 
 ---
 
+## `env` block
+
+All agent kinds accept an optional `env { ... }` block that declares environment variables injected into the agent's child process. Keys must match `[A-Z][A-Z0-9_]*` (POSIX uppercase convention). Avoid using the `ITER_` prefix in env keys — that prefix is reserved for runtime overrides and internal iter variables.
+
+### Syntax
+
+```hcl
+agent claude {
+  mode    = print
+  command = "claude"
+
+  env {
+    API_TOKEN   = "sk-default-token"
+    DEBUG_LEVEL = "info"
+  }
+}
+```
+
+### Runtime overrides with `ITER_` prefix
+
+Each declared key can be overridden at runtime by setting an environment variable with the `ITER_` prefix. For example, if the Iterfile declares `API_TOKEN = "default"`, setting `ITER_API_TOKEN=production-secret` in the shell overrides the value. Only keys declared in the `env` block can be overridden — `ITER_` variables without a matching declaration are ignored.
+
+### Template expansion
+
+Values support `{{arg.*}}` template syntax, the same as other string fields:
+
+```hcl
+agent claude {
+  mode    = print
+  command = "claude"
+
+  env {
+    WORKTREE_NAME = "{{arg.worktree}}"
+  }
+}
+```
+
+Runtime template references such as `{{signal.*}}` and `{{metadata.*}}` are not expanded in env values — they are passed to the child process as literal strings.
+
+### Precedence
+
+User-declared env vars are applied **before** iter-managed environment variables (OpenTelemetry attributes, hook context, sandbox prefixes). This means iter's internal variables always take precedence if there is a name collision.
+
+---
+
 ## `AgentMode` values
 
 Used by kinds that support the `mode` field.
@@ -68,6 +113,7 @@ agent claude {
 | `command` | `string` | Required | — | Binary name or absolute path. Resolved via `PATH`. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed defaults. |
 | `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `--session-id <uuid>`. Omit to run each iteration as a fresh session. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
 
 ---
 
@@ -92,6 +138,7 @@ agent codex {
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
 
@@ -106,6 +153,7 @@ Google Gemini.
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
 
@@ -146,6 +194,7 @@ agent copilot {
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `subcommand` | `list(string)` | Optional | iter default | Tokens inserted between `command` and the positional prompt. Unset means iter picks a sane default. `[]` means "no subcommand". `[...]` overrides entirely. |
 | `args` | `list(string)` | Optional | `[]` | Arguments appended between `subcommand` and the positional prompt. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
 
@@ -159,6 +208,7 @@ Cursor.
 | --- | --- | :---: | --- | --- |
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 No `mode` field.
 
@@ -174,6 +224,7 @@ Cline.
 | --- | --- | :---: | --- | --- |
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
 
@@ -187,6 +238,7 @@ opencode.
 | --- | --- | :---: | --- | --- |
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
 
@@ -211,6 +263,7 @@ agent generic {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `command` | `list(string)` | Required | — | argv vector. First element is the program; the rest are arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
 

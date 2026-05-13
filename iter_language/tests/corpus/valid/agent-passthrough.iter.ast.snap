@@ -33,6 +33,7 @@ Root {
                     "--no-color",
                     "--quiet",
                 ],
+                env: {},
             },
             span: 48..194,
         },

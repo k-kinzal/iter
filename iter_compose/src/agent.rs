@@ -1,5 +1,6 @@
 //! `AnyAgent` enum + the `build_agent` builder.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use iter_core::agent::{
@@ -109,67 +110,107 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             command,
             args,
             session_id_file,
+            env,
         } => AnyAgent::Claude(ClaudeAgent::new(ClaudeSettings {
             command: command.clone(),
             mode: convert_mode(*mode),
             args: args.clone(),
             session_id_file: session_id_file.as_ref().map(PathBuf::from),
+            env: resolve_env(env),
         })),
         AgentDecl::Codex {
             mode,
             command,
             args,
+            env,
         } => AnyAgent::Codex(CodexAgent::new(CodexSettings {
             command: command.clone(),
             mode: convert_mode(*mode),
             args: args.clone(),
+            env: resolve_env(env),
         })),
         AgentDecl::Gemini {
             mode,
             command,
             args,
+            env,
         } => AnyAgent::Gemini(GeminiAgent::new(GeminiSettings {
             command: command.clone(),
             mode: convert_mode(*mode),
             args: args.clone(),
+            env: resolve_env(env),
         })),
         AgentDecl::Copilot {
             mode,
             command,
             subcommand,
             args,
+            env,
         } => AnyAgent::Copilot(CopilotAgent::new(CopilotSettings {
             command: command.clone(),
             mode: convert_mode(*mode),
             subcommand: subcommand.clone(),
             args: args.clone(),
+            env: resolve_env(env),
         })),
-        AgentDecl::Cursor { command, args } => AnyAgent::Cursor(CursorAgent::new(CursorSettings {
-            command: command.clone(),
-            args: args.clone(),
-        })),
-        AgentDecl::Cline { command, args } => AnyAgent::Cline(ClineAgent::new(ClineSettings {
-            command: command.clone(),
-            args: args.clone(),
-        })),
-        AgentDecl::OpenCode { command, args } => {
+        AgentDecl::Cursor { command, args, env } => {
+            AnyAgent::Cursor(CursorAgent::new(CursorSettings {
+                command: command.clone(),
+                args: args.clone(),
+                env: resolve_env(env),
+            }))
+        }
+        AgentDecl::Cline { command, args, env } => {
+            AnyAgent::Cline(ClineAgent::new(ClineSettings {
+                command: command.clone(),
+                args: args.clone(),
+                env: resolve_env(env),
+            }))
+        }
+        AgentDecl::OpenCode { command, args, env } => {
             AnyAgent::OpenCode(OpenCodeAgent::new(OpenCodeSettings {
                 command: command.clone(),
                 args: args.clone(),
+                env: resolve_env(env),
             }))
         }
-        AgentDecl::Generic { command } => {
+        AgentDecl::Generic { command, env } => {
             if command.is_empty() {
                 return Err(AgentBuildError::GenericEmptyCommand);
             }
-            AnyAgent::Generic(GenericAgent::new(command.clone()))
+            let mut agent = GenericAgent::new(command.clone());
+            agent.env = resolve_env(env);
+            AnyAgent::Generic(agent)
         }
     })
+}
+
+/// Resolve declared env values with `ITER_` prefix overrides.
+///
+/// For every declared key `NAME`, if `ITER_NAME` is set in the runner
+/// process environment, its value overrides the Iterfile default.
+/// Undeclared `ITER_*` variables are ignored — only keys present in the
+/// agent's `env` block participate.
+fn resolve_env(declared: &BTreeMap<String, String>) -> Vec<(String, String)> {
+    declared
+        .iter()
+        .map(|(key, default)| {
+            let override_key = format!("ITER_{key}");
+            let value = std::env::var(&override_key).unwrap_or_else(|_| default.clone());
+            (key.clone(), value)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn empty_env() -> BTreeMap<String, String> {
+        BTreeMap::new()
+    }
 
     fn claude_decl(mode: AstAgentMode) -> AgentDecl {
         AgentDecl::Claude {
@@ -177,6 +218,7 @@ mod tests {
             command: "claude".into(),
             args: Vec::new(),
             session_id_file: None,
+            env: empty_env(),
         }
     }
 
@@ -185,6 +227,7 @@ mod tests {
             mode,
             command: "codex".into(),
             args: Vec::new(),
+            env: empty_env(),
         }
     }
 
@@ -193,6 +236,7 @@ mod tests {
             mode,
             command: "gemini".into(),
             args: Vec::new(),
+            env: empty_env(),
         }
     }
 
@@ -202,6 +246,7 @@ mod tests {
             command: "gh".into(),
             subcommand: None,
             args: Vec::new(),
+            env: empty_env(),
         }
     }
 
@@ -225,6 +270,7 @@ mod tests {
                 AgentDecl::Cursor {
                     command: "cursor-agent".into(),
                     args: Vec::new(),
+                    env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::Cursor(_)),
             ),
@@ -232,6 +278,7 @@ mod tests {
                 AgentDecl::Cline {
                     command: "cline".into(),
                     args: Vec::new(),
+                    env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::Cline(_)),
             ),
@@ -239,12 +286,14 @@ mod tests {
                 AgentDecl::OpenCode {
                     command: "opencode".into(),
                     args: Vec::new(),
+                    env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::OpenCode(_)),
             ),
             (
                 AgentDecl::Generic {
                     command: vec!["echo".into(), "hi".into()],
+                    env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::Generic(_)),
             ),
@@ -257,7 +306,11 @@ mod tests {
 
     #[test]
     fn generic_with_empty_command_errors() {
-        let err = build_agent(&AgentDecl::Generic { command: vec![] }).expect_err("must fail");
+        let err = build_agent(&AgentDecl::Generic {
+            command: vec![],
+            env: empty_env(),
+        })
+        .expect_err("must fail");
         assert!(err.to_string().contains("non-empty"));
     }
 
@@ -295,6 +348,7 @@ mod tests {
             command: "/opt/bin/claude".into(),
             args: vec!["--model".into(), "opus".into()],
             session_id_file: None,
+            env: empty_env(),
         })
         .expect("build");
         match claude {
@@ -309,6 +363,7 @@ mod tests {
             mode: AstAgentMode::Print,
             command: "/opt/bin/codex".into(),
             args: vec!["--model".into(), "o1".into()],
+            env: empty_env(),
         })
         .expect("build");
         match codex {
@@ -323,6 +378,7 @@ mod tests {
             mode: AstAgentMode::Print,
             command: "/opt/bin/gemini".into(),
             args: vec!["--sandbox".into()],
+            env: empty_env(),
         })
         .expect("build");
         match gemini {
@@ -338,6 +394,7 @@ mod tests {
             command: "/opt/bin/copilot".into(),
             subcommand: Some(vec![]),
             args: vec!["--no-color".into()],
+            env: empty_env(),
         })
         .expect("build");
         match copilot {
@@ -352,6 +409,7 @@ mod tests {
         let cursor = build_agent(&AgentDecl::Cursor {
             command: "/opt/bin/cursor".into(),
             args: vec!["--foo".into()],
+            env: empty_env(),
         })
         .expect("build");
         match cursor {
@@ -365,6 +423,7 @@ mod tests {
         let cline = build_agent(&AgentDecl::Cline {
             command: "/opt/bin/cline".into(),
             args: vec!["--bar".into()],
+            env: empty_env(),
         })
         .expect("build");
         match cline {
@@ -378,6 +437,7 @@ mod tests {
         let opencode = build_agent(&AgentDecl::OpenCode {
             command: "/opt/bin/opencode".into(),
             args: vec!["--baz".into()],
+            env: empty_env(),
         })
         .expect("build");
         match opencode {
@@ -390,12 +450,91 @@ mod tests {
     }
 
     #[test]
+    fn env_is_passed_through_to_agent() {
+        let mut env = BTreeMap::new();
+        env.insert("MY_VAR".to_string(), "my_value".to_string());
+        let decl = AgentDecl::Claude {
+            mode: AstAgentMode::Print,
+            command: "claude".into(),
+            args: Vec::new(),
+            session_id_file: None,
+            env,
+        };
+        let agent = build_agent(&decl).expect("build");
+        match agent {
+            AnyAgent::Claude(a) => {
+                assert_eq!(a.env, vec![("MY_VAR".to_string(), "my_value".to_string())]);
+            }
+            other => panic!("expected Claude, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn env_is_passed_through_to_generic_agent() {
+        let mut env = BTreeMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        let decl = AgentDecl::Generic {
+            command: vec!["echo".into()],
+            env,
+        };
+        let agent = build_agent(&decl).expect("build");
+        match agent {
+            AnyAgent::Generic(a) => {
+                assert_eq!(a.env, vec![("FOO".to_string(), "bar".to_string())]);
+            }
+            other => panic!("expected Generic, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn iter_prefix_overrides_declared_env() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut env = BTreeMap::new();
+        env.insert("TEST_OVERRIDE".to_string(), "default".to_string());
+        // SAFETY: serialised via ENV_LOCK.
+        unsafe {
+            std::env::set_var("ITER_TEST_OVERRIDE", "overridden");
+        }
+        let resolved = resolve_env(&env);
+        unsafe {
+            std::env::remove_var("ITER_TEST_OVERRIDE");
+        }
+        assert_eq!(
+            resolved,
+            vec![("TEST_OVERRIDE".to_string(), "overridden".to_string())],
+        );
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn iter_prefix_uses_default_when_unset() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut env = BTreeMap::new();
+        env.insert("UNIQUE_KEY_ZZZZ".to_string(), "default_val".to_string());
+        // SAFETY: serialised via ENV_LOCK.
+        unsafe {
+            std::env::remove_var("ITER_UNIQUE_KEY_ZZZZ");
+        }
+        let resolved = resolve_env(&env);
+        assert_eq!(
+            resolved,
+            vec![("UNIQUE_KEY_ZZZZ".to_string(), "default_val".to_string())],
+        );
+    }
+
+    #[test]
     fn claude_session_id_file_is_forwarded() {
         let without = build_agent(&AgentDecl::Claude {
             mode: AstAgentMode::Print,
             command: "claude".into(),
             args: Vec::new(),
             session_id_file: None,
+            env: empty_env(),
         })
         .expect("build");
         match without {
@@ -408,6 +547,7 @@ mod tests {
             command: "claude".into(),
             args: Vec::new(),
             session_id_file: Some(".iter/session-id".into()),
+            env: empty_env(),
         })
         .expect("build");
         match with {

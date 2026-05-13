@@ -1,19 +1,13 @@
 ---
 source: iter_language/tests/conformance.rs
-description: queue-shell-minimal.iter
+description: agent-env.iter
 ---
 Root {
     args: [],
     queue: Some(
         Spanned {
-            node: Shell {
-                enqueue: "true",
-                dequeue: "true",
-                close: None,
-                interpreter: None,
-                enqueue_timeout_secs: None,
-            },
-            span: 0..53,
+            node: Memory,
+            span: 0..12,
         },
     ),
     workspace: Some(
@@ -21,7 +15,7 @@ Root {
             node: Local {
                 base: ".",
             },
-            span: 55..87,
+            span: 14..46,
         },
     ),
     agent: Some(
@@ -31,9 +25,12 @@ Root {
                 command: "claude",
                 args: [],
                 session_id_file: None,
-                env: {},
+                env: {
+                    "EXP_AXIS": "design",
+                    "WORKTREE_NAME": "exp-1-20260507",
+                },
             },
-            span: 89..141,
+            span: 48..181,
         },
     ),
     runner: Some(
@@ -43,16 +40,16 @@ Root {
                 behavior: Wait,
                 iteration_timeout_secs: None,
             },
-            span: 165..218,
+            span: 183..239,
         },
     ),
     prompts: [
         Spanned {
             node: PromptDecl {
                 guard: None,
-                body: "do the thing",
+                body: "Env test.",
             },
-            span: 143..164,
+            span: 241..259,
         },
     ],
     events: [],

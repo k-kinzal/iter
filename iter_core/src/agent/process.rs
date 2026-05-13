@@ -63,6 +63,17 @@ pub(crate) enum PromptDelivery<'a> {
     Inline,
 }
 
+/// Apply user-declared environment variables to an agent [`Command`].
+///
+/// Called by each driver *before* iter-managed env injection so that
+/// iter-internal variables (trace context, hook state files, etc.) always
+/// take precedence over user-declared values with the same name.
+pub(crate) fn apply_user_env(command: &mut Command, env: &[(String, String)]) {
+    for (key, value) in env {
+        command.env(key, value);
+    }
+}
+
 /// Inject the current `OTel` trace context into an agent process environment.
 ///
 /// This is intentionally opt-in at the driver layer. Agent CLIs differ in

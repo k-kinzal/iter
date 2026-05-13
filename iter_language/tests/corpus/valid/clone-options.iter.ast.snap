@@ -41,6 +41,7 @@ Root {
                 command: "claude",
                 args: [],
                 session_id_file: None,
+                env: {},
             },
             span: 190..242,
         },

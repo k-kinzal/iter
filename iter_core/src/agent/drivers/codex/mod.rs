@@ -72,8 +72,8 @@ mod hook;
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
-    PromptDelivery, drive_interactive_with_finalize, inject_agent_otel_resource_attrs,
-    inject_trace_context_env, run_command,
+    PromptDelivery, apply_user_env, drive_interactive_with_finalize,
+    inject_agent_otel_resource_attrs, inject_trace_context_env, run_command,
 };
 use hook::HookBundle;
 
@@ -96,6 +96,8 @@ pub struct CodexSettings {
     /// in interactive mode, between the `-c` feature flag pair) and the
     /// positional prompt. Empty is allowed.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 /// `OpenAI` Codex agent configuration.
@@ -109,6 +111,8 @@ pub struct CodexAgent {
     /// in interactive mode, between the `-c` feature flag pair) and the
     /// positional prompt.
     pub args: Vec<String>,
+    /// User-declared environment variables passed to the child process.
+    pub env: Vec<(String, String)>,
 }
 
 impl CodexAgent {
@@ -120,11 +124,13 @@ impl CodexAgent {
             command,
             mode,
             args,
+            env,
         } = settings;
         Self {
             command,
             mode,
             args,
+            env,
         }
     }
 
@@ -172,6 +178,7 @@ impl Agent for CodexAgent {
         match self.mode {
             AgentMode::Print => {
                 let mut command = self.build_print_command(workspace_path, prompt);
+                apply_user_env(&mut command, &self.env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
                     signal_id,
@@ -213,6 +220,7 @@ impl CodexAgent {
         let bundle = HookBundle::install(path).await?;
 
         let mut command = self.build_interactive_command(path, prompt);
+        apply_user_env(&mut command, &self.env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "codex");
         let (env_key, state_file) = bundle.env_var();
         command.env(env_key, state_file);
@@ -240,6 +248,7 @@ mod tests {
             command: command.into(),
             mode,
             args: Vec::new(),
+            env: Vec::new(),
         }
     }
 
@@ -280,6 +289,20 @@ mod tests {
             exec_pos < model_pos && model_pos < prompt_pos,
             "got {out:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn print_mode_env_is_forwarded_to_child() {
+        let (_guard, bin) = fake_binary_script("printf '%s' \"$CODEX_TEST_ENV_VAR\"");
+        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        s.env = vec![("CODEX_TEST_ENV_VAR".into(), "env-value".into())];
+        let agent = CodexAgent::new(s);
+        let prompt = Prompt::from("x");
+        let report = agent
+            .run(ctx(Path::new("."), &prompt))
+            .await
+            .expect("run ok");
+        assert_eq!(report.last_output.expect("last_output"), "env-value",);
     }
 
     /// Fake `codex` binary for interactive mode.

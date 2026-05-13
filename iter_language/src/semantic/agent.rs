@@ -8,6 +8,7 @@ use crate::parser::{RawBlock, RawIdent, RawValue};
 struct SimpleAgentParts {
     command: String,
     args: Vec<String>,
+    env: std::collections::BTreeMap<String, String>,
 }
 
 impl Analyzer {
@@ -31,19 +32,19 @@ impl Analyzer {
                 self.lower_mode_agent(&kind, &mut fields)?
             }
             "cursor" => {
-                let SimpleAgentParts { command, args } =
+                let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "cursor")?;
-                AgentDecl::Cursor { command, args }
+                AgentDecl::Cursor { command, args, env }
             }
             "cline" => {
-                let SimpleAgentParts { command, args } =
+                let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "cline")?;
-                AgentDecl::Cline { command, args }
+                AgentDecl::Cline { command, args, env }
             }
             "opencode" => {
-                let SimpleAgentParts { command, args } =
+                let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "opencode")?;
-                AgentDecl::OpenCode { command, args }
+                AgentDecl::OpenCode { command, args, env }
             }
             "generic" => self.lower_generic_agent(&kind, &mut fields),
             other => {
@@ -78,12 +79,13 @@ impl Analyzer {
         let args = self
             .take_optional_string_list(fields, "args")
             .unwrap_or_default();
+        let env = self.take_optional_env_block(fields);
         match kind.name.as_str() {
             "claude" => {
                 let session_id_file = self.take_optional_string(fields, "session_id_file");
                 self.reject_unknown_fields(
                     fields,
-                    &["mode", "command", "args", "session_id_file"],
+                    &["mode", "command", "args", "session_id_file", "env"],
                     "agent claude",
                 );
                 Some(AgentDecl::Claude {
@@ -91,29 +93,40 @@ impl Analyzer {
                     command: command?,
                     args,
                     session_id_file,
+                    env,
                 })
             }
             "codex" => {
-                self.reject_unknown_fields(fields, &["mode", "command", "args"], "agent codex");
+                self.reject_unknown_fields(
+                    fields,
+                    &["mode", "command", "args", "env"],
+                    "agent codex",
+                );
                 Some(AgentDecl::Codex {
                     mode: mode?,
                     command: command?,
                     args,
+                    env,
                 })
             }
             "gemini" => {
-                self.reject_unknown_fields(fields, &["mode", "command", "args"], "agent gemini");
+                self.reject_unknown_fields(
+                    fields,
+                    &["mode", "command", "args", "env"],
+                    "agent gemini",
+                );
                 Some(AgentDecl::Gemini {
                     mode: mode?,
                     command: command?,
                     args,
+                    env,
                 })
             }
             "copilot" => {
                 let subcommand = self.take_optional_string_list(fields, "subcommand");
                 self.reject_unknown_fields(
                     fields,
-                    &["mode", "command", "subcommand", "args"],
+                    &["mode", "command", "subcommand", "args", "env"],
                     "agent copilot",
                 );
                 Some(AgentDecl::Copilot {
@@ -121,6 +134,7 @@ impl Analyzer {
                     command: command?,
                     subcommand,
                     args,
+                    env,
                 })
             }
             _ => unreachable!(),
@@ -143,10 +157,16 @@ impl Analyzer {
         let args = self
             .take_optional_string_list(fields, "args")
             .unwrap_or_default();
-        self.reject_unknown_fields(fields, &["command", "args"], &format!("agent {label}"));
+        let env = self.take_optional_env_block(fields);
+        self.reject_unknown_fields(
+            fields,
+            &["command", "args", "env"],
+            &format!("agent {label}"),
+        );
         Some(SimpleAgentParts {
             command: command?,
             args,
+            env,
         })
     }
 
@@ -187,8 +207,9 @@ impl Analyzer {
             );
             Vec::new()
         };
-        self.reject_unknown_fields(fields, &["command"], "agent generic");
-        AgentDecl::Generic { command }
+        let env = self.take_optional_env_block(fields);
+        self.reject_unknown_fields(fields, &["command", "env"], "agent generic");
+        AgentDecl::Generic { command, env }
     }
 
     pub(super) fn parse_agent_mode(&mut self, name: &str, span: Span) -> Option<AgentMode> {

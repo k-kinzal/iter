@@ -200,21 +200,41 @@ fn render_agent(
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     match agent {
-        iter_language::AgentDecl::Claude { command, args, .. }
-        | iter_language::AgentDecl::Codex { command, args, .. }
-        | iter_language::AgentDecl::Gemini { command, args, .. }
-        | iter_language::AgentDecl::Copilot { command, args, .. }
-        | iter_language::AgentDecl::Cursor { command, args, .. }
-        | iter_language::AgentDecl::Cline { command, args, .. }
-        | iter_language::AgentDecl::OpenCode { command, args, .. } => {
+        iter_language::AgentDecl::Claude {
+            command, args, env, ..
+        }
+        | iter_language::AgentDecl::Codex {
+            command, args, env, ..
+        }
+        | iter_language::AgentDecl::Gemini {
+            command, args, env, ..
+        }
+        | iter_language::AgentDecl::Copilot {
+            command, args, env, ..
+        }
+        | iter_language::AgentDecl::Cursor {
+            command, args, env, ..
+        }
+        | iter_language::AgentDecl::Cline {
+            command, args, env, ..
+        }
+        | iter_language::AgentDecl::OpenCode {
+            command, args, env, ..
+        } => {
             render_str(command, values)?;
             for a in args.iter_mut() {
                 render_str(a, values)?;
             }
+            for v in env.values_mut() {
+                render_str(v, values)?;
+            }
         }
-        iter_language::AgentDecl::Generic { command } => {
+        iter_language::AgentDecl::Generic { command, env } => {
             for c in command.iter_mut() {
                 render_str(c, values)?;
+            }
+            for v in env.values_mut() {
+                render_str(v, values)?;
             }
         }
     }
@@ -449,6 +469,30 @@ on runner_starting { shell "mkdir -p {{arg.dir}}" }
                 assert_eq!(cmd, "mkdir -p /tmp/work");
             }
         }
+    }
+
+    #[test]
+    fn resolve_args_renders_agent_env_values() {
+        let source = r#"
+arg worktree = "exp-1"
+workspace local { base = "." }
+agent claude {
+  mode = print
+  command = "claude"
+  env {
+    WORKTREE_NAME = "{{arg.worktree}}"
+  }
+}
+runner { continue_on_error = false behavior = loop }
+prompt "noop"
+"#;
+        let mut root = parse(source).expect("parse");
+        resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
+        let env = match &root.agent.as_ref().unwrap().node {
+            iter_language::AgentDecl::Claude { env, .. } => env,
+            other => panic!("unexpected agent: {other:?}"),
+        };
+        assert_eq!(env.get("WORKTREE_NAME"), Some(&"exp-1".to_string()));
     }
 
     #[test]

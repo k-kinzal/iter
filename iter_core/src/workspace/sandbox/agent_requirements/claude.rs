@@ -174,6 +174,7 @@ mod tests {
             mode: AgentMode::Print,
             args: Vec::new(),
             session_id_file: None,
+            env: Vec::new(),
         })
     }
 

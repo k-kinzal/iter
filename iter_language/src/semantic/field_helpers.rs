@@ -571,6 +571,46 @@ impl Analyzer {
         Some(out)
     }
 
+    /// Pop an optional `env { KEY = "value" ... }` block for agent
+    /// declarations. Each key must match `[A-Z][A-Z0-9_]*` (POSIX
+    /// environment variable naming) and each value must be a string
+    /// literal. Duplicate keys are already rejected by
+    /// [`collect_fields`].
+    pub(super) fn take_optional_env_block(
+        &mut self,
+        fields: &mut BTreeMap<String, RawField>,
+    ) -> BTreeMap<String, String> {
+        let Some(mut inner) = self.take_optional_block(fields, "env") else {
+            return BTreeMap::new();
+        };
+        let mut out = BTreeMap::new();
+        let leftover: Vec<(String, RawField)> = std::mem::take(&mut inner).into_iter().collect();
+        for (k, field) in leftover {
+            if !is_valid_env_name(&k) {
+                self.errors.push(
+                    Diagnostic::error(
+                        field.name.span.clone(),
+                        format!(
+                            "invalid env name `{k}`: must match [A-Z][A-Z0-9_]*",
+                        ),
+                    )
+                    .with_hint("environment variable names must be uppercase letters, digits, and underscores"),
+                );
+                continue;
+            }
+            match field.value {
+                RawValue::String(v, _) => {
+                    out.insert(k, v);
+                }
+                other => self.errors.push(Diagnostic::error(
+                    other.span(),
+                    format!("`env.{k}` must be a string"),
+                )),
+            }
+        }
+        out
+    }
+
     pub(super) fn take_required_agent_mode(
         &mut self,
         fields: &mut BTreeMap<String, RawField>,
@@ -599,4 +639,16 @@ impl Analyzer {
             None
         }
     }
+}
+
+/// `true` when `name` matches `[A-Z][A-Z0-9_]*` — the POSIX convention
+/// for environment variable names, excluding `_`-prefixed names which
+/// are reserved for implementation use.
+fn is_valid_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_uppercase() => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
 }
