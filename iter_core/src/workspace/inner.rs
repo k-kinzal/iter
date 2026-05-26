@@ -36,15 +36,13 @@ use tokio_util::sync::CancellationToken;
 ///   post-teardown event handlers — for example a project-supplied
 ///   `shell "./scripts/persist-run.sh"` handler — should operate.
 ///
-/// For simple workspaces whose working and persistent paths are identical
-/// (e.g. `LocalWorkspace`, `SandboxWorkspace`), the default
-/// [`final_path`](Workspace::final_path) implementation forwards to
-/// [`path`](Workspace::path) and no override is needed. Workspaces that
-/// materialise the agent's environment in a transient location
-/// (e.g. `CloneWorkspace`, which uses a temp directory) **must** override
-/// [`final_path`](Workspace::final_path) to return a location that is
-/// still valid after `teardown()` has run — otherwise post-teardown
-/// handlers will see a dangling path.
+/// Every [`Workspace`] implementation must provide an explicit
+/// [`final_path`](Workspace::final_path). For workspaces whose working
+/// and persistent paths are identical (e.g. `LocalWorkspace`), return
+/// `self.path()`. Workspaces that materialise the agent's environment
+/// in a transient location (e.g. `CloneWorkspace`, `SandboxWorkspace`)
+/// must return the durable destination that is still valid after
+/// `teardown()` has run.
 ///
 /// The two methods are intentionally split rather than collapsed behind a
 /// single ambiguous `path()`: the [`Runner`](crate::Runner) calls `path()`
@@ -106,13 +104,11 @@ pub trait Workspace: Send + Sync {
     /// such as a project-supplied shell handler that persists the run —
     /// should operate on.
     ///
-    /// The default implementation forwards to [`path`](Workspace::path),
-    /// which is correct for workspaces whose working path IS the
-    /// persistent path (`LocalWorkspace`, `SandboxWorkspace` with a host
-    /// bind mount). Workspaces that use a throw-away working location
-    /// (e.g. `CloneWorkspace`) **must** override this to return a path
-    /// that is still valid after `teardown()` has run.
-    fn final_path(&self) -> &Path {
-        self.path()
-    }
+    /// Every implementation must choose its persistent path. For
+    /// workspaces whose working path IS the persistent path
+    /// (e.g. `LocalWorkspace`), return `self.path()`. For workspaces
+    /// that use a throw-away working location (e.g. `CloneWorkspace`,
+    /// `SandboxWorkspace`), return the durable destination that is
+    /// still valid after `teardown()` has run.
+    fn final_path(&self) -> &Path;
 }

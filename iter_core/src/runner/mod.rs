@@ -922,6 +922,9 @@ mod lifecycle_tests {
         fn path(&self) -> &Path {
             &self.path
         }
+        fn final_path(&self) -> &Path {
+            self.path()
+        }
     }
 
     /// Workspace whose `teardown()` always fails. The `teardown_calls`
@@ -944,6 +947,9 @@ mod lifecycle_tests {
         }
         fn path(&self) -> &Path {
             &self.path
+        }
+        fn final_path(&self) -> &Path {
+            self.path()
         }
     }
 
@@ -970,6 +976,42 @@ mod lifecycle_tests {
         }
         fn path(&self) -> &Path {
             &self.path
+        }
+        fn final_path(&self) -> &Path {
+            self.path()
+        }
+    }
+
+    /// Workspace that simulates a transient working directory (like
+    /// `CloneWorkspace`): `path()` returns the temp dir while active,
+    /// `final_path()` always returns the durable base.
+    struct TransientWorkspace {
+        base: PathBuf,
+        temp: tempfile::TempDir,
+    }
+
+    impl TransientWorkspace {
+        fn new(base: PathBuf) -> Self {
+            Self {
+                base,
+                temp: tempfile::TempDir::new().expect("tempdir"),
+            }
+        }
+    }
+
+    impl Workspace for TransientWorkspace {
+        type Error = Infallible;
+        async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+            Ok(())
+        }
+        fn path(&self) -> &Path {
+            self.temp.path()
+        }
+        fn final_path(&self) -> &Path {
+            &self.base
         }
     }
 
@@ -2227,5 +2269,51 @@ mod lifecycle_tests {
             RunnerTerminationReason::TerminateSignalReceived,
         );
         assert_eq!(summary.iteration_count, 3);
+    }
+
+    #[tokio::test]
+    async fn transient_workspace_teardown_event_carries_persistent_path() {
+        let persistent_dir = tempfile::TempDir::new().expect("persistent dir");
+        let persistent_path = persistent_dir.path().to_path_buf();
+
+        let expected = persistent_path.clone();
+        let provider = move || TransientWorkspace::new(persistent_path.clone());
+
+        let queue = Arc::new(InMemoryQueue::new());
+        queue
+            .queue(Signal::new(Metadata::new()), Priority::default())
+            .await
+            .unwrap();
+        let handler = CapturingHandler::default();
+        let runner = Runner::<InMemoryQueue, TransientWorkspace, StubAgent>::builder()
+            .queue(Arc::clone(&queue))
+            .workspaces(provider)
+            .agent(StubAgent)
+            .prompt_template(PromptTemplate::new("hello").unwrap())
+            .config(RunnerConfig {
+                once: true,
+                continue_on_error: false,
+                behavior: RunnerBehavior::Wait,
+                iteration_timeout: None,
+            })
+            .event_handler(handler.clone())
+            .build()
+            .unwrap();
+
+        runner
+            .run(CancellationToken::new())
+            .await
+            .expect("run ok");
+
+        let events = handler.events.lock().unwrap().clone();
+        let teardown_path = events.iter().find_map(|e| match e {
+            Event::WorkspaceTeardownFinished { path, .. } => Some(path.clone()),
+            _ => None,
+        });
+        assert_eq!(
+            teardown_path.as_deref(),
+            Some(expected.as_path()),
+            "post-teardown event must carry the persistent path, not the transient working directory",
+        );
     }
 }

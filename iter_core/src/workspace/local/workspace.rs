@@ -94,6 +94,10 @@ impl Workspace for LocalWorkspace {
     fn path(&self) -> &Path {
         &self.base
     }
+
+    fn final_path(&self) -> &Path {
+        self.path()
+    }
 }
 
 #[cfg(test)]
