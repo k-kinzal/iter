@@ -48,7 +48,7 @@ pub use discovery::{
     ActiveOrchestrator, DiscoveryError, ProjectMember, find_active_orchestrator,
     list_all_members_by_project, list_project_members, open_default_registry,
 };
-pub use events::{ShellEventHandler, register_event_handlers, register_event_handlers_from_events};
+pub use events::{register_event_handlers, register_event_handlers_from_events};
 pub use process_lifecycle::{
     AdoptedBootstrapError, RunRecordMetadata, bootstrap_adopted, derive_finalize_reason,
     leaves_record_non_terminal, log_finalize_report,

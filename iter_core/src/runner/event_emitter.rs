@@ -1,18 +1,19 @@
-//! [`EventEmitter`] — broadcasts [`Event`]s to a fan-out of registered
-//! [`EventHandler`]s.
+//! [`EventEmitter`] — routes [`Event`]s to handlers registered for specific
+//! [`EventName`]s.
 //!
 //! Because the [`EventHandler`] trait uses RPITIT it is not directly
 //! dyn-compatible. The emitter therefore wraps each handler in an internal
 //! erased trait that returns a `Pin<Box<dyn Future>>` so a heterogeneous list
 //! of handlers can be stored in a `Vec`.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use tracing::warn;
 
-use super::event::Event;
+use super::event::{Event, EventName};
 use super::event_handler::{BoxError, EventHandler};
 use super::iteration::IterationContext;
 
@@ -72,9 +73,12 @@ impl EmitReport {
     }
 }
 
-/// Fan-out broadcaster of [`Event`]s.
+/// Event dispatcher that routes [`Event`]s to handlers by [`EventName`].
 ///
-/// Handlers are stored in registration order and invoked sequentially.
+/// Handlers are registered via [`EventEmitter::on`] with an explicit
+/// [`EventName`]. On [`EventEmitter::emit`], only the handlers registered
+/// for the event's name are invoked, in registration order.
+///
 /// Failing handlers are logged via [`tracing`] at `warn` level and the
 /// remaining handlers still run; callers read back the per-call error
 /// count via [`EmitReport`] so a failing
@@ -82,7 +86,8 @@ impl EmitReport {
 /// void.
 #[derive(Default, Clone)]
 pub struct EventEmitter {
-    handlers: Vec<Arc<dyn DynEventHandler>>,
+    routes: HashMap<EventName, Vec<Arc<dyn DynEventHandler>>>,
+    handler_count: usize,
 }
 
 impl EventEmitter {
@@ -92,33 +97,40 @@ impl EventEmitter {
         Self::default()
     }
 
-    /// Register a handler. Handlers are invoked in registration order.
-    pub fn register<H>(&mut self, handler: H)
+    /// Register a handler for a specific [`EventName`].
+    ///
+    /// The handler will only be invoked when an event with the matching
+    /// name is emitted. Handlers registered for the same name are invoked
+    /// in registration order.
+    pub fn on<H>(&mut self, name: EventName, handler: H)
     where
         H: EventHandler + 'static,
     {
-        self.handlers.push(Arc::new(DynAdapter { inner: handler }));
+        self.routes
+            .entry(name)
+            .or_default()
+            .push(Arc::new(DynAdapter { inner: handler }));
+        self.handler_count += 1;
     }
 
-    /// Number of registered handlers.
+    /// Number of registered handlers (across all event names).
     #[must_use]
     pub fn len(&self) -> usize {
-        self.handlers.len()
+        self.handler_count
     }
 
     /// `true` when no handlers are registered.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.handlers.is_empty()
+        self.handler_count == 0
     }
 
-    /// Dispatch `event` to every registered handler.
+    /// Dispatch `event` to handlers registered for its [`EventName`].
     ///
     /// Takes `event` by reference so the [`Runner`](crate::Runner) can
     /// emit the same `Event` to both the user-defined handler stream and
-    /// the system observer stream (per rev17 §F3) without cloning. Each
-    /// handler still sees a borrowed reference; the inner trait already
-    /// expects `&Event`.
+    /// the system observer stream without cloning. Each handler still sees
+    /// a borrowed reference; the inner trait already expects `&Event`.
     ///
     /// `iteration` is the per-turn snapshot the runner builds before each
     /// emit. Handlers that render Handlebars templates against
@@ -134,11 +146,19 @@ impl EventEmitter {
     /// it to populate
     /// [`RunnerSummary::event_handler_error_count`](crate::RunnerSummary::event_handler_error_count).
     pub async fn emit(&self, event: &Event, iteration: &IterationContext) -> EmitReport {
+        let name = event.name();
         let mut error_count = 0usize;
-        for (idx, handler) in self.handlers.iter().enumerate() {
-            if let Err(err) = handler.handle(event, iteration).await {
-                error_count += 1;
-                warn!(handler_index = idx, error = %err, "event handler returned error");
+        if let Some(handlers) = self.routes.get(&name) {
+            for (idx, handler) in handlers.iter().enumerate() {
+                if let Err(err) = handler.handle(event, iteration).await {
+                    error_count += 1;
+                    warn!(
+                        event_name = ?name,
+                        handler_index = idx,
+                        error = %err,
+                        "event handler returned error",
+                    );
+                }
             }
         }
         EmitReport { error_count }
@@ -148,8 +168,8 @@ impl EventEmitter {
 impl std::fmt::Debug for EventEmitter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EventEmitter")
-            .field("handlers", &self.handlers.len())
-            .finish()
+            .field("handlers", &self.handler_count)
+            .finish_non_exhaustive()
     }
 }
 
@@ -224,15 +244,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn calls_every_registered_handler() {
+    async fn calls_every_handler_for_matching_event() {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut emitter = EventEmitter::new();
-        emitter.register(CountingHandler {
-            counter: Arc::clone(&counter),
-        });
-        emitter.register(CountingHandler {
-            counter: Arc::clone(&counter),
-        });
+        emitter.on(
+            EventName::WorkspaceTeardownFinished,
+            CountingHandler {
+                counter: Arc::clone(&counter),
+            },
+        );
+        emitter.on(
+            EventName::WorkspaceTeardownFinished,
+            CountingHandler {
+                counter: Arc::clone(&counter),
+            },
+        );
 
         let report = emitter.emit(&sample_event(), &iter_ctx()).await;
 
@@ -241,20 +267,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handler_error_does_not_abort_but_is_counted() {
+    async fn does_not_invoke_handlers_for_other_events() {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut emitter = EventEmitter::new();
-        emitter.register(FailingHandler);
-        emitter.register(CountingHandler {
-            counter: Arc::clone(&counter),
-        });
+        emitter.on(
+            EventName::RunnerStarting,
+            CountingHandler {
+                counter: Arc::clone(&counter),
+            },
+        );
 
         let report = emitter.emit(&sample_event(), &iter_ctx()).await;
 
-        // The counting handler must still have been called even though the
-        // first handler returned an error.
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        assert!(report.is_clean());
+    }
+
+    #[tokio::test]
+    async fn handler_error_does_not_abort_but_is_counted() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut emitter = EventEmitter::new();
+        emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
+        emitter.on(
+            EventName::WorkspaceTeardownFinished,
+            CountingHandler {
+                counter: Arc::clone(&counter),
+            },
+        );
+
+        let report = emitter.emit(&sample_event(), &iter_ctx()).await;
+
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        // But the failing handler's error is visible in the report.
         assert_eq!(report.error_count, 1);
         assert!(!report.is_clean());
     }
@@ -262,22 +305,45 @@ mod tests {
     #[tokio::test]
     async fn multiple_failing_handlers_all_counted() {
         let mut emitter = EventEmitter::new();
-        emitter.register(FailingHandler);
-        emitter.register(FailingHandler);
-        emitter.register(FailingHandler);
+        emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
+        emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
+        emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
 
         let report = emitter.emit(&sample_event(), &iter_ctx()).await;
 
         assert_eq!(report.error_count, 3);
     }
 
+    #[tokio::test]
+    async fn error_events_route_to_runner_error_name() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut emitter = EventEmitter::new();
+        emitter.on(
+            EventName::RunnerError,
+            CountingHandler {
+                counter: Arc::clone(&counter),
+            },
+        );
+
+        let error_event = Event::AgentRunFailed {
+            signal_id: Signal::new(Metadata::new()).id(),
+            error: "boom".into(),
+        };
+        emitter.emit(&error_event, &iter_ctx()).await;
+
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_emit_is_safe() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut emitter = EventEmitter::new();
-        emitter.register(CapturingHandler {
-            events: Arc::clone(&events),
-        });
+        emitter.on(
+            EventName::WorkspaceTeardownFinished,
+            CapturingHandler {
+                events: Arc::clone(&events),
+            },
+        );
         let emitter = Arc::new(emitter);
 
         let mut tasks = Vec::new();

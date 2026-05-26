@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::agent::Agent;
 use crate::prompt::{PromptSelector, PromptTemplate};
 use crate::queue::Queue;
+use crate::runner::event::EventName;
 use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
 use crate::runner::{EventEmitter, EventHandler, Runner, RunnerBehavior, RunnerConfig};
 use crate::workspace::Workspace;
@@ -113,13 +114,33 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
         self
     }
 
-    /// Register an additional [`EventHandler`].
-    pub fn event_handler<H>(mut self, handler: H) -> Self
+    /// Register an [`EventHandler`] for a specific [`EventName`].
+    ///
+    /// The handler is only invoked when the emitter dispatches an event
+    /// whose [`Event::name`](crate::runner::Event::name) matches.
+    pub fn on<H>(mut self, name: EventName, handler: H) -> Self
     where
         H: EventHandler + 'static,
     {
-        self.events.register(handler);
+        self.events.on(name, handler);
         self
+    }
+
+    /// Register an [`EventHandler`] for every [`EventName`].
+    ///
+    /// The handler must be [`Clone`] because it is registered once per
+    /// event name. Useful for test capture handlers and cross-cutting
+    /// concerns like logging.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn on_all<H>(self, handler: H) -> Self
+    where
+        H: EventHandler + Clone + 'static,
+    {
+        let mut this = self;
+        for &name in EventName::ALL {
+            this.events.on(name, handler.clone());
+        }
+        this
     }
 
     /// Replace the [`EventEmitter`] wholesale.

@@ -123,6 +123,81 @@ pub enum Event {
     },
 }
 
+/// Routing key for event dispatch.
+///
+/// Each variant names a logical event the runner emits. The emitter
+/// uses this to invoke only the handlers registered for a given name
+/// rather than broadcasting to all handlers.
+///
+/// The mapping from [`Event`] to `EventName` is defined by
+/// [`Event::name`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EventName {
+    /// `runner_starting`
+    RunnerStarting,
+    /// `signal_received`
+    SignalReceived,
+    /// `workspace_setup_starting`
+    WorkspaceSetupStarting,
+    /// `workspace_setup_finished`
+    WorkspaceSetupFinished,
+    /// `agent_starting`
+    AgentStarting,
+    /// `agent_finished`
+    AgentFinished,
+    /// `workspace_teardown_starting`
+    WorkspaceTeardownStarting,
+    /// `workspace_teardown_finished`
+    WorkspaceTeardownFinished,
+    /// `runner_error` — covers all error variants.
+    RunnerError,
+    /// `runner_finished`
+    RunnerFinished,
+}
+
+impl EventName {
+    /// All event name variants.
+    pub const ALL: &'static [EventName] = &[
+        EventName::RunnerStarting,
+        EventName::SignalReceived,
+        EventName::WorkspaceSetupStarting,
+        EventName::WorkspaceSetupFinished,
+        EventName::AgentStarting,
+        EventName::AgentFinished,
+        EventName::WorkspaceTeardownStarting,
+        EventName::WorkspaceTeardownFinished,
+        EventName::RunnerError,
+        EventName::RunnerFinished,
+    ];
+}
+
+impl Event {
+    /// The routing key for this event.
+    ///
+    /// All error variants (`DequeueFailed`, `RenderPromptFailed`,
+    /// `WorkspaceSetupFailed`, `AgentRunFailed`,
+    /// `WorkspaceTeardownFailed`) map to [`EventName::RunnerError`].
+    #[must_use]
+    pub fn name(&self) -> EventName {
+        match self {
+            Self::RunnerStarting {} => EventName::RunnerStarting,
+            Self::SignalReceived { .. } => EventName::SignalReceived,
+            Self::WorkspaceSetupStarting { .. } => EventName::WorkspaceSetupStarting,
+            Self::WorkspaceSetupFinished { .. } => EventName::WorkspaceSetupFinished,
+            Self::AgentStarting { .. } => EventName::AgentStarting,
+            Self::AgentFinished { .. } => EventName::AgentFinished,
+            Self::WorkspaceTeardownStarting { .. } => EventName::WorkspaceTeardownStarting,
+            Self::WorkspaceTeardownFinished { .. } => EventName::WorkspaceTeardownFinished,
+            Self::DequeueFailed { .. }
+            | Self::RenderPromptFailed { .. }
+            | Self::WorkspaceSetupFailed { .. }
+            | Self::AgentRunFailed { .. }
+            | Self::WorkspaceTeardownFailed { .. } => EventName::RunnerError,
+            Self::RunnerFinished { .. } => EventName::RunnerFinished,
+        }
+    }
+}
+
 /// Label identifying which runner step produced an error.
 ///
 /// Used in [`RunnerExitError`](crate::runner::RunnerExitError),
@@ -179,5 +254,42 @@ impl Event {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_name_all_covers_every_variant() {
+        let all_set: std::collections::HashSet<EventName> =
+            EventName::ALL.iter().copied().collect();
+        // Exhaustive match — adding a variant without listing it here
+        // causes a compile error.
+        for &name in EventName::ALL {
+            match name {
+                EventName::RunnerStarting
+                | EventName::SignalReceived
+                | EventName::WorkspaceSetupStarting
+                | EventName::WorkspaceSetupFinished
+                | EventName::AgentStarting
+                | EventName::AgentFinished
+                | EventName::WorkspaceTeardownStarting
+                | EventName::WorkspaceTeardownFinished
+                | EventName::RunnerError
+                | EventName::RunnerFinished => {}
+            }
+        }
+        assert_eq!(
+            all_set.len(),
+            EventName::ALL.len(),
+            "ALL contains duplicates",
+        );
+        assert_eq!(
+            EventName::ALL.len(),
+            10,
+            "EventName variant count changed — update ALL",
+        );
     }
 }

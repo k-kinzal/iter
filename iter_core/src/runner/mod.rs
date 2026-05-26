@@ -13,6 +13,7 @@ pub mod event;
 pub mod event_emitter;
 pub mod event_handler;
 mod events;
+pub mod shell_event_handler;
 pub mod iteration;
 pub mod lifecycle;
 pub mod observer;
@@ -33,11 +34,12 @@ use crate::workspace::Workspace;
 pub use builder::{BuilderError, RunnerBuilder};
 pub use config::{RunnerBehavior, RunnerConfig, RunnerSummary, RunnerTerminationReason};
 pub use error::RunnerExitError;
-pub use event::{ErrorStage, Event};
+pub use event::{ErrorStage, Event, EventName};
 pub use event_emitter::{EmitReport, EventEmitter};
 pub use event_handler::{BoxError, EventHandler};
 pub use iteration::{IterationContext, IterationState, PreviousOutcome};
 pub use lifecycle::{RedactedMetadata, RunnerLifecycle};
+pub use shell_event_handler::ShellEventHandler;
 pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
 
 use events::RunnerEvents;
@@ -1118,6 +1120,7 @@ mod lifecycle_tests {
     /// Like `CapturingHandler` but its first invocation returns `Err`.
     /// Used to verify a failing `RunnerStarting` handler counts into
     /// `event_handler_error_count` and does not abort the run.
+    #[derive(Clone)]
     struct FailFirstHandler {
         events: Arc<Mutex<Vec<Event>>>,
         calls: Arc<AtomicUsize>,
@@ -1213,7 +1216,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1255,7 +1258,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1293,7 +1296,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1338,7 +1341,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1391,7 +1394,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler)
+            .on_all(handler)
             .build()
             .unwrap();
 
@@ -1469,7 +1472,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1561,7 +1564,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler)
+            .on_all(handler)
             .build()
             .unwrap();
 
@@ -1600,7 +1603,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: Some(Duration::from_millis(150)),
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1650,7 +1653,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: Some(Duration::from_secs(60)),
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1704,7 +1707,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: Some(Duration::from_millis(150)),
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1755,7 +1758,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: Some(Duration::from_millis(100)),
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1801,7 +1804,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: Some(Duration::from_millis(50)),
             })
-            .event_handler(CapturingHandler::default())
+            .on_all(CapturingHandler::default())
             .build()
             .unwrap();
 
@@ -1860,7 +1863,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -1945,7 +1948,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -2032,7 +2035,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -2133,7 +2136,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -2177,7 +2180,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 
@@ -2222,7 +2225,7 @@ mod lifecycle_tests {
             .agent(StubAgent)
             .prompt_template(PromptTemplate::new("hello").unwrap())
             .config(RunnerConfig::default())
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
         let summary = runner.run(CancellationToken::new()).await.unwrap();
@@ -2260,7 +2263,7 @@ mod lifecycle_tests {
             .agent(StubAgent)
             .prompt_template(PromptTemplate::new("hello").unwrap())
             .config(RunnerConfig::default())
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
         let summary = runner.run(CancellationToken::new()).await.unwrap();
@@ -2296,7 +2299,7 @@ mod lifecycle_tests {
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout: None,
             })
-            .event_handler(handler.clone())
+            .on_all(handler.clone())
             .build()
             .unwrap();
 

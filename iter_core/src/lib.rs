@@ -44,7 +44,9 @@ pub use prompt::{
 };
 pub use queue::{Priority, Queue};
 pub use runner::{
-    BoxError, BuilderError, ErrorStage, Event, EventEmitter, EventHandler, IterationContext,
+    BoxError, BuilderError, ErrorStage, Event, EventEmitter, EventHandler, EventName,
+    IterationContext,
+    ShellEventHandler,
     IterationState, PreviousOutcome, Runner, RunnerBehavior, RunnerBuilder, RunnerConfig,
     RunnerExitError, RunnerSummary, RunnerTerminationReason,
 };
