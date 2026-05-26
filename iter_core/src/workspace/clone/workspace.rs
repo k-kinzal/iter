@@ -142,7 +142,7 @@ impl Workspace for CloneWorkspace {
         self.apply_back_to_base().await?;
 
         if let Some(mirror) = self.mirror.take() {
-            mirror.close().await?;
+            mirror.close_best_effort().await;
         }
         self.set_up = false;
         tracing::debug!(base = %self.base.display(), "clone workspace torn down");

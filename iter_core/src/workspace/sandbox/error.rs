@@ -18,7 +18,7 @@ pub enum SandboxWorkspaceError {
     /// The workspace has not been set up.
     #[error("sandbox workspace has not been set up")]
     NotSetUp,
-    /// The sandbox backend failed to prepare or cleanup.
+    /// The sandbox backend failed to prepare.
     #[error("sandbox backend error: {0}")]
     Backend(#[from] BackendError),
     /// One of the configured glob patterns failed to compile.

@@ -223,11 +223,13 @@ impl Workspace for SandboxWorkspace {
         }
 
         if let Some(mut backend) = self.backend.take() {
-            backend.cleanup()?;
+            if let Err(e) = backend.cleanup() {
+                tracing::warn!(error = %e, "sandbox backend cleanup failed; continuing teardown");
+            }
         }
 
         if let Some(mirror) = self.mirror.take() {
-            mirror.close().await?;
+            mirror.close_best_effort().await;
         }
         self.command_prefix.clear();
         self.set_up = false;
@@ -320,6 +322,90 @@ mod tests {
             .await
             .expect_err("should err");
         assert!(matches!(err, SandboxWorkspaceError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn temp_dir_cleaned_up_after_teardown() {
+        if !SandboxWorkspace::detect_backend_available() {
+            eprintln!("skipping: no sandbox backend available");
+            return;
+        }
+        let base = TempDir::new().expect("tempdir");
+        fs::write(base.path().join("a.txt"), b"hi")
+            .await
+            .expect("write");
+        let mut ws = SandboxWorkspace::new(
+            base.path(),
+            clone_settings(),
+            default_deny_policy(),
+            SandboxRequirements::default(),
+        );
+        ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = ws.path().to_path_buf();
+        assert!(temp.exists());
+        ws.teardown(CancellationToken::new())
+            .await
+            .expect("teardown");
+        assert!(!temp.exists(), "temp dir must be removed after teardown");
+    }
+
+    #[tokio::test]
+    async fn temp_dir_cleaned_up_when_backend_cleanup_fails() {
+        use crate::workspace::sandbox::backend::{BackendError, SandboxBackend, SandboxDescriptor};
+
+        #[derive(Debug)]
+        struct FailingBackend;
+        impl SandboxBackend for FailingBackend {
+            fn prepare(
+                &mut self,
+                _: &SandboxDescriptor<'_>,
+            ) -> Result<Vec<OsString>, BackendError> {
+                Ok(Vec::new())
+            }
+            fn cleanup(&mut self) -> Result<(), BackendError> {
+                Err(BackendError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "simulated cleanup failure",
+                )))
+            }
+            fn name(&self) -> &'static str {
+                "failing-test"
+            }
+        }
+
+        let base = TempDir::new().expect("tempdir");
+        fs::write(base.path().join("a.txt"), b"hi")
+            .await
+            .expect("write");
+
+        let clone_filter = CloneFilter::compile(&[], &[]).expect("filter");
+        let apply_back_filter = clone_settings().apply_back_filter().expect("abf");
+        let mirror = Mirror::materialize(
+            base.path().to_path_buf(),
+            &clone_filter,
+            apply_back_filter,
+            true,
+        )
+        .await
+        .expect("materialize");
+        let temp = mirror.path().to_path_buf();
+
+        let mut ws = SandboxWorkspace {
+            base: base.path().to_path_buf(),
+            settings: clone_settings(),
+            policy: default_deny_policy(),
+            requirements: SandboxRequirements::default(),
+            mirror: Some(mirror),
+            backend: Some(Box::new(FailingBackend)),
+            command_prefix: Vec::new(),
+            set_up: true,
+        };
+
+        assert!(temp.exists());
+        ws.teardown(CancellationToken::new())
+            .await
+            .expect("teardown must succeed despite backend failure");
+        assert!(!temp.exists(), "temp dir must be removed even when backend cleanup fails");
     }
 
     #[test]

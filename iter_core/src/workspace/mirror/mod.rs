@@ -119,4 +119,31 @@ impl Mirror {
             .await
             .map_err(io::Error::other)?
     }
+
+    /// Best-effort close: attempt [`close`](Self::close), and if it
+    /// fails, fall back to a direct [`remove_dir_all`](tokio::fs::remove_dir_all).
+    /// Logs warnings on failure but never returns an error — the temp
+    /// directory is either gone or irremovable, and either way the
+    /// caller should continue teardown.
+    pub(crate) async fn close_best_effort(self) {
+        let temp_path = self.temp_path.clone();
+        if let Err(e) = self.close().await {
+            tracing::warn!(
+                path = %temp_path.display(),
+                error = %e,
+                "mirror close failed; removing temp directory directly",
+            );
+            match tokio::fs::remove_dir_all(&temp_path).await {
+                Ok(()) => {}
+                Err(e2) if e2.kind() == io::ErrorKind::NotFound => {}
+                Err(e2) => {
+                    tracing::warn!(
+                        path = %temp_path.display(),
+                        error = %e2,
+                        "fallback temp directory removal also failed",
+                    );
+                }
+            }
+        }
+    }
 }
