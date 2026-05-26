@@ -877,4 +877,133 @@ mod tests {
             "at least one non-removed signal expected"
         );
     }
+
+    #[tokio::test]
+    async fn repeated_same_path_changes_preserved_in_interval() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("target.txt");
+
+        let queue = Arc::new(InMemoryQueue::new());
+        let config = WatchConfig::new(
+            tmp.path().to_path_buf(),
+            &["**/*.txt".to_string()],
+            &[],
+            false,
+            Some(Duration::from_secs(4)),
+            HashSet::new(),
+        )
+        .unwrap();
+        let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
+
+        let cancel = CancellationToken::new();
+        let cancel_run = cancel.clone();
+        let handle = tokio::spawn(async move { trigger.run(cancel_run).await });
+
+        // Let the PollWatcher finish its initial snapshot.
+        sleep(Duration::from_millis(800)).await;
+
+        // Write to the same file multiple times within the interval window.
+        fs::write(&file, "v1").unwrap();
+        sleep(Duration::from_millis(500)).await;
+        fs::write(&file, "v2").unwrap();
+        sleep(Duration::from_millis(500)).await;
+        fs::write(&file, "v3").unwrap();
+
+        wait_for_first_signal(queue.as_ref()).await;
+        // Wait for the interval to flush.
+        sleep(Duration::from_secs(5)).await;
+
+        cancel.cancel();
+        handle.await.unwrap().unwrap();
+        queue.close().await.unwrap();
+
+        let signals = drain(queue.as_ref()).await;
+        assert!(!signals.is_empty(), "expected at least one merged signal");
+
+        let files_key = MetadataKey::new("files").unwrap();
+        let events_key = MetadataKey::new("events").unwrap();
+        let changed_count_key = MetadataKey::new("changed_count").unwrap();
+        let event_count_key = MetadataKey::new("event_count").unwrap();
+
+        // Find the signal that captured our repeated writes.
+        let mut found = false;
+        for s in &signals {
+            let Some(MetadataValue::String(events_json)) = s.metadata().get(&events_key) else {
+                continue;
+            };
+            let events: Vec<serde_json::Value> =
+                serde_json::from_str(events_json).expect("events is valid JSON array");
+
+            let target_events: Vec<&serde_json::Value> = events
+                .iter()
+                .filter(|ev| {
+                    ev.get("path")
+                        .and_then(|p| p.as_str())
+                        .is_some_and(|p| p.contains("target.txt"))
+                })
+                .collect();
+            if target_events.len() < 2 {
+                continue;
+            }
+            found = true;
+
+            for ev in &target_events {
+                assert_eq!(
+                    ev["path"].as_str().map(|p| p.contains("target.txt")),
+                    Some(true),
+                    "event path should reference target.txt"
+                );
+                assert!(ev.get("kind").is_some(), "event missing kind");
+                assert!(ev.get("timestamp").is_some(), "event missing timestamp");
+            }
+
+            // The unique file list should contain exactly one entry for
+            // target.txt, but the event list must have multiple entries —
+            // proving that repeated same-path changes are preserved, not
+            // suppressed.
+            let MetadataValue::String(files_json) =
+                s.metadata().get(&files_key).expect("files metadata")
+            else {
+                panic!("files not a string");
+            };
+            let files: Vec<String> =
+                serde_json::from_str(files_json).expect("files is valid JSON array");
+            let target_files: Vec<&String> = files
+                .iter()
+                .filter(|f| f.contains("target.txt"))
+                .collect();
+            assert_eq!(
+                target_files.len(),
+                1,
+                "unique file list should deduplicate to one entry"
+            );
+            assert!(
+                target_events.len() > target_files.len(),
+                "event list ({}) must have more entries than unique file list ({}) \
+                 when the same path changes multiple times",
+                target_events.len(),
+                target_files.len(),
+            );
+
+            let MetadataValue::Integer(changed_n) =
+                s.metadata().get(&changed_count_key).expect("changed_count")
+            else {
+                panic!("changed_count not an integer");
+            };
+            let MetadataValue::Integer(ev_n) =
+                s.metadata().get(&event_count_key).expect("event_count")
+            else {
+                panic!("event_count not an integer");
+            };
+            assert!(
+                *ev_n > *changed_n,
+                "event_count ({ev_n}) must exceed changed_count ({changed_n}) \
+                 when the same path changes multiple times"
+            );
+        }
+        assert!(
+            found,
+            "expected a signal with multiple events for the same path"
+        );
+    }
 }
