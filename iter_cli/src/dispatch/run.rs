@@ -110,9 +110,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         IterfileError::Parse { .. }
         | IterfileError::MissingSection(_)
         | IterfileError::Arg(_)
-        | IterfileError::AgentBuild(_)
-        | IterfileError::PromptBuild(_)
-        | IterfileError::EventTemplate(_)
+        | IterfileError::Assembly(_)
         | IterfileError::Builder(_)
         | IterfileError::Compose(_)
         | IterfileError::UnknownService { .. } => exit_codes::CONFIG,

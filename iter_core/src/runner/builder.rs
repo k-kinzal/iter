@@ -7,9 +7,9 @@
 use std::sync::Arc;
 
 use crate::agent::Agent;
-use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
 use crate::prompt::{PromptSelector, PromptTemplate};
 use crate::queue::Queue;
+use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
 use crate::runner::{EventEmitter, EventHandler, Runner, RunnerBehavior, RunnerConfig};
 use crate::workspace::Workspace;
 
@@ -156,6 +156,21 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
     pub fn stdio_sink(mut self, sink: Arc<dyn crate::process::stdio::StdioSink>) -> Self {
         self.stdio_sink = Some(sink);
         self
+    }
+
+    /// Returns `true` when a [`StdioSink`](crate::process::stdio::StdioSink)
+    /// has been installed via [`Self::stdio_sink`].
+    #[must_use]
+    pub fn has_stdio_sink(&self) -> bool {
+        self.stdio_sink.is_some()
+    }
+
+    /// Returns `true` when at least one
+    /// [`RunnerObserver`](crate::runner::observer::RunnerObserver) has
+    /// been installed via [`Self::observer`].
+    #[must_use]
+    pub fn has_observer(&self) -> bool {
+        !self.observers.is_empty()
     }
 
     /// Finish building, returning the [`Runner`] or a [`BuilderError`].

@@ -16,6 +16,7 @@
 
 pub mod agent;
 pub mod arg;
+mod assembly;
 pub mod compose;
 pub mod config;
 pub mod discovery;
@@ -33,6 +34,7 @@ pub mod trigger_argv;
 pub mod workspace;
 
 pub use agent::{AnyAgent, build_agent};
+pub use assembly::AssemblyError;
 pub use compose::{
     ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,
     LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME,

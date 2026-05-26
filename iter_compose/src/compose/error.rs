@@ -2,15 +2,14 @@
 
 use std::path::{Path, PathBuf};
 
-use iter_core::{BuilderError, RunnerExitError, TemplateError};
+use iter_core::{BuilderError, RunnerExitError};
 use iter_language::Diagnostic;
 use thiserror::Error;
 
 use iter_core::process::{ProcessError, ProcessStatus, SpawnError};
 
-use crate::agent::AgentBuildError;
 use crate::arg::ArgError;
-use crate::prompt::PromptBuildError;
+use crate::assembly::AssemblyError;
 use crate::queue::QueueBuildError;
 
 /// Errors produced while loading or building a `compose.iter` file.
@@ -83,32 +82,15 @@ pub enum ComposeError {
         #[source]
         source: ArgError,
     },
-    /// Building an agent for a service failed.
+    /// Runner-builder assembly (agent, prompt, or event handler) for a
+    /// service failed.
     #[error("building service `{service}`: {source}")]
-    AgentBuild {
+    Assembly {
         /// Service name.
         service: String,
-        /// Underlying agent-build error.
+        /// Underlying assembly error.
         #[source]
-        source: AgentBuildError,
-    },
-    /// Building the prompt selector for a service failed.
-    #[error("building service `{service}`: {source}")]
-    PromptBuild {
-        /// Service name.
-        service: String,
-        /// Underlying prompt-build error.
-        #[source]
-        source: PromptBuildError,
-    },
-    /// Compiling an `on <event>` handler template failed.
-    #[error("building service `{service}`: invalid event handler template: {source}")]
-    EventTemplate {
-        /// Service name.
-        service: String,
-        /// Underlying template-compile error.
-        #[source]
-        source: TemplateError,
+        source: AssemblyError,
     },
     /// A `--service NAME` selector named a service that does not exist
     /// in the compose file.

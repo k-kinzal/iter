@@ -382,7 +382,7 @@ async fn run_one_service_inner(
     } = service;
 
     if let Some(rt) = runtime {
-        builder = builder.observer(rt.observer().clone());
+        builder = crate::assembly::wire_builder_runtime(builder, rt);
     }
     let runner = builder.build()?;
 

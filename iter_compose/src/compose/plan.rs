@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iter_core::{Runner, RunnerBuilder};
+use iter_core::RunnerBuilder;
 use iter_language::{
     AgentDecl, ComposeRoot, ComposeTriggerOverride, EventHandlerDecl, InlineService, NamedQueue,
     NamedService, NamedTrigger, PromptDecl, QueueDecl, QueueRef, Root, RunnerDecl, ServiceSource,
@@ -14,13 +14,11 @@ use iter_language::{
 
 use super::error::ComposeError;
 use super::trigger::{ComposeTrigger, build_trigger};
-use crate::agent::{AnyAgent, build_agent};
+use crate::agent::AnyAgent;
+use crate::assembly;
 use crate::compose::load_compose;
-use crate::config::build_runner_config;
-use crate::events::register_event_handlers_from_events;
-use crate::prompt::build_prompt_selector_from_prompts;
 use crate::queue::{AnyQueue, build_queue};
-use crate::workspace::{AnyWorkspace, build_workspace_factory};
+use crate::workspace::AnyWorkspace;
 
 pub(crate) struct ComposeService {
     pub(crate) name: String,
@@ -492,30 +490,18 @@ fn finalize_service(
     once: bool,
     queue_decl: QueueDecl,
 ) -> Result<ComposeService, ComposeError> {
-    let agent = build_agent(decls.agent).map_err(|source| ComposeError::AgentBuild {
+    let builder = assembly::assemble_runner_builder(
+        Some(queue),
+        decls.workspace,
+        decls.agent,
+        decls.runner,
+        decls.prompts,
+        decls.events,
+        once,
+    )
+    .map_err(|source| ComposeError::Assembly {
         service: name.to_owned(),
         source,
-    })?;
-    let workspaces = build_workspace_factory(decls.workspace, agent.sandbox_requirements());
-    let prompt_selector = build_prompt_selector_from_prompts(decls.prompts).map_err(|source| {
-        ComposeError::PromptBuild {
-            service: name.to_owned(),
-            source,
-        }
-    })?;
-    let runner_config = build_runner_config(decls.runner, once);
-
-    let mut builder = Runner::<AnyQueue, AnyWorkspace, AnyAgent>::builder()
-        .queue(queue)
-        .workspaces(workspaces)
-        .agent(agent)
-        .prompt_selector(prompt_selector)
-        .config(runner_config);
-    builder = register_event_handlers_from_events(builder, decls.events).map_err(|source| {
-        ComposeError::EventTemplate {
-            service: name.to_owned(),
-            source,
-        }
     })?;
 
     Ok(ComposeService {

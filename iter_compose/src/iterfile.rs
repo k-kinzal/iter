@@ -21,23 +21,21 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iter_core::process::{AdoptError, ProcessError, ProcessId, ProcessRuntime, ShutdownController};
-use iter_core::{BuilderError, Runner, RunnerExitError, RunnerSummary, TemplateError};
+use iter_core::{BuilderError, RunnerExitError, RunnerSummary};
 use iter_language::{Diagnostic, Root, parse};
 use thiserror::Error;
 use tracing::{error, info};
 
-use crate::agent::{AgentBuildError, AnyAgent, build_agent};
+use crate::agent::AnyAgent;
 use crate::arg::{ArgError, resolve_args};
+use crate::assembly::{self, AssemblyError};
 use crate::compose::{ComposeError, build_single_service, load_compose};
-use crate::config::build_runner_config;
-use crate::events::register_event_handlers;
 use crate::process_lifecycle::{
     self, AdoptedBootstrapError, LifecycleError, derive_finalize_reason,
     leaves_record_non_terminal, log_finalize_report,
 };
-use crate::prompt::{PromptBuildError, build_prompt_selector};
 use crate::queue::{AnyQueue, QueueBuildError, build_queue};
-use crate::workspace::{AnyWorkspace, build_workspace_factory};
+use crate::workspace::AnyWorkspace;
 
 pub use crate::process_lifecycle::RunRecordMetadata;
 
@@ -138,15 +136,9 @@ pub enum IterfileError {
     /// Building a queue declaration failed.
     #[error(transparent)]
     QueueBuild(#[from] QueueBuildError),
-    /// Building an agent failed.
+    /// Runner-builder assembly failed (agent, prompt, or event handler).
     #[error(transparent)]
-    AgentBuild(#[from] AgentBuildError),
-    /// Building a prompt selector failed.
-    #[error(transparent)]
-    PromptBuild(#[from] PromptBuildError),
-    /// Compiling an `on <event>` handler template failed.
-    #[error("invalid event handler template: {0}")]
-    EventTemplate(#[source] TemplateError),
+    Assembly(#[from] AssemblyError),
     /// `RunnerBuilder::build` rejected the assembled configuration.
     #[error(transparent)]
     Builder(#[from] BuilderError),
@@ -269,11 +261,7 @@ async fn run_inner(
     }
 
     if let Some(rt) = runtime.as_ref() {
-        builder = builder.observer(rt.observer().clone());
-        builder = builder.stdio_sink(rt.stdio().sink());
-        // Publish the runtime's NDJSON sender so the global tracing
-        // subscriber's `MakeWriter` starts funnelling formatted records
-        // (including lifecycle events) into `log.ndjson`.
+        builder = assembly::wire_builder_runtime(builder, rt);
         if let Some(sender) = rt.stdio().log_sender() {
             iter_core::process::install_global_log_sender(sender);
         }
@@ -355,20 +343,16 @@ fn build_iterfile_builder(
         .as_ref()
         .map(|s| build_queue(&s.node).map(Arc::new))
         .transpose()?;
-    let agent = build_agent(agent_decl)?;
-    let workspaces = build_workspace_factory(workspace_decl, agent.sandbox_requirements());
-    let prompt_selector = build_prompt_selector(&iterfile)?;
-    let runner_config = build_runner_config(runner_decl, once);
 
-    let mut builder = Runner::<AnyQueue, AnyWorkspace, AnyAgent>::builder()
-        .workspaces(workspaces)
-        .agent(agent)
-        .prompt_selector(prompt_selector)
-        .config(runner_config);
-    if let Some(queue) = queue {
-        builder = builder.queue(queue);
-    }
-    builder = register_event_handlers(builder, &iterfile).map_err(IterfileError::EventTemplate)?;
+    let builder = assembly::assemble_runner_builder(
+        queue,
+        workspace_decl,
+        agent_decl,
+        runner_decl,
+        &iterfile.prompts,
+        &iterfile.events,
+        once,
+    )?;
 
     Ok((builder, iterfile_path.to_owned()))
 }
