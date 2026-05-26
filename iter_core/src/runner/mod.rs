@@ -14,6 +14,8 @@ pub mod event_emitter;
 pub mod event_handler;
 mod events;
 pub mod iteration;
+pub mod lifecycle;
+pub mod observer;
 
 use std::sync::Arc;
 
@@ -22,8 +24,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, field};
 
 use crate::agent::Agent;
-use crate::process::lifecycle::AgentOutcomeKind;
-use crate::process::observer::DynRunnerObserver;
+use crate::agent::AgentOutcomeKind;
 use crate::prompt::{Prompt, PromptSelector};
 use crate::queue::Queue;
 use crate::signal::{Signal, SignalId};
@@ -36,6 +37,8 @@ pub use event::{ErrorStage, Event};
 pub use event_emitter::{EmitReport, EventEmitter};
 pub use event_handler::{BoxError, EventHandler};
 pub use iteration::{IterationContext, IterationState, PreviousOutcome};
+pub use lifecycle::{RedactedMetadata, RunnerLifecycle};
+pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
 
 use events::RunnerEvents;
 
@@ -55,12 +58,12 @@ pub struct Runner<Q: Queue, W: Workspace, A: Agent> {
     pub(crate) prompt_selector: PromptSelector,
     pub(crate) events: EventEmitter,
     pub(crate) config: RunnerConfig,
-    /// System-contract observer fan-out (rev17 §F3).
+    /// System-contract observer fan-out.
     ///
     /// Each registered observer receives the
-    /// [`RunnerLifecycle`](crate::process::RunnerLifecycle) projection of
-    /// every per-step `Event` *before* the user-defined `events`
-    /// emitter sees it. Observer errors are tallied separately into
+    /// [`RunnerLifecycle`] projection of every per-step `Event` *before*
+    /// the user-defined `events` emitter sees it. Observer errors are
+    /// tallied separately into
     /// [`RunnerSummary::observer_error_count`]; they never block
     /// runner progress.
     pub(crate) observers: Vec<Arc<dyn DynRunnerObserver>>,

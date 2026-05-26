@@ -127,7 +127,7 @@ pub enum Event {
 ///
 /// Used in [`RunnerExitError`](crate::runner::RunnerExitError),
 /// [`RunnerTerminationReason`], and
-/// [`RunnerLifecycle`](crate::process::lifecycle::RunnerLifecycle) for
+/// [`RunnerLifecycle`](crate::runner::RunnerLifecycle) for
 /// display and serialization. Not a behavioral dispatch mechanism.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

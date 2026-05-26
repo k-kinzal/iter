@@ -60,12 +60,12 @@ pub use error::{
 };
 pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
-pub use lifecycle::{AgentOutcomeKind, RedactedMetadata, RunnerLifecycle};
+pub use crate::agent::AgentOutcomeKind;
+pub use crate::runner::{DynRunnerObserver, RedactedMetadata, RunnerLifecycle, RunnerObserver};
 pub use logs::{LogEntry, LogStream, LogStreamReader};
 pub use metadata::ProcessMetadata;
 pub use observer::{
-    DEFAULT_LIFECYCLE_BUFFER, DynRunnerObserver, LIFECYCLE_BUFFER_ENV, LIFECYCLE_TARGET,
-    LifecycleObserver, RunnerObserver,
+    DEFAULT_LIFECYCLE_BUFFER, LIFECYCLE_BUFFER_ENV, LIFECYCLE_TARGET, LifecycleObserver,
 };
 pub use paths::{DIR_MODE, FILE_MODE, LOCKS_SUBDIR, ProcPaths, proc_root_default};
 pub use pid_file::{

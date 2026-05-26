@@ -7,9 +7,9 @@ use super::config::RunnerTerminationReason;
 use super::event::{ErrorStage, Event};
 use super::event_emitter::EventEmitter;
 use super::iteration::IterationContext;
-use crate::agent::AgentReport;
-use crate::process::lifecycle::{AgentOutcomeKind, RedactedMetadata, RunnerLifecycle};
-use crate::process::observer::DynRunnerObserver;
+use crate::agent::{AgentOutcomeKind, AgentReport};
+use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
+use crate::runner::observer::DynRunnerObserver;
 use crate::prompt::Prompt;
 use crate::signal::{Signal, SignalId};
 

@@ -76,8 +76,8 @@ pub struct RunnerConfig {
     /// Absent in older NDJSON payloads: deserializes as `None`.
     ///
     /// [`ProcessGroup`]: crate::process::ProcessGroup
-    /// [`RunnerLifecycle::AgentFinished`]: crate::process::RunnerLifecycle::AgentFinished
-    /// [`AgentOutcomeKind::Cancelled`]: crate::process::lifecycle::AgentOutcomeKind::Cancelled
+    /// [`RunnerLifecycle::AgentFinished`]: crate::runner::RunnerLifecycle::AgentFinished
+    /// [`AgentOutcomeKind::Cancelled`]: crate::agent::AgentOutcomeKind::Cancelled
     #[serde(default)] // backward compat with payloads that predate this field
     pub iteration_timeout: Option<Duration>,
 }
@@ -139,7 +139,7 @@ pub struct RunnerSummary {
     #[serde(default)]
     pub event_handler_error_count: u32,
     /// Number of system-contract
-    /// [`RunnerObserver`](crate::process::RunnerObserver) calls that
+    /// [`RunnerObserver`](crate::runner::RunnerObserver) calls that
     /// returned `Err` during the run.
     ///
     /// Parallel to [`Self::event_handler_error_count`] but for the

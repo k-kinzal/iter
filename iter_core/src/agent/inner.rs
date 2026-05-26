@@ -40,7 +40,7 @@ pub struct AgentRunContext<'a> {
     pub cancel: CancellationToken,
     /// Identifier of the signal that triggered this iteration. Useful for
     /// agent-side logging and correlation against
-    /// [`RunnerLifecycle`](crate::process::lifecycle::RunnerLifecycle)
+    /// [`RunnerLifecycle`](crate::runner::RunnerLifecycle)
     /// events emitted around the same call.
     pub signal_id: SignalId,
     /// Kind of signal that triggered this iteration.

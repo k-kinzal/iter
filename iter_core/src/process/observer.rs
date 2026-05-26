@@ -1,15 +1,11 @@
-//! `RunnerObserver` — the system-contract sink for [`RunnerLifecycle`].
+//! `LifecycleObserver` — the process-runtime consumer that persists
+//! [`RunnerLifecycle`] events to tracing / `log.ndjson`.
 //!
-//! Per rev17 §F1/§F5, the Runner emits two parallel streams:
-//!
-//! 1. The user-defined [`Event`](crate::runner::Event) stream, which feeds
-//!    iterfile `on …` hooks. Failure of a hook is the user's problem.
-//! 2. The system [`RunnerLifecycle`] stream, which feeds the Process
-//!    Runtime's own observers.
-//!
-//! Stream 2 is consumed via this module's [`RunnerObserver`] trait. The
-//! Runner stores `Arc<dyn DynRunnerObserver>` so observers can be plugged
-//! in dynamically.
+//! The observer traits ([`RunnerObserver`], [`DynRunnerObserver`]) are
+//! defined by the runner module that owns the lifecycle contract. This
+//! module re-exports them for convenience and houses the concrete
+//! [`LifecycleObserver`] implementation that the process runtime plugs
+//! into the runner's observer vector.
 //!
 //! ### Where lifecycle events go
 //!
@@ -36,25 +32,24 @@
 //! ### Shutdown
 //!
 //! The Runtime calls [`LifecycleObserver::shutdown`] from `finalize`
-//! (best-effort drain per §B6). Shutdown drops the sender, awaits the
+//! (best-effort drain). Shutdown drops the sender, awaits the
 //! writer task, and propagates any error.
 
 use std::env;
 use std::future::Future;
-use std::pin::Pin;
-use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-use futures::future::BoxFuture;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
+use crate::agent::AgentOutcomeKind;
 use crate::process::error::ObserverError;
-use crate::process::lifecycle::{AgentOutcomeKind, RedactedMetadata, RunnerLifecycle};
 use crate::process::logs::LogStream;
 use crate::process::stdio::LogJsonSender;
+use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::runner::BoxError;
 use crate::signal::SignalId;
+
+pub use crate::runner::observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
 
 /// Default in-flight capacity for the [`LifecycleObserver`] mpsc channel.
 ///
@@ -71,63 +66,6 @@ pub const LIFECYCLE_BUFFER_ENV: &str = "ITER_PROCESS_LIFECYCLE_BUFFER";
 /// wishing to filter the lifecycle stream alone can use this constant
 /// in their `EnvFilter` or layered `Targets` configuration.
 pub const LIFECYCLE_TARGET: &str = "iter::lifecycle";
-
-/// Async observer of the Runner's lifecycle stream.
-///
-/// Implementations are stored as `Arc<dyn DynRunnerObserver>` by the
-/// Runner. To make adapter writing painless, this trait uses RPITIT
-/// (return-position `impl Trait`); use the [`DynRunnerObserver`]
-/// companion to obtain a dyn-safe form.
-pub trait RunnerObserver: Send + Sync {
-    /// Observe a single lifecycle event.
-    fn observe<'a>(
-        &'a self,
-        lifecycle: &'a RunnerLifecycle,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
-}
-
-/// Object-safe companion to [`RunnerObserver`].
-///
-/// `Arc<dyn DynRunnerObserver>` is what the Runner actually stores.
-/// Concrete `RunnerObserver` impls are upcast through the blanket
-/// [`From`]-style adapter that the runner crate installs (it is too
-/// crate-public to live here).
-pub trait DynRunnerObserver: Send + Sync {
-    /// Object-safe `observe`. Mirrors [`RunnerObserver::observe`] but
-    /// returns a [`BoxFuture`].
-    fn observe<'a>(&'a self, lifecycle: &'a RunnerLifecycle)
-    -> BoxFuture<'a, Result<(), BoxError>>;
-}
-
-/// Blanket adapter making every [`RunnerObserver`] usable via
-/// `Arc<dyn DynRunnerObserver>`.
-impl<O> DynRunnerObserver for O
-where
-    O: RunnerObserver + ?Sized,
-{
-    fn observe<'a>(
-        &'a self,
-        lifecycle: &'a RunnerLifecycle,
-    ) -> BoxFuture<'a, Result<(), BoxError>> {
-        Box::pin(RunnerObserver::observe(self, lifecycle))
-    }
-}
-
-/// Forwarding impl so an existing `Arc<T: RunnerObserver>` (e.g. the one
-/// owned by [`crate::process::ProcessRuntime`]) can be handed straight to
-/// [`RunnerBuilder::observer`](crate::RunnerBuilder::observer) without
-/// re-wrapping.
-impl<T> RunnerObserver for Arc<T>
-where
-    T: RunnerObserver + ?Sized,
-{
-    fn observe<'a>(
-        &'a self,
-        lifecycle: &'a RunnerLifecycle,
-    ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
-        T::observe(self, lifecycle)
-    }
-}
 
 /// Persisting observer that re-emits [`RunnerLifecycle`] events as
 /// `tracing::info!` records under [`LIFECYCLE_TARGET`].
@@ -266,11 +204,6 @@ impl RunnerObserver for LifecycleObserver {
     }
 }
 
-/// Boxed-future variant of [`RunnerObserver::observe`] for sites that
-/// need an explicit `BoxFuture` (e.g. selecting across heterogeneous
-/// observers).
-pub type ObserveFuture<'a> = Pin<Box<dyn Future<Output = Result<(), BoxError>> + Send + 'a>>;
-
 fn read_capacity_env() -> usize {
     match env::var(LIFECYCLE_BUFFER_ENV) {
         Ok(s) => match s.parse::<usize>() {
@@ -281,25 +214,22 @@ fn read_capacity_env() -> usize {
     }
 }
 
+/// Drain the lifecycle mpsc channel, re-emitting each record as a
+/// tracing event and (when wired) pushing the same record into
+/// `log.ndjson` via the back-pressured [`LogJsonSender`] path. The
+/// tracing subscriber's `LogJsonMakeWriter` is configured to filter out
+/// `iter::lifecycle` so this is the *only* path lifecycle records take
+/// into the NDJSON file — `LogJsonSender::send_line` awaits, so a slow
+/// disk back-pressures the lifecycle queue (and through it, the runner)
+/// instead of silently losing post-mortem data. On sender error the
+/// writer falls back to tracing-only mode for the rest of the run.
 async fn run_writer(
     mut rx: mpsc::Receiver<RunnerLifecycle>,
     log_sender: Option<LogJsonSender>,
 ) -> Result<(), ObserverError> {
     let mut log_sender = log_sender;
     while let Some(ev) = rx.recv().await {
-        // Always emit a tracing event so foreground / stderr observers
-        // see the lifecycle stream regardless of whether `log.ndjson`
-        // is wired (`emit_lifecycle` is also the path used by the
-        // tracing subscriber's stderr layer for foreground attach).
         emit_lifecycle(&ev);
-        // When a sender is wired, push the same record directly into
-        // `log.ndjson` via the back-pressured async path. The tracing
-        // subscriber's `LogJsonMakeWriter` is configured to filter out
-        // `iter::lifecycle` so this is the *only* path lifecycle
-        // records take into the NDJSON file — `try_send_line` drops on
-        // a full channel, but `LogJsonSender::send_line` awaits, so a
-        // slow disk back-pressures the lifecycle queue (and through
-        // it, the runner) instead of silently losing post-mortem data.
         if let Some(sender) = &log_sender {
             let line = format_lifecycle_line(&ev);
             if let Err(e) = sender.send_line(LogStream::Stderr, line).await {
@@ -309,8 +239,7 @@ async fn run_writer(
                     "log.ndjson sender stopped; dropping further direct lifecycle writes"
                 );
                 // Stop trying — the writer task is gone, every further
-                // send would fail the same way. Tracing-only mode from
-                // here on.
+                // send would fail the same way.
                 log_sender = None;
             }
         }
@@ -487,7 +416,7 @@ fn format_lifecycle_line(ev: &RunnerLifecycle) -> String {
     }
 }
 
-fn fmt_ts(ts: &DateTime<Utc>) -> String {
+fn fmt_ts(ts: &chrono::DateTime<chrono::Utc>) -> String {
     ts.to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
 }
 
@@ -514,7 +443,7 @@ fn outcome_label(kind: AgentOutcomeKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::lifecycle::AgentOutcomeKind;
+    use crate::agent::AgentOutcomeKind;
     use std::time::Duration;
 
     fn sample_event(signal_id: SignalId) -> RunnerLifecycle {
@@ -578,8 +507,6 @@ mod tests {
 
     #[tokio::test]
     async fn capacity_env_override_takes_effect() {
-        // SAFETY: tests run in the same process and modify the env; we
-        // restore the previous value at the end of the scope.
         unsafe { env::set_var(LIFECYCLE_BUFFER_ENV, "8") };
         assert_eq!(read_capacity_env(), 8);
         unsafe { env::remove_var(LIFECYCLE_BUFFER_ENV) };
@@ -593,6 +520,9 @@ mod tests {
 
     #[tokio::test]
     async fn dyn_observer_dispatch_works() {
+        use std::sync::Arc;
+        use crate::runner::DynRunnerObserver;
+
         let observer: Arc<dyn DynRunnerObserver> = Arc::new(
             LifecycleObserver::open_in(std::path::Path::new("/tmp"), None)
                 .await
@@ -602,7 +532,6 @@ mod tests {
         DynRunnerObserver::observe(observer.as_ref(), &sample_event(id))
             .await
             .expect("observe");
-        // Allow the writer task to process the event.
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 

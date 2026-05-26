@@ -106,7 +106,7 @@ impl ProcessRuntime {
     }
 
     /// Borrow the [`LifecycleObserver`]. Clone the Arc to register it
-    /// with a [`RunnerObserver`](crate::process::observer::RunnerObserver)-aware
+    /// with a [`RunnerObserver`](crate::runner::RunnerObserver)-aware
     /// runner.
     #[must_use]
     pub fn observer(&self) -> &Arc<LifecycleObserver> {

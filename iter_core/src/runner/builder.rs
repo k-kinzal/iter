@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use crate::agent::Agent;
-use crate::process::observer::{DynRunnerObserver, RunnerObserver};
+use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
 use crate::prompt::{PromptSelector, PromptTemplate};
 use crate::queue::Queue;
 use crate::runner::{EventEmitter, EventHandler, Runner, RunnerBehavior, RunnerConfig};
