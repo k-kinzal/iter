@@ -60,7 +60,8 @@ pub use queue::{
 pub use runner::{RunnerBehavior, RunnerDecl};
 pub use telemetry::{TelemetryDecl, TelemetryProtocol};
 pub use trigger::{
-    ExtractExpr, FilesSource, OnErrorKeyword, SecretExpr, TriggerDecl, WebhookRoute,
+    ExtractExpr, FilesSource, OnErrorKeyword, SecretExpr, TriggerDecl, WatchEventKind,
+    WebhookRoute,
 };
 pub use value::Value;
 pub use workspace::{

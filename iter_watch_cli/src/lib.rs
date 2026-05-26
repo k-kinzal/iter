@@ -3,4 +3,4 @@
 
 pub mod watch;
 
-pub use watch::{WatchBackend, WatchConfig, WatchTrigger, WatchTriggerError};
+pub use watch::{ChangeKind, WatchBackend, WatchConfig, WatchTrigger, WatchTriggerError};

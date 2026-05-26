@@ -68,7 +68,7 @@ pub use ast::{
     ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy, ServiceBusReceiver, ServiceBusSender,
     ServiceBusSession, ServiceSource, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind,
     SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, TelemetryDecl, TelemetryProtocol,
-    TemplatedString, TriggerDecl, Value, WebhookRoute, WorkspaceDecl,
+    TemplatedString, TriggerDecl, Value, WatchEventKind, WebhookRoute, WorkspaceDecl,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{

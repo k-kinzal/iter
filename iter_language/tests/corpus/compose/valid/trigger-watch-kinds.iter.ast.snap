@@ -1,6 +1,7 @@
 ---
 source: iter_language/tests/conformance.rs
-description: trigger-watch-exclude.iter
+assertion_line: 131
+description: trigger-watch-kinds.iter
 ---
 ComposeRoot {
     telemetry: None,
@@ -21,19 +22,17 @@ ComposeRoot {
             node: NamedTrigger {
                 name: "sessions",
                 decl: Watch {
-                    dir: "/Users/me/Library/Logs/Agents",
+                    dir: "/Users/me/.claude/projects",
                     include: [
                         "**/*.jsonl",
                     ],
-                    exclude: [
-                        "self-loop/**",
-                        "tmp/**",
+                    exclude: [],
+                    kinds: [
+                        Created,
+                        Modified,
                     ],
-                    kinds: [],
                     per_file: true,
-                    interval_secs: Some(
-                        1800,
-                    ),
+                    interval_secs: None,
                     base_metadata: [],
                     priority: None,
                     max_signals: None,
@@ -43,7 +42,7 @@ ComposeRoot {
                 ),
                 terminate_on_completion: false,
             },
-            span: 44..241,
+            span: 44..212,
         },
     ],
     composes: [],

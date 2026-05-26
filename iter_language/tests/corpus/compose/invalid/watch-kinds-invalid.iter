@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger bad watch {
+    dir = "./src"
+    kinds = ["created", "deleted"]
+    target = main
+}

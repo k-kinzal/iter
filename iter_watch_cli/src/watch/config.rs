@@ -1,10 +1,12 @@
 //! Configuration types for [`WatchTrigger`](super::WatchTrigger).
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use globset::GlobSet;
 
+use super::ChangeKind;
 use super::filter::compile_globset;
 
 /// Choice of underlying filesystem watch backend.
@@ -71,6 +73,8 @@ pub struct WatchConfig {
     /// - `per_file = true`: when `None`, every event fires its own signal
     ///   immediately; when `Some`, events are merged into interval signals.
     pub interval: Option<Duration>,
+    /// Allowed event kinds. When empty, all event kinds are accepted.
+    pub kinds: HashSet<ChangeKind>,
 }
 
 impl WatchConfig {
@@ -88,6 +92,7 @@ impl WatchConfig {
         exclude_patterns: &[String],
         per_file: bool,
         interval: Option<Duration>,
+        kinds: HashSet<ChangeKind>,
     ) -> Result<Self, globset::Error> {
         let include = compile_globset(include_patterns)?;
         let exclude = compile_globset(exclude_patterns)?;
@@ -98,6 +103,7 @@ impl WatchConfig {
             include_empty: include_patterns.is_empty(),
             per_file,
             interval,
+            kinds,
         })
     }
 }

@@ -9,7 +9,8 @@
 
 use iter_language::{
     ComposeRoot, ComposeTriggerOverride, NamedCompose, NamedQueue, NamedService, NamedTrigger,
-    QueueDecl, QueueRef, ServiceSource, TelemetryProtocol, TriggerDecl, parse_compose,
+    QueueDecl, QueueRef, ServiceSource, TelemetryProtocol, TriggerDecl, WatchEventKind,
+    parse_compose,
 };
 
 fn parse(src: &str) -> ComposeRoot {
@@ -444,6 +445,48 @@ fn compose_queue_override_dangling_rejected() {
     );
     assert!(
         errs.iter().any(|m| m.contains("`ghost` is not declared")),
+        "got: {errs:#?}"
+    );
+}
+
+#[test]
+fn watch_kinds_duplicate_deduplicates_in_ast() {
+    let root = parse(
+        r#"
+            queue main file { path = "./.iter/queue" }
+            trigger t watch {
+                dir = "./src"
+                kinds = ["created", "created", "modified"]
+                target = main
+            }
+        "#,
+    );
+    let trigger = &root.triggers[0].node;
+    let TriggerDecl::Watch { ref kinds, .. } = trigger.decl else {
+        panic!("expected Watch trigger");
+    };
+    assert_eq!(
+        kinds,
+        &[WatchEventKind::Created, WatchEventKind::Modified],
+        "duplicates should be removed from the AST"
+    );
+}
+
+#[test]
+fn watch_kinds_invalid_value_is_rejected() {
+    let errs = parse_err(
+        r#"
+            queue main file { path = "./.iter/queue" }
+            trigger t watch {
+                dir = "./src"
+                kinds = ["created", "deleted"]
+                target = main
+            }
+        "#,
+    );
+    assert!(
+        errs.iter()
+            .any(|m| m.contains("unknown watch event kind `deleted`")),
         "got: {errs:#?}"
     );
 }

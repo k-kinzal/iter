@@ -18,11 +18,12 @@ mod stream;
 mod termination;
 mod watch;
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::watch::{WatchConfig, WatchTrigger, WatchTriggerError};
+use crate::watch::{ChangeKind, WatchConfig, WatchTrigger, WatchTriggerError};
 use clap::Parser;
 use iter_core::Queue;
 use iter_trigger::shutdown::ShutdownError;
@@ -87,7 +88,8 @@ impl IntoExitCode for WatchCliError {
                   iter-watch --queue-url memory:// --dir ./src\n  \
                   iter-watch --queue-url memory:// --dir . --include '*.rs' --exclude 'target/**'\n  \
                   iter-watch --queue-url file:///tmp/q --dir . --per-file\n  \
-                  iter-watch --queue-url file:///tmp/q --dir . --per-file --interval 5"
+                  iter-watch --queue-url file:///tmp/q --dir . --per-file --interval 5\n  \
+                  iter-watch --queue-url memory:// --dir . --kinds created --kinds modified"
 )]
 struct Args {
     /// Directory to watch.
@@ -103,6 +105,12 @@ struct Args {
     /// Always wins over `--include`.
     #[arg(long, value_name = "PATTERN")]
     exclude: Vec<String>,
+
+    /// Only emit signals for the specified event kinds. May repeat.
+    /// Valid values: `created`, `modified`, `removed`.
+    /// Empty (default) means all event kinds.
+    #[arg(long, value_name = "KIND", value_parser = parse_change_kind)]
+    kinds: Vec<ChangeKind>,
 
     /// Emit one signal per file change rather than merging by interval.
     /// When combined with `--interval`, events are still merged into
@@ -134,6 +142,17 @@ struct Args {
 
     #[command(flatten)]
     banner: BannerArgs,
+}
+
+fn parse_change_kind(s: &str) -> Result<ChangeKind, String> {
+    match s {
+        "created" => Ok(ChangeKind::Created),
+        "modified" => Ok(ChangeKind::Modified),
+        "removed" => Ok(ChangeKind::Removed),
+        _ => Err(format!(
+            "unknown event kind `{s}`; valid values: created, modified, removed"
+        )),
+    }
 }
 
 fn main() -> ! {
@@ -172,12 +191,16 @@ async fn run() -> Result<(), WatchCliError> {
         None if args.per_file => None,
         None => Some(Duration::from_secs(2)),
     };
+    // Duplicates are silently collapsed — the CLI is lenient unlike the
+    // language layer, which warns on duplicate kind entries.
+    let kinds: HashSet<ChangeKind> = args.kinds.iter().copied().collect();
     let config = WatchConfig::new(
         args.dir.clone(),
         &args.include,
         &args.exclude,
         args.per_file,
         interval,
+        kinds,
     )?;
 
     let instance_name = args.banner.instance_name(BINARY);

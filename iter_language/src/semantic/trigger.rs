@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use super::Analyzer;
 use super::value::value_from_raw_pure;
-use crate::ast::{ExtractExpr, FilesSource, PriorityKeyword, Span, TriggerDecl};
+use crate::ast::{ExtractExpr, FilesSource, PriorityKeyword, Span, TriggerDecl, WatchEventKind};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
 
@@ -106,6 +106,7 @@ impl Analyzer {
         let exclude = self
             .take_optional_string_list(fields, "exclude")
             .unwrap_or_default();
+        let kinds = self.take_watch_kinds(fields);
         let per_file = self.take_optional_bool(fields, "per_file").unwrap_or(false);
         let interval_secs = self.take_optional_duration(fields, "interval");
         let cooldown_secs = self.take_optional_duration(fields, "cooldown");
@@ -134,6 +135,7 @@ impl Analyzer {
                 "dir",
                 "include",
                 "exclude",
+                "kinds",
                 "per_file",
                 "interval",
                 "cooldown",
@@ -147,6 +149,7 @@ impl Analyzer {
             dir,
             include,
             exclude,
+            kinds,
             per_file,
             interval_secs,
             base_metadata: common.base_metadata,
@@ -350,6 +353,90 @@ impl Analyzer {
             priority,
             max_signals,
         }
+    }
+
+    fn take_watch_kinds(
+        &mut self,
+        fields: &mut BTreeMap<String, RawField>,
+    ) -> Vec<WatchEventKind> {
+        let Some(field) = fields.remove("kinds") else {
+            return Vec::new();
+        };
+        let (items, list_span) = match field.value {
+            RawValue::List(items, span) => {
+                if items.is_empty() {
+                    self.errors.push(Diagnostic::error(
+                        span,
+                        "`kinds` list must not be empty; omit the field to allow all event kinds",
+                    ));
+                    return Vec::new();
+                }
+                (items, span)
+            }
+            other => {
+                self.errors.push(
+                    Diagnostic::error(
+                        other.span(),
+                        "`kinds` must be a list of strings",
+                    )
+                    .with_hint("e.g. kinds = [\"created\", \"modified\"]"),
+                );
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::with_capacity(items.len());
+        let mut seen = std::collections::HashSet::new();
+        let mut had_error = false;
+        for item in items {
+            match item {
+                RawValue::String(s, span) => match s.as_str() {
+                    "created" | "modified" | "removed" => {
+                        let kind = match s.as_str() {
+                            "created" => WatchEventKind::Created,
+                            "modified" => WatchEventKind::Modified,
+                            "removed" => WatchEventKind::Removed,
+                            _ => unreachable!(),
+                        };
+                        if seen.insert(kind) {
+                            out.push(kind);
+                        } else {
+                            self.errors.push(Diagnostic::warning(
+                                span,
+                                format!("duplicate kind `{s}` in `kinds` list"),
+                            ));
+                        }
+                    }
+                    _ => {
+                        had_error = true;
+                        self.errors.push(
+                            Diagnostic::error(
+                                span,
+                                format!(
+                                    "unknown watch event kind `{s}`"
+                                ),
+                            )
+                            .with_hint("valid values: \"created\", \"modified\", \"removed\""),
+                        );
+                    }
+                },
+                other => {
+                    had_error = true;
+                    self.errors.push(Diagnostic::error(
+                        other.span(),
+                        "`kinds` list elements must be strings",
+                    ));
+                }
+            }
+        }
+        if seen.len() == 3 && !had_error {
+            self.errors.push(
+                Diagnostic::warning(
+                    list_span,
+                    "trigger watch: listing all three kinds is equivalent to omitting `kinds`",
+                ),
+            );
+        }
+        out
     }
 
     fn lower_files_sources(

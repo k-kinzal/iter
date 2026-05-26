@@ -1,0 +1,14 @@
+---
+source: iter_language/tests/conformance.rs
+assertion_line: 170
+description: watch-kinds-invalid.iter
+---
+Error: unknown watch event kind `deleted`
+   ╭─[watch-kinds-invalid.iter:5:25]
+   │
+ 5 │     kinds = ["created", "deleted"]
+   │                         ────┬────  
+   │                             ╰────── unknown watch event kind `deleted`
+   │ 
+   │ Help: valid values: "created", "modified", "removed"
+───╯

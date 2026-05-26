@@ -43,6 +43,9 @@ pub enum TriggerDecl {
         include: Vec<String>,
         /// Glob patterns of files to exclude. Always wins over `include`.
         exclude: Vec<String>,
+        /// Event kinds to emit. Empty means all kinds (`created`, `modified`,
+        /// `removed`).
+        kinds: Vec<WatchEventKind>,
         /// Whether to fire one signal per file or batch them.
         per_file: bool,
         /// Publish interval in seconds. Events arriving within this window
@@ -154,6 +157,17 @@ pub enum SecretExpr {
     EnvVar(String),
     /// `file("./path")` reference resolved at runtime.
     File(PathBuf),
+}
+
+/// Event kind accepted by `kinds = [...]` on watch triggers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WatchEventKind {
+    /// File creation events.
+    Created,
+    /// File modification events.
+    Modified,
+    /// File removal events.
+    Removed,
 }
 
 /// Behaviour keyword accepted by `on_error = ...` on command triggers.

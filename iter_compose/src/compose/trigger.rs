@@ -15,8 +15,10 @@ use iter_command_cli::{CommandTrigger, ExtractMode, OnError};
 use iter_core::{Metadata, MetadataKey, MetadataValue, Priority, Queue, Signal};
 use iter_cron_cli::CronTrigger;
 use iter_files_cli::{FilesSource, FilesTrigger};
-use iter_language::{ExtractExpr, NamedTrigger, OnErrorKeyword, PriorityKeyword, TriggerDecl};
-use iter_watch_cli::{WatchConfig, WatchTrigger};
+use iter_language::{
+    ExtractExpr, NamedTrigger, OnErrorKeyword, PriorityKeyword, TriggerDecl, WatchEventKind,
+};
+use iter_watch_cli::{ChangeKind, WatchConfig, WatchTrigger};
 use iter_webhook_cli::{WebhookConfig, WebhookRoute as WebhookRouteConfig, WebhookTrigger};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -185,6 +187,7 @@ async fn dispatch_trigger(
             dir,
             include,
             exclude,
+            kinds,
             per_file,
             interval_secs,
             base_metadata,
@@ -198,6 +201,7 @@ async fn dispatch_trigger(
                 dir,
                 include,
                 exclude,
+                kinds,
                 per_file,
                 interval_secs,
                 &base_metadata,
@@ -339,6 +343,7 @@ async fn dispatch_watch(
     dir: String,
     include: Vec<String>,
     exclude: Vec<String>,
+    kinds: Vec<WatchEventKind>,
     per_file: bool,
     interval_secs: Option<i64>,
     base_metadata: &[(String, String)],
@@ -348,8 +353,10 @@ async fn dispatch_watch(
     let interval = interval_secs
         .and_then(|s| u64::try_from(s).ok())
         .map(Duration::from_secs);
-    let config = WatchConfig::new(PathBuf::from(&dir), &include, &exclude, per_file, interval)
-        .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
+    let allowed_kinds = convert_watch_kinds(&kinds);
+    let config =
+        WatchConfig::new(PathBuf::from(&dir), &include, &exclude, per_file, interval, allowed_kinds)
+            .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
     let metadata = build_metadata(base_metadata);
     let mut trigger = WatchTrigger::new(queue, config)
         .with_base_metadata(metadata)
@@ -515,6 +522,17 @@ fn convert_priority(kw: Option<PriorityKeyword>) -> Priority {
         Some(PriorityKeyword::High) => Priority::HIGH,
         Some(PriorityKeyword::Critical) => Priority::CRITICAL,
     }
+}
+
+fn convert_watch_kinds(kinds: &[WatchEventKind]) -> std::collections::HashSet<ChangeKind> {
+    kinds
+        .iter()
+        .map(|k| match k {
+            WatchEventKind::Created => ChangeKind::Created,
+            WatchEventKind::Modified => ChangeKind::Modified,
+            WatchEventKind::Removed => ChangeKind::Removed,
+        })
+        .collect()
 }
 
 fn build_metadata(pairs: &[(String, String)]) -> Metadata {

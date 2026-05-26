@@ -15,6 +15,7 @@ trigger <name> watch {
   dir      = "<path>"
   include  = ["<glob>", ...]
   exclude  = ["<glob>", ...]
+  kinds    = ["created", "modified", "removed"]   # Optional
   per_file = <bool>
   interval = <duration>   # Optional, e.g. 5s
 
@@ -32,6 +33,7 @@ trigger <name> watch {
 | `dir` | string | Required | — | Directory to monitor. Resolved relative to the compose file. Watched recursively. |
 | `include` | `list(string)` | Optional | `[]` | gitignore-style globs evaluated against the changed file's path *relative* to `dir`. `**` traverses directories. Empty means "watch everything". |
 | `exclude` | `list(string)` | Optional | `[]` | gitignore-style globs evaluated against the same relative path. A match here unconditionally rejects the event (wins over `include`). |
+| `kinds` | `list(string)` | Optional | `[]` | Event kinds to emit. Valid values: `"created"`, `"modified"`, `"removed"`. Empty (the default) means all kinds are emitted. When set, only matching filesystem events produce signals — filtered events are discarded before debounce and signal construction. |
 | `per_file` | bool | Optional | `false` | `true` → one Signal per changed file (when no `interval` is set). `false` → one Signal per batch of changes (merged by `interval`). |
 | `interval` | duration | Optional | _see notes_ | Publish interval. After the first matching event, collect all changes for this duration, then emit one merged Signal. No events are suppressed — all observed changes are preserved in signal metadata. With `per_file = true` and no interval, every event fires its own Signal immediately. With `per_file = false` and no interval, the library uses an internal default of 250&nbsp;ms. The standalone `iter-watch` CLI defaults `--interval` to `2` seconds; passing `--interval 0` disables the interval. `cooldown` is accepted as a deprecated alias for `interval`; using both is a validation error. |
 | `priority` | `low \| normal \| high \| critical` | Optional | `normal` | Signal priority. |
@@ -88,6 +90,21 @@ trigger on_docs_change watch {
 }
 ```
 
+### Ignoring `removed` events for session-log processing
+
+When monitoring agent session logs, file removals during cleanup are not
+actionable. Filter them out at the trigger so downstream workers never see them.
+
+```hcl
+trigger watch_sessions watch {
+  target   = main
+  dir      = "/Users/me/.claude/projects"
+  include  = ["**/*.jsonl"]
+  kinds    = ["created", "modified"]
+  per_file = true
+}
+```
+
 ### Per-file with exclude and a 30-minute interval
 
 A common shape for monitoring agent session logs while ignoring writes the
@@ -107,7 +124,7 @@ trigger watch_sessions watch {
 
 ## Standalone form
 
-`iter-watch` exposes the same fields as CLI flags / environment variables. It is useful for running the watcher in its own container next to a pool of Runner containers. `--include` and `--exclude` are repeatable.
+`iter-watch` exposes the same fields as CLI flags / environment variables. It is useful for running the watcher in its own container next to a pool of Runner containers. `--include`, `--exclude`, and `--kinds` are repeatable.
 
 ## See Also
 

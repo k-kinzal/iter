@@ -24,6 +24,7 @@ ComposeRoot {
                     dir: "./src",
                     include: [],
                     exclude: [],
+                    kinds: [],
                     per_file: false,
                     interval_secs: Some(
                         5,

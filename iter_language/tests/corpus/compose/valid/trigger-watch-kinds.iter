@@ -1,0 +1,9 @@
+queue main file { path = "./.iter/queue" }
+
+trigger sessions watch {
+    dir = "/Users/me/.claude/projects"
+    include = ["**/*.jsonl"]
+    kinds = ["created", "modified"]
+    per_file = true
+    target = main
+}

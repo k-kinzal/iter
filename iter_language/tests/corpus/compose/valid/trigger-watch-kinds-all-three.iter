@@ -1,0 +1,7 @@
+queue main file { path = "./.iter/queue" }
+
+trigger redundant watch {
+    dir = "./src"
+    kinds = ["created", "modified", "removed"]
+    target = main
+}

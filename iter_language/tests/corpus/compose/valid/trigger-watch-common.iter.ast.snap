@@ -26,6 +26,7 @@ ComposeRoot {
                         "*.rs",
                     ],
                     exclude: [],
+                    kinds: [],
                     per_file: true,
                     interval_secs: Some(
                         2,

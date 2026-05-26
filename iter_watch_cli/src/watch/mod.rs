@@ -5,6 +5,7 @@ mod filter;
 mod kind;
 
 pub use config::{WatchBackend, WatchConfig};
+pub use kind::ChangeKind;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use filter::path_matches;
-use kind::{ChangeKind, ChangeRecord};
+use kind::ChangeRecord;
 
 /// Errors produced by [`WatchTrigger`].
 #[derive(Debug, Error)]
@@ -154,12 +155,16 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         let include = Arc::new(self.config.include.clone());
         let exclude = Arc::new(self.config.exclude.clone());
         let include_empty = self.config.include_empty;
+        let allowed_kinds = Arc::new(self.config.kinds.clone());
         let watch_root_for_match = watch_root.clone();
         let event_sink = move |res: notify::Result<notify::Event>| match res {
             Ok(event) => {
                 let Some(kind) = ChangeKind::from_event_kind(event.kind) else {
                     return;
                 };
+                if !allowed_kinds.is_empty() && !allowed_kinds.contains(&kind) {
+                    return;
+                }
                 let timestamp = Utc::now();
                 for path in event.paths {
                     let Ok(rel) = path.strip_prefix(&watch_root_for_match) else {
@@ -471,6 +476,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
 mod tests {
     use super::*;
     use iter_core::queue::InMemoryQueue;
+    use std::collections::HashSet;
     use std::fs;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -524,6 +530,7 @@ mod tests {
             &["skip/**".to_string()],
             true,
             None,
+            HashSet::new(),
         )
         .unwrap();
         let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
@@ -594,6 +601,7 @@ mod tests {
             &[],
             false,
             Some(Duration::from_secs(4)),
+            HashSet::new(),
         )
         .unwrap();
         let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
@@ -690,6 +698,7 @@ mod tests {
             &[],
             true,
             None,
+            HashSet::new(),
         )
         .unwrap();
         let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
@@ -733,5 +742,68 @@ mod tests {
             panic!("timestamp not a string");
         };
         chrono::DateTime::parse_from_rfc3339(ts).expect("rfc3339 timestamp");
+    }
+
+    #[tokio::test]
+    async fn kinds_filter_suppresses_removed_events() {
+        let tmp = TempDir::new().unwrap();
+        let keep = tmp.path().join("keep.txt");
+        let remove_me = tmp.path().join("remove_me.txt");
+
+        // Pre-create the file that will be removed so the watcher can
+        // snapshot it before we delete it.
+        fs::write(&remove_me, "initial").unwrap();
+
+        let queue = Arc::new(InMemoryQueue::new());
+        let config = WatchConfig::new(
+            tmp.path().to_path_buf(),
+            &["**/*.txt".to_string()],
+            &[],
+            true,
+            None,
+            HashSet::from([ChangeKind::Created, ChangeKind::Modified]),
+        )
+        .unwrap();
+        let trigger = WatchTrigger::new(queue.clone(), config).with_backend(poll_backend());
+
+        let cancel = CancellationToken::new();
+        let cancel_run = cancel.clone();
+        let handle = tokio::spawn(async move { trigger.run(cancel_run).await });
+
+        // Let the PollWatcher finish its initial snapshot.
+        sleep(Duration::from_millis(800)).await;
+
+        // Create a new file (will produce a signal) and remove the other
+        // (should be suppressed). Spacing them out ensures the PollWatcher
+        // observes both.
+        fs::write(&keep, "created").unwrap();
+        sleep(Duration::from_millis(500)).await;
+        fs::remove_file(&remove_me).unwrap();
+
+        // Wait for at least one signal (the create of keep.txt).
+        wait_for_first_signal(queue.as_ref()).await;
+        sleep(Duration::from_millis(1000)).await;
+
+        cancel.cancel();
+        handle.await.unwrap().unwrap();
+        queue.close().await.unwrap();
+
+        let signals = drain(queue.as_ref()).await;
+        let kind_key = MetadataKey::new("kind").unwrap();
+
+        for s in &signals {
+            let MetadataValue::String(kind) = s.metadata().get(&kind_key).expect("kind metadata")
+            else {
+                panic!("kind not a string");
+            };
+            assert_ne!(
+                kind, "removed",
+                "removed events must be suppressed by kinds filter"
+            );
+        }
+        assert!(
+            !signals.is_empty(),
+            "at least one non-removed signal expected"
+        );
     }
 }
