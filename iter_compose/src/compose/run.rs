@@ -322,6 +322,12 @@ async fn monitor_service_subprocess(
                 if status.is_terminal() {
                     return match status {
                         ProcessStatus::Stopped => Ok(()),
+                        // Any external stop (targeted `compose down SERVICE`,
+                        // `iter stop <id>`, or direct SIGTERM) transitions the
+                        // record to `Killed` without the orchestrator requesting
+                        // it. Treat this as a controlled stop so the failure
+                        // policy does not cascade to sibling services.
+                        ProcessStatus::Killed if !stop_sent => Ok(()),
                         other => Err(ServiceSubprocessError::NonZeroExit(other)),
                     };
                 }

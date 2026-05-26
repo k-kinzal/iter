@@ -845,6 +845,16 @@ fn compose_up_and_wait(
     project_dir: &Path,
     slug: &str,
 ) -> (ComposeGuard, Vec<serde_json::Value>) {
+    compose_up_and_wait_n(home, project_dir, slug, 1)
+}
+
+/// Like [`compose_up_and_wait`] but waits for `expected` runners.
+fn compose_up_and_wait_n(
+    home: &Path,
+    project_dir: &Path,
+    slug: &str,
+    expected: usize,
+) -> (ComposeGuard, Vec<serde_json::Value>) {
     let out = Command::new(iter_bin())
         .current_dir(project_dir)
         .env("HOME", home)
@@ -861,7 +871,7 @@ fn compose_up_and_wait(
         project_dir: project_dir.to_path_buf(),
         home: home.to_path_buf(),
     };
-    let records = wait_for_compose_runners(home, slug, 1, Duration::from_secs(20));
+    let records = wait_for_compose_runners(home, slug, expected, Duration::from_secs(20));
     (guard, records)
 }
 
@@ -1608,4 +1618,253 @@ fn read_runner_status(home: &Path, record: &serde_json::Value) -> String {
         .expect("record has id");
     let path = home.join(format!(".iter/proc/{id}/status"));
     std::fs::read_to_string(&path).unwrap_or_else(|_| "unknown".to_owned())
+}
+
+/// Extract the `iter.compose.service` label from a metadata record.
+fn record_service_name(record: &serde_json::Value) -> &str {
+    record
+        .get("labels")
+        .and_then(|l| l.get("iter.compose.service"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+}
+
+/// Build a compose.iter with two services sharing distinct Iterfiles.
+/// Returns `(project_dir, service_a_name, service_b_name)`.
+fn write_two_service_compose_project(
+    home_dir: &Path,
+    name: &str,
+) -> (PathBuf, String, String) {
+    let project_dir = home_dir.join(name);
+    std::fs::create_dir_all(&project_dir).expect("create project dir");
+    let svc_a = format!("{name}_a").replace('-', "_");
+    let svc_b = format!("{name}_b").replace('-', "_");
+    let compose = format!(
+        r#"
+queue main file {{ path = "./.iter/queue" }}
+
+service {svc_a} {{
+  build = "./IterfileA"
+}}
+
+service {svc_b} {{
+  build = "./IterfileB"
+}}
+"#
+    );
+    std::fs::write(project_dir.join("compose.iter"), compose).expect("write compose.iter");
+    std::fs::write(project_dir.join("IterfileA"), TEST_ITERFILE).expect("write IterfileA");
+    std::fs::write(project_dir.join("IterfileB"), TEST_ITERFILE).expect("write IterfileB");
+    (project_dir, svc_a, svc_b)
+}
+
+/// Build a compose.iter with a shell queue (non-addressable) for a
+/// single service. Used to verify targeted up fails with a diagnostic.
+fn write_non_addressable_compose_project(
+    home_dir: &Path,
+    name: &str,
+) -> (PathBuf, String) {
+    let project_dir = home_dir.join(name);
+    std::fs::create_dir_all(&project_dir).expect("create project dir");
+    let service = format!("{name}_svc").replace('-', "_");
+    let compose = format!(
+        r#"
+queue main shell {{
+  enqueue = "echo"
+  dequeue = "echo"
+}}
+
+service {service} {{
+  build = "./Iterfile"
+}}
+"#
+    );
+    std::fs::write(project_dir.join("compose.iter"), compose).expect("write compose.iter");
+    std::fs::write(project_dir.join("Iterfile"), TEST_ITERFILE).expect("write Iterfile");
+    (project_dir, service)
+}
+
+// -- Targeted compose lifecycle integration tests -----------------------------
+
+/// `compose down worker-a` stops only worker-a; worker-b stays running.
+#[test]
+fn compose_down_targeted_stops_only_named_service() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, svc_a, svc_b) =
+        write_two_service_compose_project(home.path(), "demo-tgt-down");
+    let (_guard, records) =
+        compose_up_and_wait_n(home.path(), &project_dir, "demo-tgt-down", 2);
+
+    assert_eq!(records.len(), 2, "expected 2 runners; got {}", records.len());
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "down", &svc_a, "-t", "5"])
+        .output()
+        .expect("iter compose down targeted");
+    assert!(
+        out.status.success(),
+        "targeted compose down failed; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let post = compose_records_for_project(home.path(), "demo-tgt-down");
+    for record in &post {
+        let name = record_service_name(record);
+        let status = read_runner_status(home.path(), record).trim().to_owned();
+        if name == svc_a {
+            assert!(
+                matches!(status.as_str(), "stopped" | "killed" | "failed"),
+                "service {svc_a} should be terminal after targeted down; got {status:?}"
+            );
+        } else if name == svc_b {
+            assert!(
+                !matches!(status.as_str(), "stopped" | "killed" | "failed"),
+                "service {svc_b} should still be running after targeted down of {svc_a}; got {status:?}"
+            );
+        }
+    }
+}
+
+/// `compose up worker-a --detach` starts only worker-a inside an
+/// already-running compose project.
+#[test]
+fn compose_up_targeted_starts_only_named_service() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, svc_a, svc_b) =
+        write_two_service_compose_project(home.path(), "demo-tgt-up");
+    let (_guard, _records) =
+        compose_up_and_wait_n(home.path(), &project_dir, "demo-tgt-up", 2);
+
+    // Stop svc_a
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "down", &svc_a, "-t", "5"])
+        .output()
+        .expect("iter compose down targeted");
+    assert!(out.status.success());
+
+    // Record how many runners exist before targeted up.
+    let pre = compose_records_for_project(home.path(), "demo-tgt-up");
+    let pre_count = pre.len();
+
+    // Start svc_a again — targeted up with live orchestrator.
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up", &svc_a, "--detach"])
+        .output()
+        .expect("iter compose up targeted");
+    assert!(
+        out.status.success(),
+        "targeted compose up failed; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Wait for the new runner to appear.
+    let post = wait_for_compose_runners(
+        home.path(),
+        "demo-tgt-up",
+        pre_count + 1,
+        Duration::from_secs(20),
+    );
+
+    // The new svc_a runner should be non-terminal.
+    let svc_a_non_terminal = post
+        .iter()
+        .filter(|r| record_service_name(r) == svc_a)
+        .any(|r| {
+            let status = read_runner_status(home.path(), r).trim().to_owned();
+            !matches!(status.as_str(), "stopped" | "killed" | "failed")
+        });
+    assert!(
+        svc_a_non_terminal,
+        "new {svc_a} runner should be in a non-terminal state after targeted up"
+    );
+
+    // svc_b should not have gained a new runner.
+    let svc_b_records: Vec<_> = post
+        .iter()
+        .filter(|r| record_service_name(r) == svc_b)
+        .collect();
+    assert_eq!(
+        svc_b_records.len(),
+        1,
+        "service {svc_b} should still have exactly 1 runner; got {}",
+        svc_b_records.len()
+    );
+}
+
+/// `--source PATH` resolves services by their Iterfile build path.
+#[test]
+fn compose_down_source_resolves_by_iterfile_path() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, svc_a, svc_b) =
+        write_two_service_compose_project(home.path(), "demo-src-down");
+    let (_guard, records) =
+        compose_up_and_wait_n(home.path(), &project_dir, "demo-src-down", 2);
+
+    assert_eq!(records.len(), 2, "expected 2 runners; got {}", records.len());
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "down", "--source", "./IterfileA", "-t", "5"])
+        .output()
+        .expect("iter compose down --source");
+    assert!(
+        out.status.success(),
+        "compose down --source failed; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&svc_a),
+        "--source should resolve to {svc_a}; stderr=\n{stderr}"
+    );
+
+    let post = compose_records_for_project(home.path(), "demo-src-down");
+    for record in &post {
+        let name = record_service_name(record);
+        let status = read_runner_status(home.path(), record).trim().to_owned();
+        if name == svc_a {
+            assert!(
+                matches!(status.as_str(), "stopped" | "killed" | "failed"),
+                "service {svc_a} should be terminal after --source down; got {status:?}"
+            );
+        } else if name == svc_b {
+            assert!(
+                !matches!(status.as_str(), "stopped" | "killed" | "failed"),
+                "service {svc_b} should still be running after --source {svc_a}; got {status:?}"
+            );
+        }
+    }
+}
+
+/// Targeted `compose up` with a shell queue (non-addressable) must
+/// fail with an actionable diagnostic.
+#[test]
+fn compose_up_targeted_non_addressable_queue_fails() {
+    let home = TempDir::new().expect("home tempdir");
+    let (project_dir, service) =
+        write_non_addressable_compose_project(home.path(), "demo-noaddr");
+
+    let out = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up", &service, "--detach"])
+        .output()
+        .expect("spawn iter");
+    assert!(
+        !out.status.success(),
+        "targeted compose up with non-addressable queue must fail; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("URL-addressable") || stderr.contains("addressable"),
+        "stderr should mention addressable queue requirement; got:\n{stderr}"
+    );
 }

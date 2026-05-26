@@ -252,7 +252,9 @@ pub fn process_is_alive_with_start_time(identity: &ProcessIdentity) -> Result<bo
     let observed = match process_start_time(identity.pid) {
         Ok(s) => s,
         // The process died between `kill -0` and `process_start_time`.
-        Err(ProcessError::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        // On Linux this surfaces as `NotFound` (/proc/<pid>/stat gone);
+        // on macOS `proc_pidinfo` fails with ESRCH (raw_os_error == 3).
+        Err(ProcessError::Io(ref e)) if process_vanished_io(e) => return Ok(false),
         Err(e) => return Err(e),
     };
     if observed != identity.start_time {
@@ -274,6 +276,17 @@ pub fn process_is_alive_with_start_time(identity: &ProcessIdentity) -> Result<bo
         }
     }
     Ok(true)
+}
+
+fn process_vanished_io(e: &io::Error) -> bool {
+    if e.kind() == io::ErrorKind::NotFound {
+        return true;
+    }
+    #[cfg(target_os = "macos")]
+    if e.raw_os_error() == Some(libc::ESRCH) {
+        return true;
+    }
+    false
 }
 
 /// Bare `kill(pid, 0)` — does the kernel still know about this pid?
