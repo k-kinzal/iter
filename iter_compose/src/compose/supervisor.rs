@@ -485,6 +485,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_error_triggers_restart_with_persisted_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("state");
+
+        let trigger = ComposeTrigger {
+            name: "restart_test".to_string(),
+            decl: finite_files_decl("/nonexistent/error_path.txt"),
+            queue: Arc::new(AnyQueue::InMemory(InMemoryQueue::new())),
+            terminate_on_completion: false,
+            state_dir: None,
+        };
+
+        let cancel = CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+            cancel_clone.cancel();
+        });
+
+        let outcome = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+
+        assert_eq!(outcome.status.state, TriggerLifecycleState::Stopped);
+        assert!(
+            outcome.status.restart_count >= 1,
+            "expected at least 1 restart, got {}",
+            outcome.status.restart_count
+        );
+        assert!(
+            outcome.status.last_error.is_some(),
+            "last_error should record the failure message"
+        );
+
+        let persisted = read_status(&state_dir).unwrap();
+        assert_eq!(persisted.state, TriggerLifecycleState::Stopped);
+        assert_eq!(persisted.restart_count, outcome.status.restart_count);
+        assert!(persisted.last_error.is_some());
+    }
+
+    #[tokio::test]
     async fn terminate_not_fired_on_supervised_restart() {
         let dir = tempfile::tempdir().unwrap();
         let state_dir = dir.path().join("state");

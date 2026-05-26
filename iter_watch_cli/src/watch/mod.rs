@@ -745,6 +745,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pending_batch_recovered_on_startup() {
+        let tmp = TempDir::new().unwrap();
+        let watch_dir = tmp.path().join("watched");
+        fs::create_dir_all(&watch_dir).unwrap();
+        let state_dir = tmp.path().join("state");
+        fs::create_dir_all(&state_dir).unwrap();
+
+        let batch = vec![
+            ChangeRecord {
+                path: watch_dir.join("recovered.txt"),
+                kind: ChangeKind::Modified,
+                timestamp: Utc::now(),
+            },
+        ];
+        let json = serde_json::to_string(&batch).unwrap();
+        fs::write(state_dir.join(PENDING_BATCH_FILENAME), &json).unwrap();
+
+        let queue = Arc::new(InMemoryQueue::new());
+        let config = WatchConfig::new(
+            watch_dir.clone(),
+            &["**/*".to_string()],
+            &[],
+            false,
+            Some(Duration::from_secs(60)),
+            HashSet::new(),
+        )
+        .unwrap();
+        let trigger = WatchTrigger::new(queue.clone(), config)
+            .with_backend(poll_backend())
+            .with_state_dir(state_dir.clone());
+
+        let cancel = CancellationToken::new();
+        let cancel_run = cancel.clone();
+        let handle = tokio::spawn(async move { trigger.run(cancel_run).await });
+
+        wait_for_first_signal(queue.as_ref()).await;
+
+        cancel.cancel();
+        handle.await.unwrap().unwrap();
+        queue.close().await.unwrap();
+
+        let signals = drain(queue.as_ref()).await;
+        assert_eq!(
+            signals.len(),
+            1,
+            "exactly one signal expected from recovered batch, got {}",
+            signals.len()
+        );
+
+        let files_key = MetadataKey::new("files").unwrap();
+        let MetadataValue::String(files_json) = signals[0]
+            .metadata()
+            .get(&files_key)
+            .expect("files metadata from recovered batch")
+        else {
+            panic!("files not a string");
+        };
+        let files: Vec<String> =
+            serde_json::from_str(files_json).expect("files is valid JSON array");
+        assert!(
+            files.iter().any(|f| f.contains("recovered.txt")),
+            "recovered batch signal should reference recovered.txt, got: {files:?}"
+        );
+
+        assert!(
+            !state_dir.join(PENDING_BATCH_FILENAME).exists(),
+            "pending batch file should be cleared after successful flush"
+        );
+    }
+
+    #[tokio::test]
     async fn kinds_filter_suppresses_removed_events() {
         let tmp = TempDir::new().unwrap();
         let keep = tmp.path().join("keep.txt");
