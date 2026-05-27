@@ -209,6 +209,9 @@ fn render_agent(
         | iter_language::AgentDecl::Gemini {
             command, args, env, ..
         }
+        | iter_language::AgentDecl::Hermes {
+            command, args, env, ..
+        }
         | iter_language::AgentDecl::Antigravity {
             command, args, env, ..
         }

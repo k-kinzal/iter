@@ -7,7 +7,7 @@ use iter_core::agent::{
     AgentError, AgentMode as ImplAgentMode, AntigravityAgent, AntigravitySettings, ClaudeAgent,
     ClaudeSettings, ClineAgent, ClineSettings, CodexAgent, CodexSettings, CopilotAgent,
     CopilotSettings, CursorAgent, CursorSettings, GeminiAgent, GeminiSettings, GenericAgent,
-    OpenCodeAgent, OpenCodeSettings,
+    HermesAgent, HermesSettings, OpenCodeAgent, OpenCodeSettings,
 };
 use iter_core::workspace::sandbox::agent_requirements;
 use iter_core::{Agent, AgentReport, AgentRunContext, SandboxRequirements};
@@ -49,6 +49,8 @@ pub enum AnyAgent {
     Codex(CodexAgent),
     /// Google Gemini agent.
     Gemini(GeminiAgent),
+    /// Nous Research Hermes agent.
+    Hermes(HermesAgent),
     /// Google Antigravity CLI agent.
     Antigravity(AntigravityAgent),
     /// GitHub Copilot agent.
@@ -73,6 +75,7 @@ impl Agent for AnyAgent {
             Self::Claude(a) => a.run(ctx).await,
             Self::Codex(a) => a.run(ctx).await,
             Self::Gemini(a) => a.run(ctx).await,
+            Self::Hermes(a) => a.run(ctx).await,
             Self::Antigravity(a) => a.run(ctx).await,
             Self::Copilot(a) => a.run(ctx).await,
             Self::Cursor(a) => a.run(ctx).await,
@@ -97,6 +100,7 @@ impl AnyAgent {
             Self::Claude(a) => agent_requirements::claude(a),
             Self::Codex(_)
             | Self::Gemini(_)
+            | Self::Hermes(_)
             | Self::Antigravity(_)
             | Self::Copilot(_)
             | Self::Cursor(_)
@@ -152,6 +156,7 @@ fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
 /// Returns [`AgentBuildError`] when the declaration is structurally invalid
 /// for the chosen variant — currently only the `generic { command = [] }`
 /// case.
+#[allow(clippy::too_many_lines)]
 pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
     Ok(match decl {
         AgentDecl::Claude {
@@ -184,6 +189,17 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             args,
             env,
         } => AnyAgent::Gemini(GeminiAgent::new(GeminiSettings {
+            command: command.clone(),
+            mode: convert_mode(*mode),
+            args: args.clone(),
+            env: resolve_env(env),
+        })),
+        AgentDecl::Hermes {
+            mode,
+            command,
+            args,
+            env,
+        } => AnyAgent::Hermes(HermesAgent::new(HermesSettings {
             command: command.clone(),
             mode: convert_mode(*mode),
             args: args.clone(),
@@ -325,6 +341,15 @@ mod tests {
         }
     }
 
+    fn hermes_decl(mode: AstAgentMode) -> AgentDecl {
+        AgentDecl::Hermes {
+            mode,
+            command: "hermes".into(),
+            args: Vec::new(),
+            env: empty_env(),
+        }
+    }
+
     fn antigravity_decl(mode: AstAgentMode) -> AgentDecl {
         AgentDecl::Antigravity {
             mode,
@@ -348,7 +373,7 @@ mod tests {
     #[test]
     fn maps_each_agent_decl_variant() {
         type Check = fn(&AnyAgent) -> bool;
-        let cases: [(AgentDecl, Check); 9] = [
+        let cases: [(AgentDecl, Check); 10] = [
             (claude_decl(AstAgentMode::Print), |a| {
                 matches!(a, AnyAgent::Claude(_))
             }),
@@ -357,6 +382,9 @@ mod tests {
             }),
             (gemini_decl(AstAgentMode::Print), |a| {
                 matches!(a, AnyAgent::Gemini(_))
+            }),
+            (hermes_decl(AstAgentMode::Print), |a| {
+                matches!(a, AnyAgent::Hermes(_))
             }),
             (antigravity_decl(AstAgentMode::Print), |a| {
                 matches!(a, AnyAgent::Antigravity(_))
@@ -432,6 +460,12 @@ mod tests {
             other => panic!("expected Gemini, got {other:?}"),
         }
 
+        let hermes = build_agent(&hermes_decl(AstAgentMode::Interactive)).expect("build");
+        match hermes {
+            AnyAgent::Hermes(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
+            other => panic!("expected Hermes, got {other:?}"),
+        }
+
         let antigravity = build_agent(&antigravity_decl(AstAgentMode::Interactive)).expect("build");
         match antigravity {
             AnyAgent::Antigravity(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
@@ -492,6 +526,24 @@ mod tests {
                 assert_eq!(a.args, vec!["--sandbox".to_string()]);
             }
             other => panic!("expected Gemini, got {other:?}"),
+        }
+
+        let hermes = build_agent(&AgentDecl::Hermes {
+            mode: AstAgentMode::Print,
+            command: "/opt/bin/hermes".into(),
+            args: vec!["--yolo".into(), "--max-turns".into(), "30".into()],
+            env: empty_env(),
+        })
+        .expect("build");
+        match hermes {
+            AnyAgent::Hermes(a) => {
+                assert_eq!(a.command, "/opt/bin/hermes");
+                assert_eq!(
+                    a.args,
+                    vec!["--yolo".to_string(), "--max-turns".into(), "30".into()]
+                );
+            }
+            other => panic!("expected Hermes, got {other:?}"),
         }
 
         let antigravity = build_agent(&AgentDecl::Antigravity {

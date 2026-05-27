@@ -859,8 +859,9 @@ impl Analyzer {
                     *workspace_section = Some(Spanned::new(decl, sub_keyword_span));
                 }
             }
-            "agent_claude" | "agent_codex" | "agent_gemini" | "agent_copilot" | "agent_cursor"
-            | "agent_cline" | "agent_opencode" | "agent_generic" => {
+            "agent_claude" | "agent_codex" | "agent_gemini" | "agent_hermes"
+            | "agent_antigravity" | "agent_copilot" | "agent_cursor" | "agent_cline"
+            | "agent_opencode" | "agent_generic" => {
                 let kind_str = sub_keyword.strip_prefix("agent_").unwrap();
                 let kind_ident = RawIdent {
                     name: kind_str.to_string(),

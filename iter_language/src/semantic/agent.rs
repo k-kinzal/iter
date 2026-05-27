@@ -26,6 +26,7 @@ impl Analyzer {
                 "claude",
                 "codex",
                 "gemini",
+                "hermes",
                 "antigravity",
                 "copilot",
                 "cursor",
@@ -40,7 +41,7 @@ impl Analyzer {
         }
         let mut fields = self.collect_fields(body);
         let decl = match kind.name.as_str() {
-            "claude" | "codex" | "gemini" | "antigravity" | "copilot" => {
+            "claude" | "codex" | "gemini" | "hermes" | "antigravity" | "copilot" => {
                 self.lower_mode_agent(&kind, &mut fields)?
             }
             "cursor" => {
@@ -66,7 +67,7 @@ impl Analyzer {
                         format!("unknown agent kind `{other}`"),
                     )
                     .with_hint(
-                        "valid kinds: claude, codex, gemini, antigravity, copilot, cursor, cline, opencode, generic, router",
+                        "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic, router",
                     ),
                 );
                 return None;
@@ -128,6 +129,19 @@ impl Analyzer {
                     "agent gemini",
                 );
                 Some(AgentDecl::Gemini {
+                    mode: mode?,
+                    command: command?,
+                    args,
+                    env,
+                })
+            }
+            "hermes" => {
+                self.reject_unknown_fields(
+                    fields,
+                    &["mode", "command", "args", "env"],
+                    "agent hermes",
+                );
+                Some(AgentDecl::Hermes {
                     mode: mode?,
                     command: command?,
                     args,
@@ -239,6 +253,7 @@ impl Analyzer {
         AgentDecl::Generic { command, env }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn lower_router_agent(&mut self, kind: &RawIdent, body: Option<RawBlock>) -> Option<AgentDecl> {
         let raw_fields = match body {
             Some(block) => block.fields,
@@ -358,7 +373,7 @@ impl Analyzer {
         fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
     ) -> Option<AgentDecl> {
         match kind.name.as_str() {
-            "claude" | "codex" | "gemini" | "antigravity" | "copilot" => {
+            "claude" | "codex" | "gemini" | "hermes" | "antigravity" | "copilot" => {
                 self.lower_mode_agent(kind, fields)
             }
             "cursor" => {
@@ -381,7 +396,7 @@ impl Analyzer {
                 self.errors.push(
                     Diagnostic::error(kind.span.clone(), format!("unknown agent kind `{other}`"))
                         .with_hint(
-                            "valid kinds: claude, codex, gemini, antigravity, copilot, cursor, cline, opencode, generic",
+                            "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic",
                         ),
                 );
                 None

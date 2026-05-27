@@ -19,6 +19,7 @@ agent <kind> {
 | [`claude`](#agent-claude) | Claude Code (`claude`) | ✔ | ✘ |
 | [`codex`](#agent-codex) | OpenAI Codex | ✔ | ✘ |
 | [`gemini`](#agent-gemini) | Google Gemini | ✔ | ✘ |
+| [`hermes`](#agent-hermes) | Nous Hermes (`hermes`) | ✔ | ✘ |
 | [`antigravity`](#agent-antigravity) | Google Antigravity (`agy`) | ✔ | ✘ |
 | [`copilot`](#agent-copilot) | GitHub Copilot (`gh copilot`) | ✔ | ✔ |
 | [`cursor`](#agent-cursor) | Cursor | ✘ | ✘ |
@@ -155,6 +156,38 @@ Google Gemini.
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
+
+---
+
+## `agent hermes`
+
+Nous Research Hermes Agent — an open-source, self-hosted AI coding agent.
+
+### Examples
+
+```hcl
+agent hermes {
+  mode    = print
+  command = "hermes"
+  args    = ["--yolo", "--max-turns", "30"]
+}
+
+agent hermes {
+  mode    = interactive
+  command = "hermes"
+}
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | :---: | --- | --- |
+| `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
+| `command` | `string` | Required | — | Binary name or absolute path. |
+| `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
+
+Print mode uses `-z` (scripted mode, suppresses banners/spinners). Interactive mode uses `--tui`. In non-TTY environments, include `--yolo` in `args` to bypass tool-approval prompts. Session persistence is available via `--resume <id>` in `args`.
 
 ---
 

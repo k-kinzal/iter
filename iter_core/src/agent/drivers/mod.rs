@@ -12,4 +12,5 @@ pub mod copilot;
 pub mod cursor;
 pub mod gemini;
 pub mod generic;
+pub mod hermes;
 pub mod opencode;

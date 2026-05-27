@@ -5,12 +5,13 @@
 //! (subprocess management, hook lifecycle, transcript parsing) are
 //! `pub(crate)` internal modules used by the drivers.
 //!
-//! This module provides nine concrete implementations of the
+//! This module provides ten concrete implementations of the
 //! [`Agent`] trait. They fall into two broad groups based on how
 //! the underlying CLI is driven:
 //!
 //! * **Hook-capable** — [`ClaudeAgent`], [`CodexAgent`], [`GeminiAgent`],
-//!   [`AntigravityAgent`], and [`CopilotAgent`] each run in either
+//!   [`HermesAgent`] (hook integration pending), [`AntigravityAgent`],
+//!   and [`CopilotAgent`] each run in either
 //!   [`AgentMode::Print`]
 //!   (non-interactive one-shot invocation that captures stdout into
 //!   [`AgentReport::last_output`]) or
@@ -73,6 +74,7 @@ pub use drivers::copilot::{CopilotAgent, CopilotSettings};
 pub use drivers::cursor::{CursorAgent, CursorSettings};
 pub use drivers::gemini::{GeminiAgent, GeminiSettings};
 pub use drivers::generic::GenericAgent;
+pub use drivers::hermes::{HermesAgent, HermesSettings};
 pub use drivers::opencode::{OpenCodeAgent, OpenCodeSettings};
 pub use error::AgentError;
 pub use inner::{Agent, AgentRunContext, run_with_timeout};

@@ -65,6 +65,17 @@ pub enum AgentDecl {
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
+    /// Nous Research Hermes Agent.
+    Hermes {
+        /// Invocation mode for the underlying CLI. Required.
+        mode: AgentMode,
+        /// Binary name or absolute path. Required.
+        command: String,
+        /// Extra arguments appended after the iter-managed defaults.
+        args: Vec<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
+    },
     /// Google Antigravity CLI agent (successor to Gemini CLI).
     Antigravity {
         /// Invocation mode for the underlying CLI. Required.
