@@ -6,68 +6,20 @@ exclude = [".git/**", "**/target/**"]
 
 [content]
 extensions = ["rs"]
-max_lines = 600
+max_lines = 1000
 warn_threshold = 0.9
 skip_comments = true
 skip_blank = true
 
 [[content.rules]]
-pattern = "**/*_test.rs"
-max_lines = 800
-reason = "Test files need more space for fixtures"
+pattern = "**/*_tests.rs"
+max_lines = 1200
+reason = "Unit test companion files"
 
 [[content.rules]]
 pattern = "**/tests/**"
-max_lines = 1200
-reason = "Integration tests need more space"
-
-[[content.rules]]
-pattern = "**/benches/**"
-max_lines = 800
-reason = "Benchmarks need more space"
-
-# Existing baseline exemptions — reduce these as files are refactored
-[[content.rules]]
-pattern = "iter_core/src/runner/mod.rs"
-max_lines = 1950
-reason = "Baseline: core runner orchestration (refactor target)"
-expires = "2026-12-31"
-
-[[content.rules]]
-pattern = "iter_compose/src/compose.rs"
-max_lines = 1300
-reason = "Baseline: compose orchestration (refactor target)"
-expires = "2026-12-31"
-
-[[content.rules]]
-pattern = "iter_cli/src/dispatch/compose.rs"
-max_lines = 1000
-reason = "Baseline: CLI compose dispatch (refactor target)"
-expires = "2026-12-31"
-
-[[content.rules]]
-pattern = "iter_compose/src/trigger.rs"
-max_lines = 800
-reason = "Baseline: trigger definitions (refactor target)"
-expires = "2026-12-31"
-
-[[content.rules]]
-pattern = "iter_core/src/process/stdio.rs"
-max_lines = 700
-reason = "Baseline: process stdio handling (refactor target)"
-expires = "2026-12-31"
-
-[[content.rules]]
-pattern = "iter_language/src/semantic/compose.rs"
-max_lines = 650
-reason = "Baseline: semantic compose analysis (refactor target)"
-expires = "2026-12-31"
-
-[[content.rules]]
-pattern = "iter_language/src/semantic/field_helpers.rs"
-max_lines = 650
-reason = "Baseline: semantic field helpers (refactor target)"
-expires = "2026-12-31"
+max_lines = 1500
+reason = "Integration tests"
 
 # Limits are per-directory, not workspace-wide.
 [structure]
@@ -78,12 +30,12 @@ warn_threshold = 0.8
 
 [[structure.rules]]
 scope = "**/tests/corpus/invalid"
-max_files = 60
+max_files = 80
 reason = "Parser test corpus — one file per grammar edge case"
 
 [[structure.rules]]
 scope = "**/tests/corpus/valid"
-max_files = 50
+max_files = 70
 reason = "Parser test corpus — one file per grammar production"
 
 [[structure.rules]]

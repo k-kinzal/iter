@@ -12,9 +12,11 @@
 //! pre-flight check succeeds.
 
 mod error;
+mod flatten;
 mod plan;
 mod run;
 mod service;
+mod service_build;
 pub(crate) mod supervisor;
 pub(crate) mod trigger;
 
