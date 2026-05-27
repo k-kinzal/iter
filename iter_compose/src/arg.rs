@@ -237,6 +237,11 @@ fn render_agent(
                 render_str(v, values)?;
             }
         }
+        iter_language::AgentDecl::Router { agents, .. } => {
+            for (_name, sub_decl) in agents.iter_mut() {
+                render_agent(sub_decl, values)?;
+            }
+        }
     }
     Ok(())
 }

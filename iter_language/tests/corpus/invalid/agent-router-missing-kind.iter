@@ -1,0 +1,14 @@
+queue memory
+workspace local { base = "." }
+
+agent router {
+  strategy = fallback
+
+  primary {
+    mode    = print
+    command = "claude"
+  }
+}
+
+runner { continue_on_error = false  behavior = wait }
+prompt "test"

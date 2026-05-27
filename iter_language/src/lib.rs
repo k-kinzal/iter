@@ -57,6 +57,7 @@ mod semantic;
 
 pub use ast::{
     Action, AgentDecl, AgentMode, ApplyBackDecl, ArgDecl, CloneApplyBackMode, CmpOp, ComposeRoot,
+    RouterStrategy,
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDecl, DlqTargetDecl, EventHandlerDecl,
     EventName, ExtractExpr, FilesSource, InlineService, IterationField, KafkaConfig, KafkaConsumer,
     KafkaProducer, KafkaSecurity, KinesisCheckpoint, KinesisConfig, KinesisConsumer,

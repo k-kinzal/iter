@@ -1,7 +1,7 @@
 //! `agent { ... }` lowerer plus mode/apply-back identifier parsers shared with field helpers.
 
 use super::{Analyzer, COMMAND_HINT};
-use crate::ast::{AgentDecl, AgentMode, CloneApplyBackMode, Span};
+use crate::ast::{AgentDecl, AgentMode, CloneApplyBackMode, RouterStrategy, Span};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawIdent, RawValue};
 
@@ -24,8 +24,12 @@ impl Analyzer {
             "agent",
             &[
                 "claude", "codex", "gemini", "copilot", "cursor", "cline", "opencode", "generic",
+                "router",
             ],
         )?;
+        if kind.name == "router" {
+            return self.lower_router_agent(&kind, body);
+        }
         let mut fields = self.collect_fields(body);
         let decl = match kind.name.as_str() {
             "claude" | "codex" | "gemini" | "copilot" => {
@@ -54,7 +58,7 @@ impl Analyzer {
                         format!("unknown agent kind `{other}`"),
                     )
                     .with_hint(
-                        "valid kinds: claude, codex, gemini, copilot, cursor, cline, opencode, generic",
+                        "valid kinds: claude, codex, gemini, copilot, cursor, cline, opencode, generic, router",
                     ),
                 );
                 return None;
@@ -210,6 +214,155 @@ impl Analyzer {
         let env = self.take_optional_env_block(fields);
         self.reject_unknown_fields(fields, &["command", "env"], "agent generic");
         AgentDecl::Generic { command, env }
+    }
+
+    fn lower_router_agent(
+        &mut self,
+        kind: &RawIdent,
+        body: Option<RawBlock>,
+    ) -> Option<AgentDecl> {
+        let raw_fields = match body {
+            Some(block) => block.fields,
+            None => Vec::new(),
+        };
+
+        let mut strategy = RouterStrategy::Fallback;
+        let mut agents: Vec<(String, Box<AgentDecl>)> = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+
+        for field in raw_fields {
+            let name = field.name.name.clone();
+
+            if name == "strategy" {
+                if !seen_names.insert(name) {
+                    self.errors.push(Diagnostic::error(
+                        field.name.span.clone(),
+                        "duplicate field `strategy` in block",
+                    ));
+                    continue;
+                }
+                match field.value {
+                    RawValue::Ident(ref ident, ref span) => match ident.as_str() {
+                        "fallback" => strategy = RouterStrategy::Fallback,
+                        "rotate" => strategy = RouterStrategy::Rotate,
+                        other => {
+                            self.errors.push(
+                                Diagnostic::error(
+                                    span.clone(),
+                                    format!("unknown router strategy `{other}`"),
+                                )
+                                .with_hint("valid strategies: fallback, rotate"),
+                            );
+                            return None;
+                        }
+                    },
+                    other => {
+                        self.errors.push(Diagnostic::error(
+                            other.span(),
+                            "`strategy` must be an identifier (fallback or rotate)",
+                        ));
+                        return None;
+                    }
+                }
+                continue;
+            }
+
+            if !seen_names.insert(name.clone()) {
+                self.errors.push(Diagnostic::error(
+                    field.name.span.clone(),
+                    format!("duplicate field `{name}` in block"),
+                ));
+                continue;
+            }
+
+            match field.value {
+                RawValue::Block(block) => {
+                    let mut sub_fields = self.collect_fields(Some(block));
+                    let sub_kind = if let Some(kind_field) = sub_fields.remove("kind") {
+                        match kind_field.value {
+                            RawValue::Ident(s, _) => s,
+                            other => {
+                                self.errors.push(Diagnostic::error(
+                                    other.span(),
+                                    "`kind` must be an identifier",
+                                ));
+                                continue;
+                            }
+                        }
+                    } else {
+                        self.errors.push(
+                            Diagnostic::error(
+                                field.name.span.clone(),
+                                format!("router sub-agent `{name}` requires `kind`"),
+                            )
+                            .with_hint("add `kind = claude` (or codex, gemini, etc.)"),
+                        );
+                        continue;
+                    };
+                    let sub_ident = RawIdent {
+                        name: sub_kind,
+                        span: field.name.span.clone(),
+                    };
+                    let sub_decl = self.lower_sub_agent(&sub_ident, &mut sub_fields);
+                    if let Some(decl) = sub_decl {
+                        agents.push((name, Box::new(decl)));
+                    }
+                }
+                other => {
+                    self.errors.push(Diagnostic::error(
+                        other.span(),
+                        format!(
+                            "router sub-agent `{name}` must be a block (`{name} {{ kind = ... }}`)"
+                        ),
+                    ));
+                }
+            }
+        }
+
+        if agents.is_empty() {
+            self.errors.push(
+                Diagnostic::error(kind.span.clone(), "agent router requires at least one sub-agent")
+                    .with_hint("add named sub-agent blocks: `primary { kind = claude; ... }`"),
+            );
+            return None;
+        }
+
+        Some(AgentDecl::Router { agents, strategy })
+    }
+
+    fn lower_sub_agent(
+        &mut self,
+        kind: &RawIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
+    ) -> Option<AgentDecl> {
+        match kind.name.as_str() {
+            "claude" | "codex" | "gemini" | "copilot" => self.lower_mode_agent(kind, fields),
+            "cursor" => {
+                let SimpleAgentParts { command, args, env } =
+                    self.lower_simple_agent(kind, fields, "cursor")?;
+                Some(AgentDecl::Cursor { command, args, env })
+            }
+            "cline" => {
+                let SimpleAgentParts { command, args, env } =
+                    self.lower_simple_agent(kind, fields, "cline")?;
+                Some(AgentDecl::Cline { command, args, env })
+            }
+            "opencode" => {
+                let SimpleAgentParts { command, args, env } =
+                    self.lower_simple_agent(kind, fields, "opencode")?;
+                Some(AgentDecl::OpenCode { command, args, env })
+            }
+            "generic" => Some(self.lower_generic_agent(kind, fields)),
+            other => {
+                self.errors.push(
+                    Diagnostic::error(kind.span.clone(), format!("unknown agent kind `{other}`"))
+                        .with_hint(
+                            "valid kinds: claude, codex, gemini, copilot, cursor, cline, opencode, generic",
+                        ),
+                );
+                None
+            }
+        }
     }
 
     pub(super) fn parse_agent_mode(&mut self, name: &str, span: Span) -> Option<AgentMode> {

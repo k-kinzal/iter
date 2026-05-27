@@ -13,6 +13,8 @@ use iter_core::{Agent, AgentReport, AgentRunContext, SandboxRequirements};
 use iter_language::{AgentDecl, AgentMode as AstAgentMode};
 use thiserror::Error;
 
+use crate::agent_router::{AgentRouter, RoutingStrategy};
+
 /// Errors produced while building an [`AnyAgent`] from an [`AgentDecl`].
 #[derive(Debug, Error)]
 pub enum AgentBuildError {
@@ -20,6 +22,20 @@ pub enum AgentBuildError {
     /// no command to invoke.
     #[error("agent generic requires a non-empty `command` array")]
     GenericEmptyCommand,
+
+    /// `agent router { }` with no sub-agents.
+    #[error("agent router requires at least one sub-agent")]
+    RouterEmpty,
+
+    /// A sub-agent inside a router failed to build.
+    #[error("router sub-agent `{name}` failed to build: {source}")]
+    RouterSubAgent {
+        /// Name of the sub-agent that failed.
+        name: String,
+        /// Underlying build error.
+        #[source]
+        source: Box<AgentBuildError>,
+    },
 }
 
 /// Enum dispatch wrapper over every concrete [`iter_core::Agent`]
@@ -42,6 +58,8 @@ pub enum AnyAgent {
     OpenCode(OpenCodeAgent),
     /// Generic command-driven agent.
     Generic(GenericAgent),
+    /// Multi-agent router with fallback or rotation strategy.
+    Router(AgentRouter),
 }
 
 impl Agent for AnyAgent {
@@ -57,6 +75,7 @@ impl Agent for AnyAgent {
             Self::Cline(a) => a.run(ctx).await,
             Self::OpenCode(a) => a.run(ctx).await,
             Self::Generic(a) => a.run(ctx).await,
+            Self::Router(a) => a.run(ctx).await,
         }
     }
 }
@@ -79,8 +98,33 @@ impl AnyAgent {
             | Self::Cline(_)
             | Self::OpenCode(_)
             | Self::Generic(_) => SandboxRequirements::default(),
+            Self::Router(r) => merge_sandbox_requirements(r.agents()),
         }
     }
+}
+
+fn merge_sandbox_requirements(agents: &[(String, AnyAgent)]) -> SandboxRequirements {
+    let mut merged = SandboxRequirements::default();
+    for (_name, agent) in agents {
+        let reqs = agent.sandbox_requirements();
+        merged.network_hosts.extend(reqs.network_hosts);
+        merged.file_reads.extend(reqs.file_reads);
+        merged.file_writes.extend(reqs.file_writes);
+        merged.file_write_regexes.extend(reqs.file_write_regexes);
+        merged.env_pass.extend(reqs.env_pass);
+        merged.allow_signal = merged.allow_signal || reqs.allow_signal;
+    }
+    merged.network_hosts.sort();
+    merged.network_hosts.dedup();
+    merged.file_reads.sort();
+    merged.file_reads.dedup();
+    merged.file_writes.sort();
+    merged.file_writes.dedup();
+    merged.file_write_regexes.sort();
+    merged.file_write_regexes.dedup();
+    merged.env_pass.sort();
+    merged.env_pass.dedup();
+    merged
 }
 
 fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
@@ -182,7 +226,30 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             agent.env = resolve_env(env);
             AnyAgent::Generic(agent)
         }
+        AgentDecl::Router { agents, strategy } => build_router(agents, *strategy)?,
     })
+}
+
+fn build_router(
+    agents: &[(String, Box<AgentDecl>)],
+    strategy: iter_language::RouterStrategy,
+) -> Result<AnyAgent, AgentBuildError> {
+    if agents.is_empty() {
+        return Err(AgentBuildError::RouterEmpty);
+    }
+    let routing_strategy = match strategy {
+        iter_language::RouterStrategy::Fallback => RoutingStrategy::Fallback,
+        iter_language::RouterStrategy::Rotate => RoutingStrategy::Rotate,
+    };
+    let mut built = Vec::with_capacity(agents.len());
+    for (name, sub_decl) in agents {
+        let sub_agent = build_agent(sub_decl).map_err(|e| AgentBuildError::RouterSubAgent {
+            name: name.clone(),
+            source: Box::new(e),
+        })?;
+        built.push((name.clone(), sub_agent));
+    }
+    Ok(AnyAgent::Router(AgentRouter::new(built, routing_strategy)))
 }
 
 /// Resolve declared env values with `ITER_` prefix overrides.
@@ -557,5 +624,64 @@ mod tests {
             ),
             other => panic!("expected Claude, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn build_agent_router_fallback() {
+        use iter_language::RouterStrategy;
+        let decl = AgentDecl::Router {
+            agents: vec![
+                (
+                    "primary".into(),
+                    Box::new(AgentDecl::Claude {
+                        mode: AstAgentMode::Print,
+                        command: "claude".into(),
+                        args: Vec::new(),
+                        session_id_file: None,
+                        env: empty_env(),
+                    }),
+                ),
+                (
+                    "secondary".into(),
+                    Box::new(AgentDecl::Codex {
+                        mode: AstAgentMode::Print,
+                        command: "codex".into(),
+                        args: Vec::new(),
+                        env: empty_env(),
+                    }),
+                ),
+            ],
+            strategy: RouterStrategy::Fallback,
+        };
+        let agent = build_agent(&decl).expect("build");
+        assert!(matches!(agent, AnyAgent::Router(_)));
+    }
+
+    #[test]
+    fn build_agent_router_rotate() {
+        use iter_language::RouterStrategy;
+        let decl = AgentDecl::Router {
+            agents: vec![(
+                "only".into(),
+                Box::new(AgentDecl::Generic {
+                    command: vec!["echo".into(), "hi".into()],
+                    env: empty_env(),
+                }),
+            )],
+            strategy: RouterStrategy::Rotate,
+        };
+        let agent = build_agent(&decl).expect("build");
+        assert!(matches!(agent, AnyAgent::Router(_)));
+    }
+
+    #[test]
+    fn build_agent_router_empty_errors() {
+        use iter_language::RouterStrategy;
+        let decl = AgentDecl::Router {
+            agents: vec![],
+            strategy: RouterStrategy::Fallback,
+        };
+        let err = build_agent(&decl).expect_err("must fail");
+        assert!(err.to_string().contains("at least one"));
     }
 }

@@ -1,0 +1,26 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent router {
+  beta {
+    kind    = generic
+    command = ["echo", "beta"]
+  }
+
+  alpha {
+    kind    = generic
+    command = ["echo", "alpha"]
+  }
+
+  strategy = fallback
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Strategy declared after sub-agents; order is beta then alpha."

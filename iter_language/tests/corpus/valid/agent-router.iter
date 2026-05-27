@@ -1,0 +1,28 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent router {
+  strategy = fallback
+
+  primary {
+    kind    = claude
+    mode    = print
+    command = "claude"
+  }
+
+  secondary {
+    kind    = codex
+    mode    = print
+    command = "codex"
+  }
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Router fallback test."

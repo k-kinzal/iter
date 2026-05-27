@@ -40,7 +40,7 @@ mod trigger;
 mod value;
 mod workspace;
 
-pub use agent::{AgentDecl, AgentMode};
+pub use agent::{AgentDecl, AgentMode, RouterStrategy};
 pub use arg::ArgDecl;
 pub use compose::{
     ComposeRoot, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,

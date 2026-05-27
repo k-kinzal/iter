@@ -42,6 +42,8 @@ pub enum AgentOutcomeKind {
     /// Agent run failed before producing a report (I/O error, missing
     /// command, hook setup failure, etc.).
     Errored,
+    /// Agent hit the model's context-window or token limit.
+    TokenLimit,
 }
 
 impl AgentOutcomeKind {
@@ -62,6 +64,7 @@ impl AgentOutcomeKind {
         match err {
             AgentError::Cancelled | AgentError::IterationTimeout(_) => Self::Cancelled,
             AgentError::UnknownExit => Self::UnknownExit,
+            AgentError::TokenLimit(_) => Self::TokenLimit,
             AgentError::Io(_)
             | AgentError::EmptyCommand
             | AgentError::HookSetup(_)
@@ -119,6 +122,10 @@ mod tests {
         assert_eq!(
             AgentOutcomeKind::from_error(&AgentError::UnknownExit),
             AgentOutcomeKind::UnknownExit
+        );
+        assert_eq!(
+            AgentOutcomeKind::from_error(&AgentError::TokenLimit("too large".into())),
+            AgentOutcomeKind::TokenLimit
         );
         assert_eq!(
             AgentOutcomeKind::from_error(&AgentError::EmptyCommand),

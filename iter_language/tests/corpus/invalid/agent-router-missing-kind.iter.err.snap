@@ -1,0 +1,23 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-missing-kind.iter
+---
+Error: router sub-agent `primary` requires `kind`
+   ╭─[agent-router-missing-kind.iter:7:3]
+   │
+ 7 │   primary {
+   │   ───┬───  
+   │      ╰───── router sub-agent `primary` requires `kind`
+   │ 
+   │ Help: add `kind = claude` (or codex, gemini, etc.)
+───╯
+
+Error: agent router requires at least one sub-agent
+   ╭─[agent-router-missing-kind.iter:4:7]
+   │
+ 4 │ agent router {
+   │       ───┬──  
+   │          ╰──── agent router requires at least one sub-agent
+   │ 
+   │ Help: add named sub-agent blocks: `primary { kind = claude; ... }`
+───╯

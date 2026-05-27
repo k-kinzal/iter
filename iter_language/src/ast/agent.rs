@@ -118,6 +118,22 @@ pub enum AgentDecl {
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
+    /// Multi-agent router that dispatches to sub-agents based on strategy.
+    Router {
+        /// Named sub-agent declarations in priority/rotation order.
+        agents: Vec<(String, Box<AgentDecl>)>,
+        /// How the router selects an agent each iteration.
+        strategy: RouterStrategy,
+    },
+}
+
+/// Strategy for agent routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouterStrategy {
+    /// Use the first agent; fall back to the next on token-limit errors.
+    Fallback,
+    /// Rotate through agents round-robin across iterations.
+    Rotate,
 }
 
 /// Agent invocation mode.

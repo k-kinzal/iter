@@ -35,6 +35,14 @@ pub enum AgentError {
     #[error("hook state parse failed: {0}")]
     HookStateParse(String),
 
+    /// The agent hit the model's context-window or token limit.
+    /// The contained string is an informational excerpt of the agent's
+    /// output around the detected pattern — not machine-parseable.
+    /// Router implementations match on the variant (not the payload)
+    /// to trigger fallback.
+    #[error("agent token limit exceeded: {0}")]
+    TokenLimit(String),
+
     /// The child process reported an exit code we could not interpret. This
     /// is distinct from a genuine non-zero failure: it means the platform did
     /// not expose *either* an exit code or a terminating signal (which, in

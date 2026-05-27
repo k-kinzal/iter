@@ -1,0 +1,33 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent router {
+  strategy = rotate
+
+  alpha {
+    kind    = claude
+    mode    = print
+    command = "claude"
+  }
+
+  beta {
+    kind    = gemini
+    mode    = print
+    command = "gemini"
+  }
+
+  gamma {
+    kind    = generic
+    command = ["echo", "fallback"]
+  }
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Router rotate test."

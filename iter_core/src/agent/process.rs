@@ -510,6 +510,38 @@ fn push_tail(tail: &mut Vec<u8>, chunk: &[u8], cap: usize) {
     }
 }
 
+/// Check whether an agent's output contains patterns indicating a
+/// context-window or token-limit error. Returns `Some(detail)` with the
+/// matched fragment when detected, `None` otherwise.
+///
+/// This is inherently heuristic — each CLI surfaces the error differently.
+/// Patterns are intentionally conservative to avoid false positives.
+pub(crate) fn detect_token_limit(output: &str) -> Option<String> {
+    const PATTERNS: &[&str] = &[
+        "context window",
+        "token limit",
+        "context length exceeded",
+        "maximum context length",
+        "too many tokens",
+    ];
+    let lower = output.to_ascii_lowercase();
+    for pattern in PATTERNS {
+        if let Some(pos) = lower.find(pattern) {
+            let raw_start = pos.saturating_sub(40);
+            let raw_end = (pos + pattern.len() + 40).min(output.len());
+            let start = (0..=raw_start)
+                .rev()
+                .find(|&i| output.is_char_boundary(i))
+                .unwrap_or(0);
+            let end = (raw_end..=output.len())
+                .find(|&i| output.is_char_boundary(i))
+                .unwrap_or(output.len());
+            return Some(output[start..end].to_string());
+        }
+    }
+    None
+}
+
 /// Drive an interactive child to completion (or cancellation) and map the
 /// resulting platform status onto [`ExitStatus`].
 ///
@@ -868,6 +900,30 @@ mod tests {
             tail, b"partial-no-newline",
             "the tail ring must observe the same bytes for AgentReport.last_output"
         );
+    }
+
+    #[test]
+    fn detect_token_limit_finds_known_patterns() {
+        assert!(detect_token_limit("Error: context window exceeded for this model").is_some());
+        assert!(detect_token_limit("token limit reached, please reduce input").is_some());
+        assert!(detect_token_limit("context length exceeded").is_some());
+        assert!(detect_token_limit("maximum context length is 128000 tokens").is_some());
+        assert!(detect_token_limit("too many tokens in the request").is_some());
+    }
+
+    #[test]
+    fn detect_token_limit_returns_none_for_unrelated_output() {
+        assert!(detect_token_limit("successfully completed").is_none());
+        assert!(detect_token_limit("error: file not found").is_none());
+        assert!(detect_token_limit("").is_none());
+    }
+
+    #[test]
+    fn detect_token_limit_handles_multibyte_utf8_context() {
+        let prefix = "é".repeat(30);
+        let input = format!("{prefix}context window exceeded");
+        let detail = detect_token_limit(&input).expect("should match");
+        assert!(detail.contains("context window"));
     }
 
     #[test]

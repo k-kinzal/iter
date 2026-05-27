@@ -437,6 +437,7 @@ fn outcome_label(kind: AgentOutcomeKind) -> &'static str {
         AgentOutcomeKind::UnknownExit => "unknown_exit",
         AgentOutcomeKind::Cancelled => "cancelled",
         AgentOutcomeKind::Errored => "errored",
+        AgentOutcomeKind::TokenLimit => "token_limit",
     }
 }
 

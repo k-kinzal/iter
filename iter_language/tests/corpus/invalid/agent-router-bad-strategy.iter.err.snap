@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-bad-strategy.iter
+---
+Error: unknown router strategy `bogus`
+   ╭─[agent-router-bad-strategy.iter:5:14]
+   │
+ 5 │   strategy = bogus
+   │              ──┬──  
+   │                ╰──── unknown router strategy `bogus`
+   │ 
+   │ Help: valid strategies: fallback, rotate
+───╯

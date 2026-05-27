@@ -1,0 +1,80 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-rotate.iter
+---
+Root {
+    args: [],
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 14..46,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Router {
+                agents: [
+                    (
+                        "alpha",
+                        Claude {
+                            mode: Print,
+                            command: "claude",
+                            args: [],
+                            session_id_file: None,
+                            env: {},
+                        },
+                    ),
+                    (
+                        "beta",
+                        Gemini {
+                            mode: Print,
+                            command: "gemini",
+                            args: [],
+                            env: {},
+                        },
+                    ),
+                    (
+                        "gamma",
+                        Generic {
+                            command: [
+                                "echo",
+                                "fallback",
+                            ],
+                            env: {},
+                        },
+                    ),
+                ],
+                strategy: Rotate,
+            },
+            span: 48..313,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 315..371,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "Router rotate test.",
+            },
+            span: 373..401,
+        },
+    ],
+    events: [],
+}

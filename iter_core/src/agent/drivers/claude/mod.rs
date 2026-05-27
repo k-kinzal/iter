@@ -56,7 +56,7 @@ mod session;
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
-    PromptDelivery, apply_user_env, drive_interactive_with_finalize,
+    PromptDelivery, apply_user_env, detect_token_limit, drive_interactive_with_finalize,
     inject_agent_otel_resource_attrs, inject_trace_context_env, run_command,
 };
 use hook::HookBundle;
@@ -283,17 +283,25 @@ impl Agent for ClaudeAgent {
                     "claude",
                 );
                 if inject_trace_context_env(&mut command) {
-                    // Claude Code only consumes env-carried trace context
-                    // when telemetry is explicitly enabled for print/SDK runs.
                     command.env("CLAUDE_CODE_ENABLE_TELEMETRY", "1");
                 }
-                run_command(
+                let report = run_command(
                     command,
                     PromptDelivery::Stdin(prompt.as_str()),
                     cancel,
                     stdio_sink,
                 )
-                .await
+                .await?;
+                if !report.exit_status.is_success() {
+                    if let Some(detail) = report
+                        .last_output
+                        .as_deref()
+                        .and_then(detect_token_limit)
+                    {
+                        return Err(AgentError::TokenLimit(detail));
+                    }
+                }
+                Ok(report)
             }
             AgentMode::Interactive => {
                 self.run_interactive(
