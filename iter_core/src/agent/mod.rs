@@ -2,7 +2,7 @@
 //!
 //! The [`Agent`] trait and associated types live at this level. Concrete
 //! implementations live under [`drivers`]. Shared OS-level primitives
-//! (subprocess management, hook lifecycle, transcript parsing) are
+//! (subprocess management, hook lifecycle) are
 //! `pub(crate)` internal modules used by the drivers.
 //!
 //! This module provides twelve concrete implementations of the
@@ -64,7 +64,6 @@ pub mod mode;
 pub mod outcome;
 pub(crate) mod process;
 pub mod report;
-mod transcript;
 
 #[cfg(test)]
 mod testutil;

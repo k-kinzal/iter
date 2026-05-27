@@ -1,63 +1,102 @@
-//! Backup/restore lifecycle plumbing for the per-agent project-local hook
-//! modules.
+//! Backup/restore lifecycle plumbing and project-scoped state directory
+//! helpers for the per-agent hook modules.
 //!
 //! All four hook-based agents — [`ClaudeAgent`](crate::agent::ClaudeAgent),
 //! [`CodexAgent`](crate::agent::CodexAgent), [`GeminiAgent`](crate::agent::GeminiAgent),
 //! and [`CopilotAgent`](crate::agent::CopilotAgent) — install a Stop-style hook
 //! under a project-local directory (`${cwd}/.claude/`, `${cwd}/.codex/`,
 //! `${cwd}/.gemini/`, `${cwd}/.github/hooks/` respectively), let the
-//! interactive CLI run, then finalize: read whatever the hook captured,
-//! restore any user-authored files the installer overwrote, and remove
-//! every scratch file produced by the install path.
+//! interactive CLI run, then finalize: restore any user-authored files the
+//! installer overwrote and remove every scratch file produced by the install
+//! path.
 //!
-//! The actual JSON schema each CLI expects (and each transcript format we
-//! parse afterward) is different enough that the four hook modules are
-//! kept as siblings rather than a single generic. This module contains
-//! only the shared low-level lifecycle pieces:
+//! Hook sidecar files (backed-up user hooks, installed scripts that need to
+//! survive across the install → run → finalize boundary) live under
+//! `~/.iter/projects/<project-id>/<service>/hooks/`, never inside the
+//! workspace. See [`project_hooks_dir`] for the directory layout.
 //!
-//! * [`HookCapture`] — the tuple returned by every hook module's
-//!   `finalize` path.
+//! This module contains only the shared low-level lifecycle pieces:
+//!
 //! * [`BackupSlot`] — handles the "back up whatever was there, remember
 //!   whether there was anything, restore on finalize" state machine for a
-//!   single file. Each hook module owns one of these per file it
-//!   overwrites.
+//!   single file.
+//! * [`project_hooks_dir`] — resolves the per-project, per-service hooks
+//!   sidecar directory under `~/.iter/projects/`.
 //! * [`map_hook_io`] — funnel [`std::io::Error`] into
 //!   [`AgentError::HookSetup`] with a short static label.
 //! * [`make_executable`] — `chmod +x` for freshly written hook scripts.
 //! * [`remove_if_exists`] — remove a file and ignore "not found".
-//!
-//! Every path handled here is expected to live **inside the workspace
-//! directory** the agent was handed. None of these helpers ever touch
-//! `~/.claude/`, `~/.codex/`, `~/.gemini/`, or `~/.github/`.
 
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use tokio::fs;
 
 use super::AgentError;
 
-/// Environment variable name used by the three hook-bundle-driven agents
-/// (Claude, Codex, Copilot) to communicate the absolute path of the state
-/// file to the installed hook script. Gemini does not use this — its
-/// `AfterAgent` hook receives `prompt_response` directly on stdin and
-/// writes its state file at a path derived from `$PWD`.
-pub(crate) const ITER_STATE_ENV: &str = "ITER_STATE_FILE";
+/// Compute a project-scoped hooks sidecar directory.
+///
+/// The returned path is:
+///
+/// ```text
+/// ~/.iter/projects/<project-id>/<service>/hooks/
+/// ```
+///
+/// where `<project-id>` is `<basename>-<sha256(canonical_path)[:8]>`.
+/// The basename prefix keeps `ls ~/.iter/projects/` human-readable;
+/// the hash suffix prevents collisions across different paths sharing
+/// the same directory name.
+///
+/// `workspace_path` is the agent's working directory (the value of
+/// `AgentRunContext::workspace_path`). `service` is the compose service
+/// name in compose mode, or `"default"` for standalone `iter run`.
+///
+/// # Errors
+///
+/// Returns [`AgentError::HookSetup`] if the home directory cannot be
+/// resolved or the workspace path cannot be canonicalized.
+pub(crate) fn project_hooks_dir(
+    workspace_path: &Path,
+    service: &str,
+) -> Result<PathBuf, AgentError> {
+    let home = home_dir().ok_or_else(|| {
+        AgentError::HookSetup("could not resolve home directory".into())
+    })?;
+    let canonical = workspace_path.canonicalize().map_err(|e| {
+        AgentError::HookSetup(format!(
+            "canonicalize workspace path {}: {e}",
+            workspace_path.display()
+        ))
+    })?;
+    let project_id = compute_project_id(&canonical);
+    Ok(home
+        .join(".iter")
+        .join("projects")
+        .join(project_id)
+        .join(service)
+        .join("hooks"))
+}
 
-/// What every hook module's `finalize` path returns. The `last_output`
-/// field populates [`AgentReport::last_output`](crate::AgentReport)
-/// and rides along on the `AgentFinished` event so debug UIs and event
-/// sinks can peek at what the agent printed. `turn_count` populates
-/// [`AgentReport::turn_count`](crate::AgentReport).
-#[derive(Debug, Clone, Default)]
-pub(crate) struct HookCapture {
-    /// Last assistant text message extracted by the hook module, or
-    /// `None` when the hook never fired (e.g. the CLI was killed before
-    /// its Stop event, or the installed hook did not take effect).
-    pub last_output: Option<String>,
-    /// Number of assistant text messages the finalize path observed.
-    /// `None` when the hook never fired. `Some(0)` means the hook fired
-    /// but the transcript was empty or unparseable.
-    pub turn_count: Option<u32>,
+/// `<basename>-<sha256(canonical_path)[:8]>`.
+fn compute_project_id(canonical_path: &Path) -> String {
+    let basename = canonical_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_path.as_os_str().as_encoded_bytes());
+    let hash = hasher.finalize();
+    let hash_prefix = hex::encode(&hash[..4]);
+    format!("{basename}-{hash_prefix}")
+}
+
+fn home_dir() -> Option<PathBuf> {
+    if let Some(h) = std::env::var_os("HOME") {
+        if !h.is_empty() {
+            return Some(PathBuf::from(h));
+        }
+    }
+    None
 }
 
 /// Backup-on-install + restore-on-finalize state machine for a single
@@ -199,6 +238,15 @@ pub(crate) async fn make_executable(_path: &Path) -> Result<(), AgentError> {
     ))
 }
 
+/// Escape a string for safe embedding in a bash single-quoted context.
+///
+/// The only character that cannot appear inside `'…'` is the single
+/// quote itself. We handle it with the classic `'\''` (end quote,
+/// escaped literal quote, re-open quote) idiom.
+pub(crate) fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Remove a file, treating "not found" as success. Any other I/O error
 /// is wrapped into [`AgentError::HookSetup`] with `op` as the label.
 pub(crate) async fn remove_if_exists(path: &Path, op: &'static str) -> Result<(), AgentError> {
@@ -207,6 +255,87 @@ pub(crate) async fn remove_if_exists(path: &Path, op: &'static str) -> Result<()
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(map_hook_io(op)(e)),
     }
+}
+
+/// Read any user-registered hook commands from an agent's config file
+/// and write them to a sidecar script that the installed hook runs
+/// first.
+///
+/// Returns the path of the written sidecar (for embedding in the
+/// installed hook script), or `None` if the user had no pre-existing
+/// hooks to preserve.
+///
+/// `config_path` is the agent's config file (e.g. `.claude/settings.json`).
+/// `hook_event` is the JSON key for the hook event (e.g. `"Stop"`,
+/// `"AfterAgent"`, `"agentStop"`).
+/// `hooks_dir` is the project-scoped hooks sidecar directory returned
+/// by [`project_hooks_dir`].
+pub(crate) async fn extract_user_hooks(
+    config_path: &Path,
+    hook_event: &str,
+    hooks_dir: &Path,
+) -> Result<Option<PathBuf>, AgentError> {
+    let config_bytes = match fs::read(config_path).await {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(map_hook_io("read agent config for user hooks")(e)),
+    };
+
+    let config: serde_json::Value = serde_json::from_slice(&config_bytes)
+        .map_err(|e| AgentError::HookSetup(format!("parse agent config: {e}")))?;
+
+    let commands = collect_hook_commands(&config, hook_event);
+    if commands.is_empty() {
+        return Ok(None);
+    }
+
+    fs::create_dir_all(hooks_dir)
+        .await
+        .map_err(map_hook_io("create project hooks sidecar directory"))?;
+
+    let sidecar = hooks_dir.join("existing-stop-hooks.sh");
+    let mut script = String::from("#!/usr/bin/env bash\nset -euo pipefail\n");
+    for cmd in &commands {
+        script.push_str(cmd);
+        script.push('\n');
+    }
+    fs::write(&sidecar, script.as_bytes())
+        .await
+        .map_err(map_hook_io("write existing-stop-hooks.sh sidecar"))?;
+    make_executable(&sidecar).await?;
+
+    Ok(Some(sidecar))
+}
+
+/// Walk the config JSON and extract command strings from the hook event.
+///
+/// Supports two shapes:
+/// - Claude/Gemini: `hooks.<event>[].hooks[].command`
+/// - Codex: `hooks.<event>[].hooks[].command`
+/// - Copilot: `hooks.<event>[].bash`
+fn collect_hook_commands(config: &serde_json::Value, hook_event: &str) -> Vec<String> {
+    let mut commands = Vec::new();
+    let Some(hooks_obj) = config.get("hooks") else {
+        return commands;
+    };
+    let Some(event_array) = hooks_obj.get(hook_event).and_then(|v| v.as_array()) else {
+        return commands;
+    };
+    for group in event_array {
+        // Claude/Codex/Gemini shape: group.hooks[].command
+        if let Some(inner_hooks) = group.get("hooks").and_then(|v| v.as_array()) {
+            for hook in inner_hooks {
+                if let Some(cmd) = hook.get("command").and_then(|v| v.as_str()) {
+                    commands.push(cmd.to_owned());
+                }
+            }
+        }
+        // Copilot shape: group.bash
+        if let Some(bash) = group.get("bash").and_then(|v| v.as_str()) {
+            commands.push(bash.to_owned());
+        }
+    }
+    commands
 }
 
 #[cfg(test)]
@@ -276,5 +405,112 @@ mod tests {
         remove_if_exists(&tmp.path().join("nope"), "op")
             .await
             .expect("noop");
+    }
+
+    #[test]
+    fn project_id_is_deterministic() {
+        let id1 = compute_project_id(Path::new("/Users/ab/Projects/iter"));
+        let id2 = compute_project_id(Path::new("/Users/ab/Projects/iter"));
+        assert_eq!(id1, id2);
+        assert!(id1.starts_with("iter-"), "expected iter-<hash>, got {id1}");
+        assert_eq!(id1.len(), "iter-".len() + 8);
+    }
+
+    #[test]
+    fn project_id_differs_for_different_paths() {
+        let id1 = compute_project_id(Path::new("/Users/ab/Projects/iter"));
+        let id2 = compute_project_id(Path::new("/Users/ab/Projects/other"));
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn project_id_handles_same_basename_different_parent() {
+        let id1 = compute_project_id(Path::new("/a/foo"));
+        let id2 = compute_project_id(Path::new("/b/foo"));
+        assert_ne!(id1, id2, "same basename but different paths should differ");
+        assert!(id1.starts_with("foo-"));
+        assert!(id2.starts_with("foo-"));
+    }
+
+    #[tokio::test]
+    async fn extract_user_hooks_returns_none_for_missing_config() {
+        let tmp = TempDir::new().expect("tmp");
+        let hooks_dir = tmp.path().join("hooks");
+        let result = extract_user_hooks(
+            &tmp.path().join("nonexistent.json"),
+            "Stop",
+            &hooks_dir,
+        )
+        .await
+        .expect("extract");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn extract_user_hooks_returns_none_for_config_without_hooks() {
+        let tmp = TempDir::new().expect("tmp");
+        let config = tmp.path().join("settings.json");
+        fs::write(&config, b"{}").await.expect("write");
+        let hooks_dir = tmp.path().join("hooks");
+        let result = extract_user_hooks(&config, "Stop", &hooks_dir)
+            .await
+            .expect("extract");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn extract_user_hooks_writes_sidecar_for_claude_shape() {
+        let tmp = TempDir::new().expect("tmp");
+        let config = tmp.path().join("settings.json");
+        let config_json = serde_json::json!({
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            { "type": "command", "command": "echo user hook 1" },
+                            { "type": "command", "command": "echo user hook 2" }
+                        ]
+                    }
+                ]
+            }
+        });
+        fs::write(&config, serde_json::to_vec_pretty(&config_json).unwrap())
+            .await
+            .expect("write");
+        let hooks_dir = tmp.path().join("hooks");
+        let result = extract_user_hooks(&config, "Stop", &hooks_dir)
+            .await
+            .expect("extract");
+        assert!(result.is_some());
+        let sidecar = result.unwrap();
+        let body = fs::read_to_string(&sidecar).await.expect("read sidecar");
+        assert!(body.contains("echo user hook 1"));
+        assert!(body.contains("echo user hook 2"));
+    }
+
+    #[tokio::test]
+    async fn extract_user_hooks_writes_sidecar_for_copilot_shape() {
+        let tmp = TempDir::new().expect("tmp");
+        let config = tmp.path().join("copilot-loop.json");
+        let config_json = serde_json::json!({
+            "version": 1,
+            "hooks": {
+                "agentStop": [
+                    { "type": "command", "bash": "./my-hook.sh" }
+                ]
+            }
+        });
+        fs::write(&config, serde_json::to_vec_pretty(&config_json).unwrap())
+            .await
+            .expect("write");
+        let hooks_dir = tmp.path().join("hooks");
+        let result = extract_user_hooks(&config, "agentStop", &hooks_dir)
+            .await
+            .expect("extract");
+        assert!(result.is_some());
+        let sidecar = result.unwrap();
+        let body = fs::read_to_string(&sidecar).await.expect("read sidecar");
+        assert!(body.contains("./my-hook.sh"));
     }
 }

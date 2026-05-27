@@ -67,8 +67,7 @@ impl AgentOutcomeKind {
             AgentError::TokenLimit(_) => Self::TokenLimit,
             AgentError::Io(_)
             | AgentError::EmptyCommand
-            | AgentError::HookSetup(_)
-            | AgentError::HookStateParse(_) => Self::Errored,
+            | AgentError::HookSetup(_) => Self::Errored,
         }
     }
 

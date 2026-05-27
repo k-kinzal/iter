@@ -15,20 +15,15 @@
 //!
 //! * [`AgentMode::Interactive`] — launches `gemini` as a live TUI with a
 //!   project-local `AfterAgent` hook installed under `${cwd}/.gemini/`.
-//!   Gemini's hook protocol is noticeably simpler than Claude's or
-//!   Codex's: the hook receives the final agent response directly on
-//!   stdin as a `prompt_response` field, so there is no separate
-//!   transcript JSONL to parse. On return the agent reads that field
-//!   out of the captured state file and populates
-//!   [`AgentReport::last_output`](crate::AgentReport), matching the
-//!   shape of print mode so event sinks see the same output surface
-//!   across modes.
+//!   The hook's sole purpose is to terminate the TUI session after the
+//!   agent finishes its task — it runs any pre-existing user hooks,
+//!   then sends SIGKILL to the Gemini CLI process.
 //!
 //!   The hook is a direct descendant of
 //!   [`agent-loop/gemini-loop`](https://github.com/k-kinzal/agent-loop)'s
 //!   wrapper but simplified: iter's [`Runner`](crate::Runner) handles
-//!   signal-level iteration, so the hook only needs to capture the final
-//!   response and tell `gemini` to exit.
+//!   signal-level iteration, so the hook only needs to terminate the
+//!   TUI session.
 //!
 //!   **Project-local, not global.** Every path the hook touches lives
 //!   under `${cwd}/.gemini/`. iter never writes to `~/.gemini/` because
@@ -158,6 +153,7 @@ impl Agent for GeminiAgent {
             prompt,
             cancel,
             stdio_sink,
+            service_name,
             ..
         } = ctx;
         match self.mode {
@@ -166,7 +162,10 @@ impl Agent for GeminiAgent {
                 apply_user_env(&mut command, &self.env);
                 run_command(command, PromptDelivery::Inline, cancel, stdio_sink).await
             }
-            AgentMode::Interactive => self.run_interactive(workspace_path, prompt, cancel).await,
+            AgentMode::Interactive => {
+                self.run_interactive(workspace_path, prompt, cancel, &service_name)
+                    .await
+            }
         }
     }
 }
@@ -186,13 +185,12 @@ impl GeminiAgent {
         path: &Path,
         prompt: &Prompt,
         cancel: CancellationToken,
+        service_name: &str,
     ) -> Result<AgentReport, AgentError> {
-        let bundle = HookBundle::install(path).await?;
+        let bundle = HookBundle::install(path, service_name).await?;
 
         let mut command = self.build_interactive_command(path, prompt);
         apply_user_env(&mut command, &self.env);
-        let (env_key, state_file) = bundle.env_var();
-        command.env(env_key, state_file);
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -241,27 +239,20 @@ mod tests {
         assert!(dash_pos < prompt_pos, "got {out:?}");
     }
 
-    /// Fake `gemini` binary for interactive mode.
-    ///
-    /// Invokes the installed `AfterAgent` hook with a payload that carries
-    /// `prompt_response` directly (Gemini's native schema, no transcript
-    /// JSONL). Drives the real [`HookBundle::finalize`] path end-to-end
-    /// without needing a tty or the real `gemini` binary.
+    /// Fake `gemini` binary for interactive mode. Invokes the installed
+    /// `AfterAgent` hook. The hook drains stdin and SIGKILLs `$PPID`.
     const FAKE_GEMINI_SCRIPT: &str = r#"
 set -euo pipefail
 HOOK="$PWD/.gemini/hooks/gemini-loop-hook.sh"
-PAYLOAD='{"prompt_response":"GEMINI-INTERACTIVE-DONE"}'
-printf '%s' "$PAYLOAD" | "$HOOK" > /dev/null
+printf '{}' | "$HOOK" > /dev/null 2>&1 || true
 exit 0
 "#;
 
     #[tokio::test]
-    async fn interactive_mode_installs_hook_and_captures_prompt_response() {
+    async fn interactive_mode_installs_hook_and_restores_settings() {
         let tmp = TempDir::new().expect("tmp");
         let (_guard, bin) = fake_binary_script(FAKE_GEMINI_SCRIPT);
 
-        // Drop a user-authored settings.json so we can assert it gets
-        // restored intact at the end.
         let settings_path = tmp.path().join(".gemini/settings.json");
         fs::create_dir_all(settings_path.parent().unwrap())
             .await
@@ -282,13 +273,12 @@ exit 0
             .await
             .expect("interactive run ok");
 
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        assert_eq!(
-            report.last_output.as_deref(),
-            Some("GEMINI-INTERACTIVE-DONE"),
-            "hook must capture prompt_response",
+        assert!(
+            report.exit_status == ExitStatus::Success
+                || matches!(report.exit_status, ExitStatus::Signal(_)),
+            "expected success or signal, got {:?}",
+            report.exit_status,
         );
-        assert_eq!(report.turn_count, Some(1));
 
         let restored: serde_json::Value =
             serde_json::from_slice(&fs::read(&settings_path).await.expect("read")).expect("json");
@@ -299,10 +289,6 @@ exit 0
         assert!(
             !tmp.path().join(".gemini/hooks").exists(),
             "hooks directory must be cleaned up",
-        );
-        assert!(
-            !tmp.path().join(".gemini/iter-state.json").exists(),
-            "state file must be cleaned up",
         );
         assert!(
             !tmp.path().join(".gemini/.iter-bundle").exists(),

@@ -29,12 +29,6 @@ pub enum AgentError {
     #[error("hook setup failed: {0}")]
     HookSetup(String),
 
-    /// Parsing the hook-written session state file failed. Only produced by
-    /// [`ClaudeAgent`](crate::agent::ClaudeAgent) in interactive mode when the JSON
-    /// written by the Stop hook script is malformed.
-    #[error("hook state parse failed: {0}")]
-    HookStateParse(String),
-
     /// The agent hit the model's context-window or token limit.
     /// The contained string is an informational excerpt of the agent's
     /// output around the detected pattern — not machine-parseable.

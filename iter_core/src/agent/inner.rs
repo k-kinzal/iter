@@ -56,6 +56,11 @@ pub struct AgentRunContext<'a> {
     /// cancels the agent after this duration and returns
     /// [`AgentError::IterationTimeout`](crate::agent::AgentError::IterationTimeout).
     pub iteration_timeout: Option<Duration>,
+    /// Compose service name for hook sidecar isolation. `"default"` for
+    /// standalone `iter run`; set by `iter_compose` when running under a
+    /// compose file so that two services sharing a workspace path get
+    /// separate sidecar directories.
+    pub service_name: String,
 }
 
 impl std::fmt::Debug for AgentRunContext<'_> {
@@ -68,6 +73,7 @@ impl std::fmt::Debug for AgentRunContext<'_> {
             .field("signal_kind", &self.signal_kind)
             .field("stdio_sink", &"<dyn StdioSink>")
             .field("iteration_timeout", &self.iteration_timeout)
+            .field("service_name", &self.service_name)
             .finish()
     }
 }
@@ -89,6 +95,7 @@ impl<'a> AgentRunContext<'a> {
             signal_kind: SignalKind::Work,
             stdio_sink: Arc::new(NoopSink),
             iteration_timeout: None,
+            service_name: "default".to_owned(),
         }
     }
 
@@ -112,6 +119,13 @@ impl<'a> AgentRunContext<'a> {
     #[must_use]
     pub fn with_iteration_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.iteration_timeout = timeout;
+        self
+    }
+
+    /// Set the compose service name for hook sidecar isolation.
+    #[must_use]
+    pub fn with_service_name(mut self, name: String) -> Self {
+        self.service_name = name;
         self
     }
 }

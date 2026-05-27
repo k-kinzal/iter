@@ -24,7 +24,6 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use super::AgentError;
-use super::hook_lifecycle::HookCapture;
 use crate::signal::{SignalId, SignalKind};
 
 /// Grace period applied between SIGTERM and SIGKILL when the runner cancels
@@ -591,52 +590,44 @@ pub(crate) async fn drive_interactive_child(
 /// 1. Run the child via [`drive_interactive_child`]. Record the result but
 ///    do not propagate it yet — the bundle must still be finalized.
 /// 2. Await the caller-supplied `finalize` future (typically
-///    `bundle.finalize()`, which consumes the bundle and reconciles
-///    scratch files / transcript captures / backup restores).
+///    `bundle.finalize()`, which consumes the bundle and restores
+///    backed-up config files).
 /// 3. If finalize failed, surface whichever error is *causal*: the run
 ///    error if the run itself failed, otherwise the finalize error. This
 ///    ordering ensures we never silently swallow a run failure just to
 ///    surface a cleanup failure instead.
-/// 4. Otherwise unwrap the run result and stitch the capture into the
-///    returned [`AgentReport`].
+/// 4. Otherwise unwrap the run result into an [`AgentReport`].
 ///
 /// The caller is responsible for everything up to this point: installing
-/// the bundle, building the command, plumbing the bundle's env var onto
-/// the command, and inheriting stdio. The finalize future is passed
-/// in (rather than the bundle itself) so this helper can stay
-/// bundle-type-agnostic — each agent's `HookBundle` is a different
-/// concrete type with a different internal shape, but
-/// `finalize(self) -> impl Future<Output = Result<HookCapture, _>>`
-/// is uniform across all four.
+/// the bundle, building the command, and inheriting stdio. The finalize
+/// future is passed in (rather than the bundle itself) so this helper
+/// can stay bundle-type-agnostic — each agent's `HookBundle` is a
+/// different concrete type with a different internal shape, but
+/// `finalize(self) -> impl Future<Output = Result<(), _>>` is uniform
+/// across all four.
 pub(crate) async fn drive_interactive_with_finalize<Fut>(
     command: Command,
     cancel: CancellationToken,
     finalize: Fut,
 ) -> Result<AgentReport, AgentError>
 where
-    Fut: Future<Output = Result<HookCapture, AgentError>> + Send,
+    Fut: Future<Output = Result<(), AgentError>> + Send,
 {
     let run_result = drive_interactive_child(command, &cancel).await;
 
-    let capture = match finalize.await {
-        Ok(cap) => cap,
-        Err(finalize_err) => {
-            // Causal ordering: if the run itself failed, that is the
-            // primary error the user needs to see. A failing finalize
-            // on top of a failing run is a tidying concern.
-            return Err(match run_result {
-                Err(run_err) => run_err,
-                Ok(_) => finalize_err,
-            });
-        }
-    };
+    if let Err(finalize_err) = finalize.await {
+        return Err(match run_result {
+            Err(run_err) => run_err,
+            Ok(_) => finalize_err,
+        });
+    }
 
     let exit_status = run_result?;
 
     Ok(AgentReport {
         exit_status,
-        last_output: capture.last_output,
-        turn_count: capture.turn_count,
+        last_output: None,
+        turn_count: None,
     })
 }
 

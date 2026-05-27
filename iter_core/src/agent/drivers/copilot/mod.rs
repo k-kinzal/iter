@@ -19,14 +19,11 @@
 //!   `copilot-loop.json` (the hook config) and `copilot-loop-hook.sh`
 //!   (the hook body). Both are backed up and restored.
 //!
-//!   On return the agent parses the captured transcript in Rust and
-//!   populates [`AgentReport::last_output`](crate::AgentReport)
-//!   with the last assistant message, matching the shape of print mode
-//!   so event sinks see the same output surface across modes.
-//!
-//!   The hook is a descendant of
+//!   The hook's sole purpose is to terminate the TUI session — it runs
+//!   any pre-existing user agentStop hooks, then sends SIGKILL to the
+//!   Copilot CLI process. The hook is a descendant of
 //!   [`agent-loop/copilot-loop`](https://github.com/k-kinzal/agent-loop)'s
-//!   wrapper but with one critical divergence: **the hook only SIGTERMs
+//!   wrapper but with one critical divergence: **the hook only kills
 //!   its parent (the Copilot CLI), never its grandparent**. In iter the
 //!   grandparent is the runner process itself, which must stay alive to
 //!   handle the next signal.
@@ -203,6 +200,7 @@ impl Agent for CopilotAgent {
             stdio_sink,
             signal_id,
             signal_kind,
+            service_name,
             ..
         } = ctx;
         match self.mode {
@@ -220,8 +218,15 @@ impl Agent for CopilotAgent {
                 run_command(command, PromptDelivery::Inline, cancel, stdio_sink).await
             }
             AgentMode::Interactive => {
-                self.run_interactive(workspace_path, prompt, cancel, signal_id, signal_kind)
-                    .await
+                self.run_interactive(
+                    workspace_path,
+                    prompt,
+                    cancel,
+                    signal_id,
+                    signal_kind,
+                    &service_name,
+                )
+                .await
             }
         }
     }
@@ -237,6 +242,7 @@ impl CopilotAgent {
     /// [`drive_interactive_with_finalize`]; this method only handles the
     /// Copilot-specific bits: bundle install, command construction, and
     /// stdio inheritance wiring.
+    #[allow(clippy::too_many_arguments)]
     async fn run_interactive(
         &self,
         path: &Path,
@@ -244,15 +250,14 @@ impl CopilotAgent {
         cancel: CancellationToken,
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
+        service_name: &str,
     ) -> Result<AgentReport, AgentError> {
-        let bundle = HookBundle::install(path).await?;
+        let bundle = HookBundle::install(path, service_name).await?;
 
         let mut command = self.build_command(path, prompt);
         apply_user_env(&mut command, &self.env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "copilot");
         inject_copilot_trace_parent_env(&mut command);
-        let (env_key, state_file) = bundle.env_var();
-        command.env(env_key, state_file);
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -338,37 +343,20 @@ mod tests {
         );
     }
 
-    /// Fake Copilot binary for interactive mode. Writes a one-message
-    /// Copilot-shaped transcript, then invokes the installed agentStop
-    /// hook script with a payload referencing that transcript. Drives
-    /// the real [`HookBundle::finalize`] path end-to-end without needing
-    /// a tty or the actual `copilot` binary.
-    ///
-    /// The hook script sends `SIGTERM` to its parent to force the
-    /// Copilot TUI out of its read loop. The real `copilot` binary
-    /// handles that signal by exiting cleanly; our fake binary does the
-    /// same via a `trap … TERM` so the test asserts a clean exit status.
+    /// Fake Copilot binary for interactive mode. Invokes the installed
+    /// agentStop hook. The hook drains stdin and SIGKILLs `$PPID`.
     const FAKE_COPILOT_SCRIPT: &str = r#"
-trap 'exit 0' TERM
 set -uo pipefail
-TRANSCRIPT="$PWD/.github/hooks/iter-test-transcript.jsonl"
-mkdir -p "$(dirname "$TRANSCRIPT")"
-cat > "$TRANSCRIPT" <<'EOF'
-{"type":"assistant.message","data":{"content":"COPILOT-INTERACTIVE-DONE"}}
-EOF
-PAYLOAD=$(printf '{"transcriptPath":"%s"}' "$TRANSCRIPT")
 HOOK="$PWD/.github/hooks/copilot-loop-hook.sh"
-printf '%s' "$PAYLOAD" | "$HOOK" > /dev/null || true
+printf '{}' | "$HOOK" > /dev/null 2>&1 || true
 exit 0
 "#;
 
     #[tokio::test]
-    async fn interactive_mode_installs_hook_and_captures_last_message() {
+    async fn interactive_mode_installs_hook_and_restores_config() {
         let tmp = TempDir::new().expect("tmp");
         let (_guard, bin) = fake_binary_script(FAKE_COPILOT_SCRIPT);
 
-        // Drop user-authored versions of BOTH bundle files so we can
-        // assert the two-file backup/restore works.
         let config_path = tmp.path().join(".github/hooks/copilot-loop.json");
         let script_path = tmp.path().join(".github/hooks/copilot-loop-hook.sh");
         fs::create_dir_all(config_path.parent().unwrap())
@@ -386,9 +374,6 @@ exit 0
             .await
             .expect("write user script");
 
-        // Use the standalone-binary shape: no subcommand, command =
-        // fake binary. This matches how real users point interactive
-        // mode at `copilot`.
         let mut s = settings(bin.to_string_lossy(), AgentMode::Interactive);
         s.subcommand = Some(Vec::new());
         let agent = CopilotAgent::new(s);
@@ -399,15 +384,13 @@ exit 0
             .await
             .expect("interactive run ok");
 
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        assert_eq!(
-            report.last_output.as_deref(),
-            Some("COPILOT-INTERACTIVE-DONE"),
-            "hook must capture the final assistant message",
+        assert!(
+            report.exit_status == ExitStatus::Success
+                || matches!(report.exit_status, ExitStatus::Signal(_)),
+            "expected success or signal, got {:?}",
+            report.exit_status,
         );
-        assert_eq!(report.turn_count, Some(1));
 
-        // Both user files must be restored.
         let restored_config: serde_json::Value =
             serde_json::from_slice(&fs::read(&config_path).await.expect("read")).expect("json");
         assert_eq!(restored_config, user_config);

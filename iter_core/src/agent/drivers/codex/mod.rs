@@ -22,15 +22,14 @@
 //!   codex -c "features.codex_hooks=true" [extra-args...] <prompt>
 //!   ```
 //!
-//!   The hook is a direct descendant of
+//!   The hook's sole purpose is to terminate the TUI session after the
+//!   agent finishes its task — it runs any pre-existing user Stop hooks,
+//!   then sends SIGKILL to the Codex process. The hook is a direct
+//!   descendant of
 //!   [`agent-loop/codex-loop`](https://github.com/k-kinzal/agent-loop)'s
 //!   wrapper but simplified: iter's [`Runner`](crate::Runner) handles
-//!   signal-level iteration, so the hook only needs to capture the final
-//!   assistant message and let `codex` exit cleanly. On return the agent
-//!   parses the captured transcript in Rust and populates
-//!   [`AgentReport::last_output`](crate::AgentReport) with the last
-//!   assistant text message, matching the shape of print mode so event
-//!   sinks see the same output surface across modes.
+//!   signal-level iteration, so the hook only needs to terminate the
+//!   TUI session.
 //!
 //!   **Project-local, not global.** Every path the hook touches lives
 //!   under `${cwd}/.codex/`. iter never writes to `~/.codex/` because
@@ -173,6 +172,7 @@ impl Agent for CodexAgent {
             stdio_sink,
             signal_id,
             signal_kind,
+            service_name,
             ..
         } = ctx;
         match self.mode {
@@ -192,8 +192,15 @@ impl Agent for CodexAgent {
                 run_command(command, PromptDelivery::Inline, cancel, stdio_sink).await
             }
             AgentMode::Interactive => {
-                self.run_interactive(workspace_path, prompt, cancel, signal_id, signal_kind)
-                    .await
+                self.run_interactive(
+                    workspace_path,
+                    prompt,
+                    cancel,
+                    signal_id,
+                    signal_kind,
+                    &service_name,
+                )
+                .await
             }
         }
     }
@@ -209,6 +216,7 @@ impl CodexAgent {
     /// [`drive_interactive_with_finalize`]; this method only handles the
     /// Codex-specific bits: bundle install, command construction, and
     /// stdio inheritance wiring.
+    #[allow(clippy::too_many_arguments)]
     async fn run_interactive(
         &self,
         path: &Path,
@@ -216,14 +224,13 @@ impl CodexAgent {
         cancel: CancellationToken,
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
+        service_name: &str,
     ) -> Result<AgentReport, AgentError> {
-        let bundle = HookBundle::install(path).await?;
+        let bundle = HookBundle::install(path, service_name).await?;
 
         let mut command = self.build_interactive_command(path, prompt);
         apply_user_env(&mut command, &self.env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "codex");
-        let (env_key, state_file) = bundle.env_var();
-        command.env(env_key, state_file);
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -307,38 +314,20 @@ mod tests {
 
     /// Fake `codex` binary for interactive mode.
     ///
-    /// Writes a single-message Claude-Code-shaped transcript to a
-    /// well-known path in its cwd, then invokes the installed Stop hook
-    /// with a payload that references that transcript. Drives the real
-    /// [`HookBundle::finalize`] path end-to-end without needing a tty or
-    /// the actual `codex` binary.
-    ///
-    /// The hook script sends `SIGTERM` to its parent as a
-    /// belt-and-suspenders against Codex builds that ignore the JSON
-    /// continuation response. The real `codex` binary catches that
-    /// signal and exits cleanly; our fake binary does the same via a
-    /// `trap … TERM` so the test asserts a clean exit status.
+    /// Invokes the installed Stop hook. The hook drains stdin and
+    /// SIGKILLs `$PPID` (this fake process), causing it to exit.
     const FAKE_CODEX_SCRIPT: &str = r#"
-trap 'exit 0' TERM
 set -uo pipefail
-TRANSCRIPT="$PWD/.codex/iter-test-transcript.jsonl"
-mkdir -p "$(dirname "$TRANSCRIPT")"
-cat > "$TRANSCRIPT" <<'EOF'
-{"type":"assistant","message":{"content":[{"type":"text","text":"CODEX-INTERACTIVE-DONE"}]}}
-EOF
-PAYLOAD=$(printf '{"session_id":"test","transcript_path":"%s","stop_hook_active":false}' "$TRANSCRIPT")
 HOOK="$PWD/.codex/hooks/codex-loop-hook.sh"
-printf '%s' "$PAYLOAD" | "$HOOK" > /dev/null || true
+printf '{}' | "$HOOK" > /dev/null 2>&1 || true
 exit 0
 "#;
 
     #[tokio::test]
-    async fn interactive_mode_installs_hook_and_captures_last_message() {
+    async fn interactive_mode_installs_hook_and_restores_config() {
         let tmp = TempDir::new().expect("tmp");
         let (_guard, bin) = fake_binary_script(FAKE_CODEX_SCRIPT);
 
-        // Drop a user-authored hooks.json so we can assert it gets
-        // restored intact at the end.
         let hooks_path = tmp.path().join(".codex/hooks.json");
         fs::create_dir_all(hooks_path.parent().unwrap())
             .await
@@ -355,15 +344,13 @@ exit 0
             .await
             .expect("interactive run ok");
 
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        assert_eq!(
-            report.last_output.as_deref(),
-            Some("CODEX-INTERACTIVE-DONE"),
-            "hook must capture the final assistant text message",
+        assert!(
+            report.exit_status == ExitStatus::Success
+                || matches!(report.exit_status, ExitStatus::Signal(_)),
+            "expected success or signal, got {:?}",
+            report.exit_status,
         );
-        assert_eq!(report.turn_count, Some(1));
 
-        // hooks.json must have been restored.
         let restored: serde_json::Value =
             serde_json::from_slice(&fs::read(&hooks_path).await.expect("read")).expect("json");
         assert_eq!(
@@ -373,10 +360,6 @@ exit 0
         assert!(
             !tmp.path().join(".codex/hooks/codex-loop-hook.sh").exists(),
             "hook script must be cleaned up",
-        );
-        assert!(
-            !tmp.path().join(".codex/iter-state.json").exists(),
-            "state file must be cleaned up",
         );
         assert!(
             !tmp.path().join(".codex/.iter-bundle").exists(),
