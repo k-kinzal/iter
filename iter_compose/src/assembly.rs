@@ -217,7 +217,7 @@ pub(crate) fn wire_builder_runtime(
     runtime: &ProcessRuntime,
 ) -> RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent> {
     builder = builder.observer(runtime.observer().clone());
-    builder = builder.stdio_sink(runtime.stdio().sink());
+    builder = builder.stdio_sink(runtime.sink());
     builder
 }
 
@@ -442,8 +442,8 @@ mod tests {
     async fn wire_builder_runtime_installs_observer_and_stdio_sink() {
         use chrono::Utc;
         use iter_core::process::{
-            LifecycleObserver, ProcessRegistry, ProcessRuntime, ShutdownController, StdioPolicy,
-            StdioSupervisor,
+            LifecycleObserver, OutputPolicy, ProcessRegistry, ProcessRuntime, ShutdownController,
+            open_output,
         };
 
         let tmp = tempfile::tempdir().expect("tmp");
@@ -470,10 +470,10 @@ mod tests {
                 .await
                 .expect("observer"),
         );
-        let stdio = StdioSupervisor::new(StdioPolicy::LogOnly { log_dir })
+        let output = open_output(&OutputPolicy::LogOnly { log_dir })
             .await
-            .expect("stdio");
-        let runtime = ProcessRuntime::new(session, ShutdownController::new(), observer, stdio);
+            .expect("open_output");
+        let runtime = ProcessRuntime::new(session, ShutdownController::new(), observer, output);
 
         let builder = assemble_runner_builder(
             None,

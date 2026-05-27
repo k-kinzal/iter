@@ -11,9 +11,9 @@
 //!    [`iter::lifecycle`](crate::process::observer::LIFECYCLE_TARGET);
 //!    the runtime's tracing subscriber routes them into `log.ndjson`
 //!    alongside agent stdio.
-//! 4. [`StdioSupervisor`] — owns the active [`StdioSink`] and the pump
-//!    tasks that copy agent pipes into the unified `log.ndjson` stream
-//!    (or to the user's terminal when the policy is `Passthrough`).
+//! 4. An [`OutputSink`] + optional [`LogSender`] — the active sink that
+//!    captures agent output into the unified `log.ndjson` stream (or
+//!    drops bytes when the policy is `Passthrough`).
 //!
 //! Per rev17 §A2 this orchestrator is intentionally thin. The `run` body
 //! that ties it to a [`Runner`](crate::runner::Runner) lives in Phase F
@@ -39,19 +39,20 @@
 //! them; the on-disk record will always reflect a terminal status (or
 //! report why it could not).
 //!
-//! [`StdioSink`]: crate::process::stdio::StdioSink
+//! [`OutputSink`]: crate::log::OutputSink
 
 use std::sync::Arc;
 
 use tracing::warn;
 
+use crate::log::OutputSink;
 use crate::process::error::ProcessError;
 use crate::process::id::ProcessId;
+use crate::process::log::{LogSender, ProcessOutput};
 use crate::process::observer::LifecycleObserver;
 use crate::process::session::ProcessSession;
 use crate::process::shutdown::{ProcessTerminationReason, ShutdownController};
 use crate::process::status::{ProcessStatus, TransitionResult};
-use crate::process::stdio::StdioSupervisor;
 
 /// The four orchestrator pieces composed into one struct.
 ///
@@ -64,25 +65,28 @@ pub struct ProcessRuntime {
     session: Arc<ProcessSession>,
     shutdown: ShutdownController,
     observer: Arc<LifecycleObserver>,
-    stdio: StdioSupervisor,
+    sink: Arc<dyn OutputSink>,
+    log_sender: Option<LogSender>,
 }
 
 impl ProcessRuntime {
     /// Compose the four pieces into a runtime.
     ///
     /// All ownership is moved in; clones of the cancellation token,
-    /// observer Arc, and stdio sink are obtained through the accessors.
+    /// observer Arc, and output sink are obtained through the accessors.
     pub fn new(
         session: Arc<ProcessSession>,
         shutdown: ShutdownController,
         observer: Arc<LifecycleObserver>,
-        stdio: StdioSupervisor,
+        output: ProcessOutput,
     ) -> Self {
+        let (sink, log_sender) = output.into_parts();
         Self {
             session,
             shutdown,
             observer,
-            stdio,
+            sink,
+            log_sender,
         }
     }
 
@@ -113,14 +117,20 @@ impl ProcessRuntime {
         &self.observer
     }
 
-    /// Borrow the [`StdioSupervisor`]. The runner uses this to wire
-    /// agent stdout/stderr pipes into the configured sink.
+    /// Clone the [`Arc<dyn OutputSink>`] for distribution to agents.
     #[must_use]
-    pub fn stdio(&self) -> &StdioSupervisor {
-        &self.stdio
+    pub fn sink(&self) -> Arc<dyn OutputSink> {
+        self.sink.clone()
     }
 
-    /// Drain the supervisor + observer, then write the terminal status.
+    /// Clone the [`LogSender`] when one exists. `None` for
+    /// `Passthrough` policy.
+    #[must_use]
+    pub fn log_sender(&self) -> Option<LogSender> {
+        self.log_sender.clone()
+    }
+
+    /// Drain the sink + observer, then write the terminal status.
     ///
     /// Always attempts the status transition, even when the stdio flush or
     /// observer shutdown fail. Each best-effort failure is collected into
@@ -135,7 +145,8 @@ impl ProcessRuntime {
             session,
             shutdown: _shutdown,
             observer,
-            stdio,
+            sink,
+            log_sender: _log_sender,
         } = self;
 
         let mut stdio_errors: Vec<ProcessError> = Vec::new();
@@ -154,13 +165,13 @@ impl ProcessRuntime {
         // 2. Flush any pending stdio bytes through the active sink and
         //    block on a writer-task drain barrier so every entry
         //    enqueued so far reaches disk.
-        if let Err(e) = stdio.sink().flush().await {
+        if let Err(e) = sink.flush().await {
             stdio_errors.push(ProcessError::Io(e));
         }
-        // Drop the supervisor so the sink Arc is released. Pump tasks
-        // are owned by the runner via JoinHandle and must already be
-        // terminated by the time finalize is called.
-        drop(stdio);
+        // Drop the sink Arc. Pump tasks are owned by the runner via
+        // JoinHandle and must already be terminated by the time
+        // finalize is called.
+        drop(sink);
 
         // 3. Resolve the terminal status from the recorded reason and
         //    write it. Always attempt this — operator visibility into
@@ -189,8 +200,8 @@ impl ProcessRuntime {
 /// from the drain steps and never block the status write.
 #[derive(Debug)]
 pub struct FinalizeReport {
-    /// Errors collected while flushing the stdio sink (from
-    /// [`crate::process::stdio::StdioSink::flush`]).
+    /// Errors collected while flushing the output sink (from
+    /// [`crate::log::OutputSink::flush`]).
     pub stdio_errors: Vec<ProcessError>,
     /// Errors collected while shutting down the
     /// [`LifecycleObserver`] writer task.
@@ -297,11 +308,11 @@ fn observer_error_to_process_error(e: crate::process::error::ObserverError) -> P
 mod tests {
     use super::*;
     use crate::process::id::Pid;
+    use crate::process::log::ProcessOutput;
     use crate::process::pid_file::ProcessIdentity;
     use crate::process::proc_info::ProcessStartTime;
     use crate::process::registry::{MetadataDraft, ProcessRegistry};
     use crate::process::status_file::ProcessStatusFile;
-    use crate::process::stdio::StdioPolicy;
     use chrono::Utc;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
@@ -350,10 +361,12 @@ mod tests {
                 .await
                 .expect("observer"),
         );
-        let stdio = StdioSupervisor::new(StdioPolicy::Passthrough)
-            .await
-            .expect("stdio");
-        ProcessRuntime::new(session, ShutdownController::new(), observer, stdio)
+        ProcessRuntime::new(
+            session,
+            ShutdownController::new(),
+            observer,
+            ProcessOutput::noop(),
+        )
     }
 
     #[test]
@@ -475,11 +488,12 @@ mod tests {
                 .await
                 .expect("observer"),
         );
-        let stdio = StdioSupervisor::new(StdioPolicy::Passthrough)
-            .await
-            .expect("stdio");
-        let runtime =
-            ProcessRuntime::new(session.clone(), ShutdownController::new(), observer, stdio);
+        let runtime = ProcessRuntime::new(
+            session.clone(),
+            ShutdownController::new(),
+            observer,
+            ProcessOutput::noop(),
+        );
         let r1 = runtime
             .finalize(Some(ProcessTerminationReason::SignalInt))
             .await;
@@ -491,10 +505,12 @@ mod tests {
                 .await
                 .expect("observer"),
         );
-        let stdio2 = StdioSupervisor::new(StdioPolicy::Passthrough)
-            .await
-            .expect("stdio");
-        let runtime2 = ProcessRuntime::new(session, ShutdownController::new(), observer2, stdio2);
+        let runtime2 = ProcessRuntime::new(
+            session,
+            ShutdownController::new(),
+            observer2,
+            ProcessOutput::noop(),
+        );
         let r2 = runtime2
             .finalize(Some(ProcessTerminationReason::Completed))
             .await;

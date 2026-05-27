@@ -5,9 +5,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use iter_core::log::LogStream;
 use iter_core::process::{
-    LogStream, PidFileState, ProcessError, ProcessHandle, ProcessId, ProcessRecord,
-    ProcessRegistry, ProcessStatus, process_is_alive_with_start_time,
+    PidFileState, ProcessError, ProcessHandle, ProcessId, ProcessRecord, ProcessRegistry,
+    ProcessStatus, process_is_alive_with_start_time,
 };
 use serde::Serialize;
 use std::io::Write;
@@ -28,7 +29,7 @@ pub enum ProcessCmdError {
     Process(#[from] ProcessError),
     /// Reading log lines from disk failed.
     #[error("reading log line: {0}")]
-    LogIo(#[source] ProcessError),
+    LogIo(#[source] iter_core::log::NdjsonReadError),
     /// `iter inspect` failed to serialize the metadata to JSON.
     #[error("serializing metadata: {0}")]
     JsonSerialize(#[source] serde_json::Error),

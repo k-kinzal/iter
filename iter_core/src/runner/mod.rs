@@ -72,8 +72,8 @@ pub struct Runner<Q: Queue, W: Workspace, A: Agent> {
     /// Sink the agent should tee its child stdout/stderr through. Wired
     /// by [`RunnerBuilder::stdio_sink`] from
     /// [`crate::process::ProcessRuntime::stdio`]; unset runners get a
-    /// [`crate::process::stdio::NoopSink`].
-    pub(crate) stdio_sink: Arc<dyn crate::process::stdio::StdioSink>,
+    /// [`crate::log::NoopSink`].
+    pub(crate) stdio_sink: Arc<dyn crate::log::OutputSink>,
 }
 
 impl<Q, W, A> Runner<Q, W, A>
@@ -519,7 +519,7 @@ async fn drive_workspace<W, A>(
     agent: &A,
     config: &RunnerConfig,
     cancel: &CancellationToken,
-    stdio_sink: &Arc<dyn crate::process::stdio::StdioSink>,
+    stdio_sink: &Arc<dyn crate::log::OutputSink>,
     events: &mut RunnerEvents,
     signal: &Signal,
     prompt: &Prompt,
@@ -711,7 +711,7 @@ async fn process_signal<W, A>(
     prompt_selector: &PromptSelector,
     config: &RunnerConfig,
     cancel: &CancellationToken,
-    stdio_sink: &Arc<dyn crate::process::stdio::StdioSink>,
+    stdio_sink: &Arc<dyn crate::log::OutputSink>,
     events: &mut RunnerEvents,
     iter_state: &mut IterationState,
     iteration_count: u32,
@@ -775,7 +775,7 @@ async fn run_loop<Q, W, A>(
     prompt_selector: &PromptSelector,
     config: &RunnerConfig,
     cancel: &CancellationToken,
-    stdio_sink: &Arc<dyn crate::process::stdio::StdioSink>,
+    stdio_sink: &Arc<dyn crate::log::OutputSink>,
     events: &mut RunnerEvents,
     iter_state: &mut IterationState,
     iteration_count: &mut u32,

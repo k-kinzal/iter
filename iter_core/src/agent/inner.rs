@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::AgentReport;
-use crate::process::stdio::{NoopSink, StdioSink};
+use crate::log::{NoopSink, OutputSink};
 use crate::prompt::Prompt;
 use crate::signal::{SignalId, SignalKind};
 
@@ -48,10 +48,10 @@ pub struct AgentRunContext<'a> {
     /// Sink the agent should tee its child stdout/stderr through so every
     /// line lands in `log.ndjson`. Defaults to a [`NoopSink`] for tests
     /// and standalone constructions; the runner replaces it with the
-    /// active `Arc<dyn StdioSink>` from the
-    /// [`StdioSupervisor`](crate::process::stdio::StdioSupervisor) when
-    /// running under a `ProcessRuntime`.
-    pub stdio_sink: Arc<dyn StdioSink>,
+    /// active `Arc<dyn OutputSink>` from the
+    /// [`ProcessRuntime`](crate::process::ProcessRuntime) when running
+    /// under a process record.
+    pub stdio_sink: Arc<dyn OutputSink>,
     /// Optional per-iteration timeout. When set, [`run_with_timeout`]
     /// cancels the agent after this duration and returns
     /// [`AgentError::IterationTimeout`](crate::agent::AgentError::IterationTimeout).
@@ -71,7 +71,7 @@ impl std::fmt::Debug for AgentRunContext<'_> {
             .field("cancel", &self.cancel)
             .field("signal_id", &self.signal_id)
             .field("signal_kind", &self.signal_kind)
-            .field("stdio_sink", &"<dyn StdioSink>")
+            .field("stdio_sink", &"<dyn OutputSink>")
             .field("iteration_timeout", &self.iteration_timeout)
             .field("service_name", &self.service_name)
             .finish()
@@ -106,11 +106,11 @@ impl<'a> AgentRunContext<'a> {
         self
     }
 
-    /// Replace the [`StdioSink`] the agent will tee child output through.
+    /// Replace the [`OutputSink`] the agent will tee child output through.
     ///
     /// Returns `self` so the call can be chained after [`Self::new`].
     #[must_use]
-    pub fn with_stdio_sink(mut self, sink: Arc<dyn StdioSink>) -> Self {
+    pub fn with_stdio_sink(mut self, sink: Arc<dyn OutputSink>) -> Self {
         self.stdio_sink = sink;
         self
     }

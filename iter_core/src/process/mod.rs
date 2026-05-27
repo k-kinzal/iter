@@ -38,7 +38,7 @@ pub mod error;
 pub mod handle;
 pub mod id;
 pub mod lifecycle;
-pub mod logs;
+pub mod log;
 pub mod metadata;
 pub mod observer;
 pub mod paths;
@@ -51,7 +51,6 @@ pub mod runtime;
 pub mod shutdown;
 pub mod spawner;
 pub mod status;
-pub mod stdio;
 
 pub use adoption::adopt_from_argv;
 pub use error::{
@@ -62,7 +61,13 @@ pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
 pub use crate::agent::AgentOutcomeKind;
 pub use crate::runner::{DynRunnerObserver, RedactedMetadata, RunnerLifecycle, RunnerObserver};
-pub use logs::{LogEntry, LogStream, LogStreamReader};
+pub use log::{
+    DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,
+    install_global_log_sender, open_output,
+};
+// Generic log primitives re-exported for callers that previously imported
+// them through `crate::process`.
+pub use crate::log::{LogEntry, LogStream, NdjsonReadError, NdjsonReader};
 pub use metadata::ProcessMetadata;
 pub use observer::{
     DEFAULT_LIFECYCLE_BUFFER, LIFECYCLE_BUFFER_ENV, LIFECYCLE_TARGET, LifecycleObserver,
@@ -88,8 +93,4 @@ pub use spawner::{
 pub use status::{
     CorruptStatusError, CorruptStatusKind, ProcessStatus, TransitionResult, UnknownStatusToken,
     is_allowed,
-};
-pub use stdio::{
-    DEFAULT_LOG_BUFFER, LogJsonSender, LogJsonSink, NoopSink, StdioPolicy, StdioSink,
-    StdioSupervisor, global_log_sender, install_global_log_sender,
 };

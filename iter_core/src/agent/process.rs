@@ -14,9 +14,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::process::logs::LogStream;
+use crate::log::{LogStream, OutputSink};
 use crate::process::process_group::{self, ProcessGroup};
-use crate::process::stdio::StdioSink;
 use crate::{AgentReport, ExitStatus, current_sandbox_prefix};
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -268,7 +267,7 @@ pub(crate) async fn run_command(
     command: Command,
     delivery: PromptDelivery<'_>,
     cancel: CancellationToken,
-    sink: Arc<dyn StdioSink>,
+    sink: Arc<dyn OutputSink>,
 ) -> Result<AgentReport, AgentError> {
     let mut command = apply_sandbox_prefix(command);
     command
@@ -419,12 +418,12 @@ enum Direction {
 /// Sink errors are swallowed (the agent run must not abort just because the
 /// log writer is gone); read errors end the loop early. After EOF the
 /// sink's *per-stream* partial buffer is flushed via
-/// [`StdioSink::flush_stream`] so any final unterminated bytes the agent
+/// [`OutputSink::flush_stream`] so any final unterminated bytes the agent
 /// emitted (no trailing newline before exit) surface as their own NDJSON
 /// record without disturbing the counterpart pipe's still-active partial
-/// — using the global [`StdioSink::flush`] here would prematurely drain
+/// — using the global [`OutputSink::flush`] here would prematurely drain
 /// the other stream mid-record.
-async fn tee_lines<R>(reader: R, sink: Arc<dyn StdioSink>, direction: Direction, tail: &mut Vec<u8>)
+async fn tee_lines<R>(reader: R, sink: Arc<dyn OutputSink>, direction: Direction, tail: &mut Vec<u8>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -848,7 +847,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl StdioSink for RecordingSink {
+    impl OutputSink for RecordingSink {
         async fn write_stdout(&self, bytes: Bytes) -> std::io::Result<()> {
             self.stdout.lock().await.push(bytes.to_vec());
             Ok(())
@@ -875,7 +874,7 @@ mod tests {
         // passed to `tee_lines` is the same Arc up-cast to the trait
         // object.
         let recorder = Arc::new(RecordingSink::default());
-        let sink: Arc<dyn StdioSink> = recorder.clone();
+        let sink: Arc<dyn OutputSink> = recorder.clone();
         let mut tail = Vec::new();
 
         tee_lines(reader, sink, Direction::Stdout, &mut tail).await;

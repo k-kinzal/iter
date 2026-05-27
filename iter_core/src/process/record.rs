@@ -16,7 +16,8 @@ use chrono::{DateTime, Utc};
 
 use crate::process::error::{ProcessError, Result};
 use crate::process::id::ProcessId;
-use crate::process::logs::LogStreamReader;
+use crate::log::NdjsonReader;
+use crate::process::paths::names::LOG_NDJSON;
 use crate::process::metadata::ProcessMetadata;
 use crate::process::paths::{ProcPaths, names, proc_root_default};
 use crate::process::pid_file::{self, PidFileState};
@@ -215,19 +216,27 @@ impl ProcessRecord {
 
     /// Tail the per-process `log.ndjson` stream.
     ///
-    /// Each yielded record is a [`LogEntry`](crate::process::logs::LogEntry)
+    /// Each yielded record is a [`LogEntry`](crate::log::LogEntry)
     /// carrying a UTC timestamp, originating stream
-    /// ([`LogStream::Stdout`](crate::process::logs::LogStream::Stdout)
-    /// or [`LogStream::Stderr`](crate::process::logs::LogStream::Stderr)),
-    /// and the line text (without the trailing newline). The reader
-    /// supports `tail = Some(N)` for cap-the-initial-preload semantics
-    /// and `follow = true` for `tail -f`-style polling.
+    /// ([`LogStream::Stdout`](crate::log::LogStream::Stdout) or
+    /// [`LogStream::Stderr`](crate::log::LogStream::Stderr)), and the
+    /// line text (without the trailing newline). The reader supports
+    /// `tail = Some(N)` for cap-the-initial-preload semantics and
+    /// `follow = true` for `tail -f`-style polling.
     ///
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub fn tail_log_ndjson(&self, follow: bool, tail: Option<usize>) -> Result<LogStreamReader> {
-        LogStreamReader::open(self.paths.dir(), follow, tail)
+    pub fn tail_log_ndjson(
+        &self,
+        follow: bool,
+        tail: Option<usize>,
+    ) -> Result<NdjsonReader> {
+        let path = self.paths.dir().join(LOG_NDJSON);
+        NdjsonReader::open(&path, follow, tail).map_err(|e| match e {
+            crate::log::NdjsonReadError::Io(io) => ProcessError::Io(io),
+            crate::log::NdjsonReadError::Json(j) => ProcessError::JsonRead(j),
+        })
     }
 }
 

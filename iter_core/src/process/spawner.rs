@@ -14,7 +14,7 @@
 //!   `<dir>/log.ndjson` from inside the child and routes everything the
 //!   worker emits — agent stdout/stderr, runner tracing, lifecycle events —
 //!   into that single NDJSON stream via
-//!   [`crate::process::stdio::LogJsonSink`]. Anything that bypasses the
+//!   [`crate::process::log::ProcessLogSink`]. Anything that bypasses the
 //!   in-process sink (e.g. a panic before the runtime is wired) is
 //!   intentionally dropped rather than leaked back to the orphaned terminal.
 //!   `Stdio::piped()` would leak pipe ends because we `mem::forget` the

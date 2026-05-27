@@ -56,8 +56,8 @@ pub mod names {
     /// Append-only NDJSON of `{ts, stream, line}` records — the unified
     /// docker-logs-parity stream that captures everything the worker
     /// process emits (agent stdout/stderr, runner tracing, lifecycle
-    /// events). Written by [`crate::process::stdio::LogJsonSink`] under
-    /// [`StdioPolicy::LogOnly`](crate::process::stdio::StdioPolicy::LogOnly)
+    /// events). Written by [`crate::process::log::ProcessLogSink`] under
+    /// [`OutputPolicy::LogOnly`](crate::process::log::OutputPolicy::LogOnly)
     /// and read by `iter logs` / `iter attach`.
     pub const LOG_NDJSON: &str = "log.ndjson";
 }

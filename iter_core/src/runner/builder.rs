@@ -40,7 +40,7 @@ pub struct RunnerBuilder<Q: Queue, W: Workspace, A: Agent> {
     events: EventEmitter,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
     config: RunnerConfig,
-    stdio_sink: Option<Arc<dyn crate::process::stdio::StdioSink>>,
+    stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
 }
 
 impl<Q: Queue, W: Workspace, A: Agent> Default for RunnerBuilder<Q, W, A> {
@@ -167,19 +167,18 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
         self
     }
 
-    /// Install the [`StdioSink`](crate::process::stdio::StdioSink) every
+    /// Install the [`OutputSink`](crate::log::OutputSink) every
     /// agent invocation should tee its child stdout/stderr through. The
     /// `iter_compose` entry point wires this from
-    /// `ProcessRuntime::stdio().sink()` so agent output reaches the
-    /// per-process `log.ndjson`. Standalone runners may leave it unset
-    /// — the runner falls back to a [`NoopSink`](crate::process::stdio::NoopSink)
-    /// in that case.
-    pub fn stdio_sink(mut self, sink: Arc<dyn crate::process::stdio::StdioSink>) -> Self {
+    /// `ProcessRuntime::sink()` so agent output reaches the per-process
+    /// `log.ndjson`. Standalone runners may leave it unset — the runner
+    /// falls back to a [`NoopSink`](crate::log::NoopSink) in that case.
+    pub fn stdio_sink(mut self, sink: Arc<dyn crate::log::OutputSink>) -> Self {
         self.stdio_sink = Some(sink);
         self
     }
 
-    /// Returns `true` when a [`StdioSink`](crate::process::stdio::StdioSink)
+    /// Returns `true` when an [`OutputSink`](crate::log::OutputSink)
     /// has been installed via [`Self::stdio_sink`].
     #[must_use]
     pub fn has_stdio_sink(&self) -> bool {
@@ -234,7 +233,7 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
             config: self.config,
             stdio_sink: self
                 .stdio_sink
-                .unwrap_or_else(|| Arc::new(crate::process::stdio::NoopSink)),
+                .unwrap_or_else(|| Arc::new(crate::log::NoopSink)),
         })
     }
 }

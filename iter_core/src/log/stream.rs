@@ -1,39 +1,7 @@
-//! Tailing reader over the per-process `log.ndjson` stream.
-//!
-//! `log.ndjson` is the unified, docker-logs-parity capture of every byte
-//! the worker process emits — agent stdout, agent stderr, runner
-//! tracing, lifecycle events. Each line is a JSON record:
-//!
-//! ```json
-//! {"ts":"2026-05-03T10:40:07.980512Z","stream":"stderr","line":"starting runner ..."}
-//! ```
-//!
-//! The writer side lives in [`crate::process::stdio::LogJsonSink`]; the
-//! reader side lives in [`log_stream::LogStreamReader`] (this module's
-//! sibling). The schema types ([`LogEntry`], [`LogStream`]) are shared
-//! between writer and reader so the two ends always agree on field names
-//! and ordering.
-
-use std::time::Duration;
+//! Schema types shared between the NDJSON writer and reader.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-
-use crate::process::error::ProcessError;
-
-mod log_stream;
-
-pub use log_stream::LogStreamReader;
-
-/// Polling interval used by the follow loop.
-pub(super) const POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-/// Convenience wrapper used by the reader to map `io::Error` into
-/// [`ProcessError::Io`] without an explicit `.map_err` closure at every
-/// call site.
-pub(super) fn io_err(e: std::io::Error) -> ProcessError {
-    ProcessError::Io(e)
-}
 
 /// Which originating stream (stdout vs stderr) a single
 /// [`LogEntry`] came from. Serialised as `"stdout"` / `"stderr"` so the

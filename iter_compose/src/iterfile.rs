@@ -90,7 +90,7 @@ pub enum RunMode {
     /// Adopt a parent-allocated record set up by `spawn_detached`. The
     /// parent allocated the record and bound the child's fd 1/2 to
     /// `/dev/null` before exec; the child opens `<dir>/log.ndjson`
-    /// itself via the in-process [`StdioPolicy::LogOnly`] wiring.
+    /// itself via the in-process [`OutputPolicy::LogOnly`] wiring.
     Adopted {
         /// Process id allocated by the parent.
         process_id: ProcessId,
@@ -261,7 +261,7 @@ async fn run_inner(
 
     if let Some(rt) = runtime.as_ref() {
         builder = assembly::wire_builder_runtime(builder, rt);
-        if let Some(sender) = rt.stdio().log_sender() {
+        if let Some(sender) = rt.log_sender() {
             iter_core::process::install_global_log_sender(sender);
         }
     }

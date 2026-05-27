@@ -20,13 +20,14 @@
 //! * a `log.ndjson` layer that funnels every formatted record into the
 //!   per-process [`crate::process::ProcessRuntime`]'s `log.ndjson` via
 //!   [`iter_core::process::install_global_log_sender`]. The runtime
-//!   publishes its [`LogJsonSender`](iter_core::process::LogJsonSender)
+//!   publishes its [`LogSender`](iter_core::process::LogSender)
 //!   as soon as it is constructed; lines emitted before that — typically
 //!   CLI startup — only land on stderr.
 
 use std::io::{self, Write};
 
-use iter_core::process::{LIFECYCLE_TARGET, LogStream, global_log_sender};
+use iter_core::log::LogStream;
+use iter_core::process::{LIFECYCLE_TARGET, global_log_sender};
 use iter_core::{Config, LogLevel};
 use iter_language::{TelemetryDecl, TelemetryProtocol};
 use tracing::Level;
@@ -82,7 +83,7 @@ fn init_inner(
     let stderr_layer = fmt::layer().with_target(false).with_writer(io::stderr);
     // The `iter::lifecycle` target is delivered to `log.ndjson`
     // directly by the lifecycle writer task via the back-pressured
-    // [`LogJsonSender::send_line`](iter_core::process::LogJsonSender::send_line)
+    // [`LogSender::send_line`](iter_core::process::LogSender::send_line)
     // path. Filtering it out here keeps the on-disk record
     // duplicate-free; the stderr layer above is unfiltered so
     // foreground attach still shows the lifecycle stream.
@@ -253,7 +254,7 @@ fn otel_log_target_enabled(metadata: &tracing::Metadata<'_>) -> bool {
 
 /// `MakeWriter` implementation that pushes each formatted tracing record
 /// into the per-process `log.ndjson` via the global
-/// [`LogJsonSender`](iter_core::process::LogJsonSender).
+/// [`LogSender`](iter_core::process::LogSender).
 ///
 /// Returns a writer that no-ops until
 /// [`install_global_log_sender`](iter_core::process::install_global_log_sender)

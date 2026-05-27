@@ -1,6 +1,6 @@
 //! [`FakeAgent`] — configurable fake agent for verification testing.
 //!
-//! Exercises real infrastructure (`StdioSink`, workspace filesystem,
+//! Exercises real infrastructure (`OutputSink`, workspace filesystem,
 //! cancellation) without requiring an external agent binary.
 
 use std::collections::BTreeMap;
@@ -20,9 +20,9 @@ pub struct FakeSettings {
     pub exit_code: i32,
     /// Simulated execution delay in seconds. 0 = immediate.
     pub delay_secs: u64,
-    /// Lines to write to stdout via the [`StdioSink`](crate::process::stdio::StdioSink).
+    /// Lines to write to stdout via the [`OutputSink`](crate::log::OutputSink).
     pub stdout: Vec<String>,
-    /// Lines to write to stderr via the [`StdioSink`](crate::process::stdio::StdioSink).
+    /// Lines to write to stderr via the [`OutputSink`](crate::log::OutputSink).
     pub stderr: Vec<String>,
     /// Files to create/overwrite in the workspace directory.
     pub files: BTreeMap<String, String>,
@@ -42,9 +42,9 @@ pub struct FakeAgent {
     pub exit_code: i32,
     /// Simulated execution delay in seconds. 0 = immediate.
     pub delay_secs: u64,
-    /// Lines to write to stdout via the [`StdioSink`](crate::process::stdio::StdioSink).
+    /// Lines to write to stdout via the [`OutputSink`](crate::log::OutputSink).
     pub stdout: Vec<String>,
-    /// Lines to write to stderr via the [`StdioSink`](crate::process::stdio::StdioSink).
+    /// Lines to write to stderr via the [`OutputSink`](crate::log::OutputSink).
     pub stderr: Vec<String>,
     /// Files to create/overwrite in the workspace directory.
     pub files: BTreeMap<String, String>,
@@ -299,7 +299,7 @@ mod tests {
         }
 
         #[async_trait]
-        impl crate::process::stdio::StdioSink for CaptureSink {
+        impl crate::log::OutputSink for CaptureSink {
             async fn write_stdout(&self, bytes: Bytes) -> std::io::Result<()> {
                 self.stdout.lock().await.push(bytes);
                 Ok(())

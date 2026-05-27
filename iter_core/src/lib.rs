@@ -27,6 +27,7 @@
 pub mod agent;
 pub mod config;
 pub mod error;
+pub mod log;
 pub mod process;
 pub mod prompt;
 pub mod queue;

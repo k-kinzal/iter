@@ -19,9 +19,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use iter_core::log::{LogStream, NdjsonReader};
 use iter_core::process::{
-    LogStream, LogStreamReader, ProcessError, ProcessHandle, ProcessId, ProcessRegistry,
-    ProcessStatus,
+    ProcessError, ProcessHandle, ProcessId, ProcessRegistry, ProcessStatus,
 };
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
@@ -132,7 +132,7 @@ pub fn status_exit_code(status: ProcessStatus) -> i32 {
     }
 }
 
-async fn pump_log_ndjson(mut reader: LogStreamReader) {
+async fn pump_log_ndjson(mut reader: NdjsonReader) {
     loop {
         match reader.next_entry().await {
             Ok(Some(entry)) => match entry.stream {

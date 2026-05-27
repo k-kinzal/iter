@@ -144,9 +144,9 @@ pub enum AgentDecl {
         exit_code: i32,
         /// Simulated execution delay in seconds. 0 = immediate.
         delay_secs: Option<u64>,
-        /// Lines to write to stdout via the `StdioSink`.
+        /// Lines to write to stdout via the output sink.
         stdout: Vec<String>,
-        /// Lines to write to stderr via the `StdioSink`.
+        /// Lines to write to stderr via the output sink.
         stderr: Vec<String>,
         /// Files to create/overwrite in the workspace directory.
         /// Keys are relative paths, values are file content.

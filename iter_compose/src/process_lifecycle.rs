@@ -20,10 +20,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use iter_core::process::registry::MetadataDraft;
 use iter_core::process::{
-    AdoptError, FinalizeReport, LifecycleObserver, ObserverError, ProcessError, ProcessId,
-    ProcessRegistry, ProcessRuntime, ProcessStatus, ProcessTerminationReason, RegisterError,
-    ShutdownController, StartupError, StdioPolicy, StdioSupervisor, adopt_from_argv,
-    current_identity,
+    AdoptError, FinalizeReport, LifecycleObserver, ObserverError, OutputPolicy, ProcessError,
+    ProcessId, ProcessOutput, ProcessRegistry, ProcessRuntime, ProcessStatus,
+    ProcessTerminationReason, RegisterError, ShutdownController, StartupError, adopt_from_argv,
+    current_identity, open_output,
 };
 use thiserror::Error;
 use tracing::warn;
@@ -58,7 +58,7 @@ pub enum AdoptedBootstrapError {
         #[source]
         source: AdoptError,
     },
-    /// Wiring the runtime side files (observer, stdio supervisor, shutdown
+    /// Wiring the runtime side files (observer, output sink, shutdown
     /// controller) failed after adoption succeeded.
     #[error(transparent)]
     Lifecycle(#[from] LifecycleError),
@@ -73,8 +73,8 @@ pub enum LifecycleError {
     /// Opening the per-process lifecycle observer failed.
     #[error("opening lifecycle observer: {0}")]
     Observer(#[source] ObserverError),
-    /// Opening the stdio supervisor failed.
-    #[error("opening stdio supervisor: {0}")]
+    /// Opening the output sink failed.
+    #[error("opening output sink: {0}")]
     Stdio(#[source] std::io::Error),
     /// Registering a foreground process record failed.
     #[error("registering process {name}: {source}")]
@@ -148,10 +148,10 @@ pub(crate) async fn bootstrap_foreground(
     // The foreground process inherits the user's terminal on fd 1/2.
     // `LogOnly` would route the worker's stdio into `log.ndjson` only,
     // which is wrong for an interactive `iter run` invocation.
-    let stdio_policy = StdioPolicy::Passthrough;
+    let output_policy = OutputPolicy::Passthrough;
 
-    let (observer, stdio, shutdown) =
-        match wire_runtime_pieces(session.paths().dir(), stdio_policy).await {
+    let (observer, output, shutdown) =
+        match wire_runtime_pieces(session.paths().dir(), &output_policy).await {
             Ok(triple) => triple,
             Err(err) => {
                 if let Err(transition_err) = session
@@ -204,7 +204,7 @@ pub(crate) async fn bootstrap_foreground(
     }
 
     Ok(Some(ProcessRuntime::new(
-        session, shutdown, observer, stdio,
+        session, shutdown, observer, output,
     )))
 }
 
@@ -216,15 +216,15 @@ pub(crate) async fn bootstrap_foreground(
 /// has already created `~/.iter/proc/<id>/`, written `meta.json`,
 /// `bootstrap_token`, and bound the child's fd 1/2 to `/dev/null`. The
 /// per-process `log.ndjson` is opened from inside the adopted child by
-/// [`StdioPolicy::LogOnly`] and is the only path that produces records
+/// [`OutputPolicy::LogOnly`] and is the only path that produces records
 /// in that file.
 /// This helper takes care of:
 ///
 /// 1. Calling [`adopt_from_argv`], which atomically flips the record
 ///    `Initializing → Running`, publishes the pid file, and deletes the
 ///    bootstrap token.
-/// 2. Wiring the observer + stdio supervisor + signal-driven shutdown
-///    controller in [`StdioPolicy::LogOnly`] mode (consistent with the
+/// 2. Wiring the observer + output sink + signal-driven shutdown
+///    controller in [`OutputPolicy::LogOnly`] mode (consistent with the
 ///    on-disk fd layout the parent set up).
 /// 3. Returning a [`ProcessRuntime`] the caller is responsible for
 ///    finalising on exit so the record reaches a terminal state.
@@ -246,13 +246,13 @@ pub async fn bootstrap_adopted(
             source,
         })?;
 
-    let stdio_policy = StdioPolicy::LogOnly {
+    let output_policy = OutputPolicy::LogOnly {
         log_dir: session.paths().dir().to_owned(),
     };
 
-    match wire_runtime_pieces(session.paths().dir(), stdio_policy).await {
-        Ok((observer, stdio, shutdown)) => {
-            Ok(ProcessRuntime::new(session, shutdown, observer, stdio))
+    match wire_runtime_pieces(session.paths().dir(), &output_policy).await {
+        Ok((observer, output, shutdown)) => {
+            Ok(ProcessRuntime::new(session, shutdown, observer, output))
         }
         Err(err) => {
             if let Err(transition_err) = session
@@ -270,9 +270,9 @@ pub async fn bootstrap_adopted(
     }
 }
 
-/// Open the per-process side files (lifecycle observer, stdio
-/// supervisor, signal-handling shutdown controller) shared by both
-/// adopted and foreground runs.
+/// Open the per-process side files (lifecycle observer, output sink,
+/// signal-handling shutdown controller) shared by both adopted and
+/// foreground runs.
 ///
 /// `pub(crate)` so [`crate::iterfile`]'s adopted-mode bootstrap can
 /// reuse the same helper.
@@ -282,21 +282,13 @@ pub async fn bootstrap_adopted(
 /// Any of the I/O or observer failures wrapped in [`LifecycleError`].
 pub(crate) async fn wire_runtime_pieces(
     dir: &Path,
-    stdio_policy: StdioPolicy,
-) -> Result<(Arc<LifecycleObserver>, StdioSupervisor, ShutdownController), LifecycleError> {
-    // Construct the stdio supervisor first so the lifecycle observer
-    // can be wired with a back-pressured `LogJsonSender` into the same
-    // `log.ndjson` pipeline. Without this ordering, the lifecycle
-    // writer task would have to fall back to the best-effort tracing
-    // path (`try_send_line`) for every record — at finalize time, a
-    // full `LogJsonSink` channel would silently drop the last
-    // `AgentFinished` / `WorkspaceTearDown` events instead of
-    // back-pressuring the runner.
-    let stdio = StdioSupervisor::new(stdio_policy)
+    output_policy: &OutputPolicy,
+) -> Result<(Arc<LifecycleObserver>, ProcessOutput, ShutdownController), LifecycleError> {
+    let output = open_output(output_policy)
         .await
         .map_err(LifecycleError::Stdio)?;
     let observer = Arc::new(
-        LifecycleObserver::open_in(dir, stdio.log_sender())
+        LifecycleObserver::open_in(dir, output.log_sender())
             .await
             .map_err(LifecycleError::Observer)?,
     );
@@ -304,7 +296,7 @@ pub(crate) async fn wire_runtime_pieces(
     shutdown
         .install_signal_handlers()
         .map_err(LifecycleError::InstallSignalHandlers)?;
-    Ok((observer, stdio, shutdown))
+    Ok((observer, output, shutdown))
 }
 
 /// Log non-clean entries from a [`FinalizeReport`].

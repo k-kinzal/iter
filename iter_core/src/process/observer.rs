@@ -13,7 +13,7 @@
 //! [`tracing::info!`] event under the `iter::lifecycle` target. The
 //! tracing subscriber installed by the runtime fans those events into
 //! `log.ndjson` (alongside agent stdio and ad-hoc runner tracing) via
-//! [`crate::process::stdio::LogJsonSink`]. The on-disk record is the
+//! [`crate::process::log::ProcessLogSink`]. The on-disk record is the
 //! single docker-logs-parity NDJSON stream — there is no separate
 //! `events.ndjson`.
 //!
@@ -43,8 +43,8 @@ use tokio::task::JoinHandle;
 
 use crate::agent::AgentOutcomeKind;
 use crate::process::error::ObserverError;
-use crate::process::logs::LogStream;
-use crate::process::stdio::LogJsonSender;
+use crate::log::LogStream;
+use crate::process::log::LogSender;
 use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::runner::BoxError;
 use crate::signal::SignalId;
@@ -96,7 +96,7 @@ impl LifecycleObserver {
     /// does not open any file. `log_sender` is the back-pressured
     /// path into `log.ndjson`: when `Some`, the writer task pushes
     /// each lifecycle record directly through it (so a full
-    /// [`LogJsonSink`](crate::process::stdio::LogJsonSink) channel
+    /// [`ProcessLogSink`](crate::process::log::ProcessLogSink) channel
     /// blocks the writer rather than silently dropping the event).
     /// `None` keeps the observer running in tracing-only mode for
     /// foreground/test bootstraps that do not own a `log.ndjson`.
@@ -112,14 +112,14 @@ impl LifecycleObserver {
     /// site.
     pub async fn open_in(
         _dir: &std::path::Path,
-        log_sender: Option<LogJsonSender>,
+        log_sender: Option<LogSender>,
     ) -> Result<Self, ObserverError> {
         std::future::ready(Ok(Self::with_capacity(read_capacity_env(), log_sender))).await
     }
 
     /// Build an observer with an explicit channel capacity. Internal —
     /// callers should use [`Self::open_in`].
-    fn with_capacity(capacity: usize, log_sender: Option<LogJsonSender>) -> Self {
+    fn with_capacity(capacity: usize, log_sender: Option<LogSender>) -> Self {
         let (tx, rx) = mpsc::channel::<RunnerLifecycle>(capacity);
         let handle = tokio::spawn(run_writer(rx, log_sender));
         Self {
@@ -216,16 +216,16 @@ fn read_capacity_env() -> usize {
 
 /// Drain the lifecycle mpsc channel, re-emitting each record as a
 /// tracing event and (when wired) pushing the same record into
-/// `log.ndjson` via the back-pressured [`LogJsonSender`] path. The
+/// `log.ndjson` via the back-pressured [`LogSender`] path. The
 /// tracing subscriber's `LogJsonMakeWriter` is configured to filter out
 /// `iter::lifecycle` so this is the *only* path lifecycle records take
-/// into the NDJSON file — `LogJsonSender::send_line` awaits, so a slow
+/// into the NDJSON file — `LogSender::send_line` awaits, so a slow
 /// disk back-pressures the lifecycle queue (and through it, the runner)
 /// instead of silently losing post-mortem data. On sender error the
 /// writer falls back to tracing-only mode for the rest of the run.
 async fn run_writer(
     mut rx: mpsc::Receiver<RunnerLifecycle>,
-    log_sender: Option<LogJsonSender>,
+    log_sender: Option<LogSender>,
 ) -> Result<(), ObserverError> {
     let mut log_sender = log_sender;
     while let Some(ev) = rx.recv().await {
@@ -345,7 +345,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
 
 /// Format a [`RunnerLifecycle`] as the single-line message text that
 /// the writer task pushes into `log.ndjson` via
-/// [`LogJsonSender::send_line`]. The shape mirrors the tracing
+/// [`LogSender::send_line`]. The shape mirrors the tracing
 /// subscriber's compact format ("`<message>` field=value field=value")
 /// so the NDJSON file and the foreground stderr stream remain
 /// human-comparable.
