@@ -188,7 +188,7 @@ pub enum IterfileError {
 /// themselves only after iterfile validation succeeds.
 ///
 /// Whichever runtime ends up bound to the run is finalised once on the
-/// outer return path with a reason derived from the runner outcome and
+/// outer return path with a reason derived from the runner result and
 /// any shutdown signal that fired.
 ///
 /// # Errors
@@ -203,10 +203,10 @@ pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
         RunMode::Foreground { .. } => None,
     };
 
-    let outcome = run_inner(&input, &mut runtime).await;
+    let run_result = run_inner(&input, &mut runtime).await;
 
     let finalize_err = if let Some(rt) = runtime {
-        let failure_msg = outcome.as_ref().err().map(ToString::to_string);
+        let failure_msg = run_result.as_ref().err().map(ToString::to_string);
         let reason = derive_finalize_reason(failure_msg, rt.shutdown());
         let report = rt.finalize(Some(reason)).await;
         log_finalize_report(&report);
@@ -215,7 +215,7 @@ pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
         None
     };
 
-    match (outcome, finalize_err) {
+    match (run_result, finalize_err) {
         (Ok(_), None) => Ok(()),
         (Err(runner_err), _) => Err(runner_err),
         // Runner succeeded but the registry is left non-terminal — surface

@@ -9,7 +9,7 @@
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
-use crate::process::error::SecondaryStatusWriteOutcome;
+use crate::process::error::SecondaryStatusWriteResult;
 use crate::process::status::{CorruptStatusError, CorruptStatusKind, ProcessStatus};
 
 /// `seek(0) + set_len(0) + write_all` — required to ensure no partial-byte
@@ -72,12 +72,12 @@ pub(super) fn read_status(file: &mut File) -> Result<ProcessStatus, CorruptStatu
 }
 
 /// Rollback path: rewrite the body to `Failed` plus an `fsync`, swallowing
-/// the underlying I/O results into a [`SecondaryStatusWriteOutcome`] so the
+/// the underlying I/O results into a [`SecondaryStatusWriteResult`] so the
 /// caller can report exactly which step survived.
-pub(super) fn best_effort_mark_failed(file: &mut File) -> SecondaryStatusWriteOutcome {
+pub(super) fn best_effort_mark_failed(file: &mut File) -> SecondaryStatusWriteResult {
     let write_result = write_status_in_place(file, ProcessStatus::Failed);
     let fsync_result = fsync_with_one_retry(file);
-    SecondaryStatusWriteOutcome::from_write_and_fsync(write_result, fsync_result)
+    SecondaryStatusWriteResult::from_write_and_fsync(write_result, fsync_result)
 }
 
 /// `fsync_data` with a single retry. Used as the durability fence after every

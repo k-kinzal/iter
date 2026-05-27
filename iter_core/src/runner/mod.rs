@@ -25,7 +25,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, field};
 
 use crate::agent::Agent;
-use crate::agent::AgentOutcomeKind;
+use crate::agent::AgentResultKind;
 use crate::prompt::{Prompt, PromptSelector};
 use crate::queue::Queue;
 use crate::signal::{Signal, SignalId};
@@ -37,7 +37,7 @@ pub use error::RunnerExitError;
 pub use event::{Event, EventName};
 pub use event_emitter::{EmitReport, EventEmitter};
 pub use event_handler::{BoxError, EventHandler};
-pub use iteration::{IterationContext, IterationState, PreviousOutcome};
+pub use iteration::{IterationContext, IterationState, PreviousResult};
 pub use lifecycle::{RedactedMetadata, RunnerLifecycle};
 pub use shell_event_handler::ShellEventHandler;
 pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
@@ -129,7 +129,7 @@ where
         let bootstrap_snapshot = iter_state.snapshot(0);
         events.runner_starting(&bootstrap_snapshot).await;
 
-        let outcome = run_loop(
+        let loop_result = run_loop(
             queue.as_deref(),
             &*workspace_factory,
             &agent,
@@ -144,7 +144,7 @@ where
         )
         .await;
 
-        let (final_reason, final_iter_count) = match &outcome {
+        let (final_reason, final_iter_count) = match &loop_result {
             Ok(s) => (s.termination_reason.clone(), s.iteration_count),
             Err(err) => (
                 RunnerTerminationReason::Error {
@@ -160,7 +160,7 @@ where
             .await;
 
         with_counters(
-            outcome,
+            loop_result,
             events.handler_error_count,
             events.observer_error_count,
         )
@@ -172,7 +172,7 @@ where
 //
 // Each concern below holds exactly one responsibility: `RunnerEvents`
 // (in events.rs) owns the broadcast + tally pair; `ProcessingFailure`
-// and `NextSignal` are the data shapes that compose processing outcomes;
+// and `NextSignal` are the data shapes that compose processing results;
 // `decide_after_processing_failure` is the pure failure-policy decision;
 // the `next_signal` / `render_prompt` / `drive_workspace` functions are
 // typed and side-effect-explicit.  Each function receives only the
@@ -321,7 +321,7 @@ impl ProcessingFailure {
     }
 }
 
-/// Outcome of one acquisition attempt — flat enum so `run_loop` can match
+/// Result of one acquisition attempt — flat enum so `run_loop` can match
 /// without nested `Option<Result<Option<…>>>`. `next_signal` does NOT emit
 /// `RunnerError`; emission lives in `run_loop` so it stays in one place.
 enum NextSignal {
@@ -367,11 +367,11 @@ fn summary(
 }
 
 fn with_counters(
-    outcome: Result<RunnerSummary, RunnerExitError>,
+    result: Result<RunnerSummary, RunnerExitError>,
     handler_error_count: u32,
     observer_error_count: u32,
 ) -> Result<RunnerSummary, RunnerExitError> {
-    match outcome {
+    match result {
         Ok(mut s) => {
             s.event_handler_error_count = handler_error_count;
             s.observer_error_count = observer_error_count;
@@ -596,16 +596,16 @@ where
         iter.agent.r#type = std::any::type_name::<A>(),
         iter.workspace.path = %workspace_path_attr.display(),
         iter.prompt.bytes = prompt.as_str().len(),
-        iter.agent.outcome = field::Empty,
+        iter.agent.result = field::Empty,
         iter.agent.exit_code = field::Empty,
     );
     let agent_result = crate::agent::run_with_timeout(agent, agent_ctx)
         .instrument(agent_span.clone())
         .await;
 
-    let outcome_kind = match &agent_result {
-        Ok(rep) => AgentOutcomeKind::from_report(rep),
-        Err(e) => AgentOutcomeKind::from_error(e),
+    let result_kind = match &agent_result {
+        Ok(rep) => AgentResultKind::from_report(rep),
+        Err(e) => AgentResultKind::from_error(e),
     };
     let exit_code = agent_result
         .as_ref()
@@ -615,15 +615,15 @@ where
             crate::agent::ExitStatus::Failure(c) => Some(c),
             crate::agent::ExitStatus::Signal(_) | crate::agent::ExitStatus::Unknown => None,
         });
-    agent_span.record("iter.agent.outcome", agent_outcome_label(outcome_kind));
+    agent_span.record("iter.agent.result", agent_result_label(result_kind));
     if let Some(exit_code) = exit_code {
         agent_span.record("iter.agent.exit_code", exit_code);
     }
-    if outcome_kind != AgentOutcomeKind::Success {
+    if result_kind != AgentResultKind::Success {
         iter_tracing::record_span_error(
             &agent_span,
             "agent_run",
-            &agent_outcome_message(outcome_kind, exit_code),
+            &agent_result_message(result_kind, exit_code),
         );
     }
     let agent_for_event = agent_result
@@ -636,7 +636,7 @@ where
             signal,
             &workspace_path,
             agent_for_event,
-            outcome_kind,
+            result_kind,
             exit_code,
             snap,
         )
@@ -710,25 +710,25 @@ where
     Ok(AgentRecord { exit_code })
 }
 
-fn agent_outcome_label(kind: AgentOutcomeKind) -> &'static str {
+fn agent_result_label(kind: AgentResultKind) -> &'static str {
     match kind {
-        AgentOutcomeKind::Success => "success",
-        AgentOutcomeKind::Failure => "failure",
-        AgentOutcomeKind::TerminatedBySignal => "terminated_by_signal",
-        AgentOutcomeKind::UnknownExit => "unknown_exit",
-        AgentOutcomeKind::Cancelled => "cancelled",
-        AgentOutcomeKind::Errored => "errored",
-        AgentOutcomeKind::TokenLimit => "token_limit",
+        AgentResultKind::Success => "success",
+        AgentResultKind::Failure => "failure",
+        AgentResultKind::TerminatedBySignal => "terminated_by_signal",
+        AgentResultKind::UnknownExit => "unknown_exit",
+        AgentResultKind::Cancelled => "cancelled",
+        AgentResultKind::Errored => "errored",
+        AgentResultKind::TokenLimit => "token_limit",
     }
 }
 
-fn agent_outcome_message(kind: AgentOutcomeKind, exit_code: Option<i32>) -> String {
+fn agent_result_message(kind: AgentResultKind, exit_code: Option<i32>) -> String {
     match exit_code {
         Some(code) => format!(
-            "agent outcome {} with exit code {code}",
-            agent_outcome_label(kind)
+            "agent result {} with exit code {code}",
+            agent_result_label(kind)
         ),
-        None => format!("agent outcome {}", agent_outcome_label(kind)),
+        None => format!("agent result {}", agent_result_label(kind)),
     }
 }
 
@@ -892,7 +892,7 @@ where
                     iter.runner.once = config.once,
                     iter.runner.continue_on_error = config.continue_on_error,
                     iter.runner.iteration_timeout_ms = ?config.iteration_timeout.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
-                    iter.runner.outcome = field::Empty,
+                    iter.runner.result = field::Empty,
                 );
                 iter_tracing::set_span_as_trace_root(&span);
                 if let Some(span_context) = crate::telemetry::span_context_from_signal(&signal) {
@@ -914,7 +914,7 @@ where
                 .await
                 {
                     Ok(()) => {
-                        span.record("iter.runner.outcome", "success");
+                        span.record("iter.runner.result", "success");
                         *iteration_count += 1;
                         if config.once {
                             return Ok(summary(
@@ -925,7 +925,7 @@ where
                         }
                     }
                     Err(failure) => {
-                        span.record("iter.runner.outcome", "failure");
+                        span.record("iter.runner.result", "failure");
                         iter_tracing::record_span_error(
                             &span,
                             failure.error_source(),

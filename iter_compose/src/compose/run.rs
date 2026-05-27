@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
 use super::plan::{ComposePlan, ComposeService};
-use super::service::{ComposeReport, FailurePolicy, OrchestratorContext, TaskOutcome};
+use super::service::{ComposeReport, FailurePolicy, OrchestratorContext, CompletedTask};
 use super::supervisor;
 use crate::process_lifecycle::{
     self, RunRecordMetadata, derive_finalize_reason, leaves_record_non_terminal,
@@ -65,7 +65,7 @@ pub async fn run(
 
     let state_root = supervisor::trigger_state_root();
 
-    let mut set: JoinSet<TaskOutcome> = JoinSet::new();
+    let mut set: JoinSet<CompletedTask> = JoinSet::new();
 
     for service in services {
         spawn_service_task(
@@ -95,32 +95,32 @@ pub async fn run(
                     .join(&project)
                     .join(&trig_name)
             });
-            let outcome =
+            let supervised =
                 supervisor::supervise_trigger(trig, trigger_cancel, dir).await;
-            TaskOutcome::Trigger {
-                name: outcome.name,
-                result: outcome.result,
-                final_state: outcome.status.state,
-                restart_count: outcome.status.restart_count,
+            CompletedTask::Trigger {
+                name: supervised.name,
+                result: supervised.result,
+                final_state: supervised.status.state,
+                restart_count: supervised.status.restart_count,
             }
         });
     }
 
-    let mut outcomes = Vec::new();
+    let mut results = Vec::new();
     while let Some(joined) = set.join_next().await {
-        let outcome = match joined {
-            Ok(outcome) => outcome,
+        let completed = match joined {
+            Ok(task) => task,
             Err(join_err) => {
                 warn!(error = %join_err, "compose task panicked");
-                TaskOutcome::Panic {
+                CompletedTask::Panic {
                     error: join_err.to_string(),
                 }
             }
         };
-        if outcome.is_err() && policy == FailurePolicy::AbortAll {
+        if completed.is_err() && policy == FailurePolicy::AbortAll {
             cancel.cancel();
         }
-        outcomes.push(outcome);
+        results.push(completed);
     }
 
     cancel.cancel();
@@ -131,12 +131,12 @@ pub async fn run(
         }
     }
 
-    ComposeReport { outcomes }
+    ComposeReport { results }
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn spawn_service_task(
-    set: &mut JoinSet<TaskOutcome>,
+    set: &mut JoinSet<CompletedTask>,
     service: ComposeService,
     compose_path: &Path,
     cancel: &CancellationToken,
@@ -164,7 +164,7 @@ async fn spawn_service_task(
             let outer = cancel.clone();
             set.spawn(async move {
                 let result = monitor_service_subprocess(handle, outer).await;
-                TaskOutcome::ServiceSubprocess {
+                CompletedTask::ServiceSubprocess {
                     name,
                     process_id: Some(process_id),
                     result,
@@ -184,7 +184,7 @@ async fn spawn_service_task(
             set.spawn(async move {
                 let result =
                     run_one_service(service, parent_cancel, service_metadata, labels).await;
-                TaskOutcome::Service { name, result }
+                CompletedTask::Service { name, result }
             });
         }
         Err(ServiceSpawnDecision::Failed(name, err)) => {
@@ -194,7 +194,7 @@ async fn spawn_service_task(
                 "service subprocess spawn failed; surfacing as task error",
             );
             set.spawn(async move {
-                TaskOutcome::ServiceSubprocess {
+                CompletedTask::ServiceSubprocess {
                     name,
                     process_id: None,
                     result: Err(err),
@@ -350,10 +350,10 @@ async fn run_one_service(
     )
     .await?;
 
-    let outcome = run_one_service_inner(service, &parent_cancel, runtime.as_ref()).await;
+    let run_result = run_one_service_inner(service, &parent_cancel, runtime.as_ref()).await;
 
     let finalize_err = if let Some(rt) = runtime {
-        let failure_msg = outcome.as_ref().err().map(ToString::to_string);
+        let failure_msg = run_result.as_ref().err().map(ToString::to_string);
         let reason = derive_finalize_reason(failure_msg, rt.shutdown());
         let report = rt.finalize(Some(reason)).await;
         log_finalize_report(&report);
@@ -362,7 +362,7 @@ async fn run_one_service(
         None
     };
 
-    match (outcome, finalize_err) {
+    match (run_result, finalize_err) {
         (Ok(summary), None) => Ok(summary),
         (Err(runner_err), _) => Err(runner_err),
         (Ok(_), Some(finalize_err)) => Err(ServiceRunError::FinalizeStatus(finalize_err)),

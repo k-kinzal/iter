@@ -41,7 +41,7 @@ use std::future::Future;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::agent::AgentOutcomeKind;
+use crate::agent::AgentResultKind;
 use crate::process::error::ObserverError;
 use crate::log::LogStream;
 use crate::process::log::LogSender;
@@ -305,14 +305,14 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
         }
         RunnerLifecycle::AgentFinished {
             signal_id,
-            outcome,
+            result_kind,
             exit,
         } => {
             tracing::info!(
                 target: LIFECYCLE_TARGET,
                 event = "agent_finished",
                 signal_id = %signal_id_short(*signal_id),
-                outcome = outcome_label(*outcome),
+                outcome = result_label(*result_kind),
                 exit = ?exit,
                 "agent finished"
             );
@@ -387,13 +387,13 @@ fn format_lifecycle_line(ev: &RunnerLifecycle) -> String {
         }
         RunnerLifecycle::AgentFinished {
             signal_id,
-            outcome,
+            result_kind,
             exit,
         } => {
             format!(
                 "agent finished event=agent_finished signal_id={} outcome={} exit={:?}",
                 signal_id_short(*signal_id),
-                outcome_label(*outcome),
+                result_label(*result_kind),
                 exit
             )
         }
@@ -429,28 +429,28 @@ fn metadata_keys_count(meta: &RedactedMetadata) -> usize {
     meta.len()
 }
 
-fn outcome_label(kind: AgentOutcomeKind) -> &'static str {
+fn result_label(kind: AgentResultKind) -> &'static str {
     match kind {
-        AgentOutcomeKind::Success => "success",
-        AgentOutcomeKind::Failure => "failure",
-        AgentOutcomeKind::TerminatedBySignal => "terminated_by_signal",
-        AgentOutcomeKind::UnknownExit => "unknown_exit",
-        AgentOutcomeKind::Cancelled => "cancelled",
-        AgentOutcomeKind::Errored => "errored",
-        AgentOutcomeKind::TokenLimit => "token_limit",
+        AgentResultKind::Success => "success",
+        AgentResultKind::Failure => "failure",
+        AgentResultKind::TerminatedBySignal => "terminated_by_signal",
+        AgentResultKind::UnknownExit => "unknown_exit",
+        AgentResultKind::Cancelled => "cancelled",
+        AgentResultKind::Errored => "errored",
+        AgentResultKind::TokenLimit => "token_limit",
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentOutcomeKind;
+    use crate::agent::AgentResultKind;
     use std::time::Duration;
 
     fn sample_event(signal_id: SignalId) -> RunnerLifecycle {
         RunnerLifecycle::AgentFinished {
             signal_id,
-            outcome: AgentOutcomeKind::Success,
+            result_kind: AgentResultKind::Success,
             exit: Some(0),
         }
     }
@@ -537,16 +537,16 @@ mod tests {
     }
 
     #[test]
-    fn outcome_label_covers_every_variant() {
+    fn result_label_covers_every_variant() {
         for o in [
-            AgentOutcomeKind::Success,
-            AgentOutcomeKind::Failure,
-            AgentOutcomeKind::TerminatedBySignal,
-            AgentOutcomeKind::UnknownExit,
-            AgentOutcomeKind::Cancelled,
-            AgentOutcomeKind::Errored,
+            AgentResultKind::Success,
+            AgentResultKind::Failure,
+            AgentResultKind::TerminatedBySignal,
+            AgentResultKind::UnknownExit,
+            AgentResultKind::Cancelled,
+            AgentResultKind::Errored,
         ] {
-            assert!(!outcome_label(o).is_empty());
+            assert!(!result_label(o).is_empty());
         }
     }
 }

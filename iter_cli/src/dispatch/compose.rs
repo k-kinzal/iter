@@ -581,16 +581,16 @@ async fn run_compose_up_inline(args: ComposeUpArgs) -> Result<(), ComposeUpError
     let report = run(plan, cancel, policy, metadata, None, orchestrator).await;
 
     if report.has_errors() {
-        for outcome in &report.outcomes {
-            if outcome.is_err() {
-                error!(task = outcome.name(), "compose task exited with error");
+        for task in &report.results {
+            if task.is_err() {
+                error!(task = task.name(), "compose task exited with error");
             }
         }
         return Err(ComposeUpError::TaskFailed);
     }
 
     info!(
-        completed = report.outcomes.len(),
+        completed = report.results.len(),
         "compose finished cleanly"
     );
     Ok(())
@@ -1623,12 +1623,12 @@ async fn sweep_late_members(
 /// already exited" so operator-facing messages never falsely claim a
 /// signal was sent to a dead process (Codex iter-14 Minor D1).
 #[derive(Clone, Copy)]
-enum KillOutcome {
+enum KillResult {
     Delivered,
     AlreadyGone,
 }
 
-impl KillOutcome {
+impl KillResult {
     fn from_force_kill(delivered: bool) -> Self {
         if delivered {
             Self::Delivered
@@ -1727,12 +1727,12 @@ async fn escalate_to_sigkill(
                 continue;
             }
         };
-        // `KillOutcome::Delivered` → SIGKILL was actually sent.
-        // `KillOutcome::AlreadyGone` → process exited before we got
+        // `KillResult::Delivered` → SIGKILL was actually sent.
+        // `KillResult::AlreadyGone` → process exited before we got
         // there (force_kill returned `Ok(false)`). Distinguish them so
         // we don't print "SIGKILL after Ns" for a process that was
         // already dead (Codex iter-14 Minor D1).
-        let kill_outcome: Result<KillOutcome, ComposeRuntimeError> = if status.is_terminal() {
+        let kill_result: Result<KillResult, ComposeRuntimeError> = if status.is_terminal() {
             // `force_kill` errors must surface: this branch is the only
             // OS-level escalation left for a terminal-record-but-pid-alive
             // process, and silently dropping `Err` would let `compose
@@ -1740,11 +1740,11 @@ async fn escalate_to_sigkill(
             // iter-10 Major).
             handle
                 .force_kill()
-                .map(KillOutcome::from_force_kill)
+                .map(KillResult::from_force_kill)
                 .map_err(Into::into)
         } else {
             match handle.kill().await {
-                Ok(_) => Ok(KillOutcome::Delivered),
+                Ok(_) => Ok(KillResult::Delivered),
                 Err(ProcessError::IllegalTransition {
                     observed: Some(o), ..
                 }) if o.is_terminal() => {
@@ -1754,13 +1754,13 @@ async fn escalate_to_sigkill(
                     // an OS-level escalation.
                     handle
                         .force_kill()
-                        .map(KillOutcome::from_force_kill)
+                        .map(KillResult::from_force_kill)
                         .map_err(Into::into)
                 }
                 Err(err) => Err(err.into()),
             }
         };
-        match kill_outcome {
+        match kill_result {
             Err(err) => {
                 cli_eprintln!(
                     "project {slug:?}: SIGKILL service {service:?} ({id}) failed: {err}",
@@ -1768,7 +1768,7 @@ async fn escalate_to_sigkill(
                 );
                 record_error(err);
             }
-            Ok(KillOutcome::Delivered) => {
+            Ok(KillResult::Delivered) => {
                 if !args.quiet {
                     cli_eprintln!(
                         "project {slug:?}: SIGKILL service {service:?} ({id}) after {timeout_s}s",
@@ -1777,7 +1777,7 @@ async fn escalate_to_sigkill(
                     );
                 }
             }
-            Ok(KillOutcome::AlreadyGone) => {
+            Ok(KillResult::AlreadyGone) => {
                 if !args.quiet {
                     cli_eprintln!(
                         "project {slug:?}: service {service:?} ({id}) already exited before SIGKILL",

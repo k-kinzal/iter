@@ -76,10 +76,10 @@ pub struct TriggerStatus {
     pub is_finite: bool,
 }
 
-/// Outcome of a supervised trigger run, returned as part of
-/// [`super::service::TaskOutcome::Trigger`].
+/// Result of a supervised trigger run, returned as part of
+/// [`super::service::CompletedTask::Trigger`].
 #[derive(Debug)]
-pub(crate) struct TriggerSupervisorOutcome {
+pub(crate) struct TriggerSupervisorResult {
     pub name: String,
     pub status: TriggerStatus,
     pub result: Result<(), TriggerRunError>,
@@ -153,12 +153,12 @@ fn compute_backoff(restart_count: u32) -> Duration {
     Duration::from_secs(secs.min(MAX_BACKOFF.as_secs()))
 }
 
-fn make_outcome(
+fn make_result(
     name: String,
     status: TriggerStatus,
     result: Result<(), TriggerRunError>,
-) -> TriggerSupervisorOutcome {
-    TriggerSupervisorOutcome {
+) -> TriggerSupervisorResult {
+    TriggerSupervisorResult {
         name,
         status,
         result,
@@ -183,7 +183,7 @@ pub(crate) async fn supervise_trigger(
     trigger: ComposeTrigger,
     cancel: CancellationToken,
     state_dir: PathBuf,
-) -> TriggerSupervisorOutcome {
+) -> TriggerSupervisorResult {
     let name = trigger.name.clone();
     let finite = trigger.is_finite();
     let kind = trigger.kind_name().to_owned();
@@ -214,7 +214,7 @@ pub(crate) async fn supervise_trigger(
                 status.last_error = Some(e.to_string());
             }
             transition(&mut status, TriggerLifecycleState::Stopped, &state_dir);
-            return make_outcome(name, status, result);
+            return make_result(name, status, result);
         }
 
         match &result {
@@ -226,10 +226,10 @@ pub(crate) async fn supervise_trigger(
                         warn!(trigger = %name, error = %e, "failed to enqueue terminate signal");
                         status.last_error = Some(e.to_string());
                         write_status(&state_dir, &status);
-                        return make_outcome(name, status, Err(e));
+                        return make_result(name, status, Err(e));
                     }
                 }
-                return make_outcome(name, status, Ok(()));
+                return make_result(name, status, Ok(()));
             }
             Ok(()) => {
                 warn!(trigger = %name, "long-running trigger exited unexpectedly; will restart");
@@ -240,7 +240,7 @@ pub(crate) async fn supervise_trigger(
                 warn!(trigger = %name, error = %e, "trigger build failed; will not restart");
                 status.last_error = Some(e.to_string());
                 transition(&mut status, TriggerLifecycleState::Failed, &state_dir);
-                return make_outcome(name, status, result);
+                return make_result(name, status, result);
             }
             Err(e) => {
                 warn!(trigger = %name, error = %e, "trigger failed; will restart");
@@ -262,7 +262,7 @@ pub(crate) async fn supervise_trigger(
             biased;
             () = cancel.cancelled() => {
                 transition(&mut status, TriggerLifecycleState::Stopped, &state_dir);
-                return make_outcome(name, status, Ok(()));
+                return make_result(name, status, Ok(()));
             }
             () = tokio::time::sleep(backoff) => {}
         }
@@ -400,11 +400,11 @@ mod tests {
         let trigger = make_trigger("finite_test", finite_files_decl(input_file.to_str().unwrap()));
 
         let cancel = CancellationToken::new();
-        let outcome = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
 
-        assert_eq!(outcome.status.state, TriggerLifecycleState::Completed);
-        assert_eq!(outcome.status.restart_count, 0);
-        assert!(outcome.result.is_ok());
+        assert_eq!(supervised.status.state, TriggerLifecycleState::Completed);
+        assert_eq!(supervised.status.restart_count, 0);
+        assert!(supervised.result.is_ok());
 
         let persisted = read_status(&state_dir).unwrap();
         assert_eq!(persisted.state, TriggerLifecycleState::Completed);
@@ -427,10 +427,10 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let state_dir = dir.path().join("state");
-        let outcome = supervise_trigger(trigger, cancel, state_dir).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir).await;
 
-        assert_eq!(outcome.status.state, TriggerLifecycleState::Completed);
-        assert!(outcome.result.is_ok());
+        assert_eq!(supervised.status.state, TriggerLifecycleState::Completed);
+        assert!(supervised.result.is_ok());
 
         // Verify terminate signal was enqueued
         let dq_cancel = CancellationToken::new();
@@ -476,9 +476,9 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let outcome = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
 
-        assert_eq!(outcome.status.state, TriggerLifecycleState::Stopped);
+        assert_eq!(supervised.status.state, TriggerLifecycleState::Stopped);
 
         let persisted = read_status(&state_dir).unwrap();
         assert_eq!(persisted.state, TriggerLifecycleState::Stopped);
@@ -504,22 +504,22 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let outcome = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
 
-        assert_eq!(outcome.status.state, TriggerLifecycleState::Stopped);
+        assert_eq!(supervised.status.state, TriggerLifecycleState::Stopped);
         assert!(
-            outcome.status.restart_count >= 1,
+            supervised.status.restart_count >= 1,
             "expected at least 1 restart, got {}",
-            outcome.status.restart_count
+            supervised.status.restart_count
         );
         assert!(
-            outcome.status.last_error.is_some(),
+            supervised.status.last_error.is_some(),
             "last_error should record the failure message"
         );
 
         let persisted = read_status(&state_dir).unwrap();
         assert_eq!(persisted.state, TriggerLifecycleState::Stopped);
-        assert_eq!(persisted.restart_count, outcome.status.restart_count);
+        assert_eq!(persisted.restart_count, supervised.status.restart_count);
         assert!(persisted.last_error.is_some());
     }
 
@@ -546,15 +546,15 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let outcome = supervise_trigger(trigger, cancel, state_dir).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir).await;
 
         // Should be stopped (cancelled during backoff), not completed
-        assert_eq!(outcome.status.state, TriggerLifecycleState::Stopped);
+        assert_eq!(supervised.status.state, TriggerLifecycleState::Stopped);
         // Should have attempted at least one restart
         assert!(
-            outcome.status.restart_count >= 1,
+            supervised.status.restart_count >= 1,
             "expected at least 1 restart, got {}",
-            outcome.status.restart_count
+            supervised.status.restart_count
         );
     }
 }

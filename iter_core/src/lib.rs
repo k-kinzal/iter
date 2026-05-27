@@ -48,7 +48,7 @@ pub use runner::{
     BoxError, BuilderError, Event, EventEmitter, EventHandler, EventName,
     IterationContext,
     ShellEventHandler,
-    IterationState, PreviousOutcome, Runner, RunnerBehavior, RunnerBuilder, RunnerConfig,
+    IterationState, PreviousResult, Runner, RunnerBehavior, RunnerBuilder, RunnerConfig,
     RunnerExitError, RunnerSummary, RunnerTerminationReason,
 };
 pub use signal::{

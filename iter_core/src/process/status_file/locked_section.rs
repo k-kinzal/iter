@@ -135,7 +135,7 @@ impl ProcessStatusFile {
 /// 4. `fsync` with one retry.
 ///
 /// On any failure the rollback `Failed` write runs while the flock is still
-/// held; the resulting [`SecondaryStatusWriteOutcome`] travels back inside
+/// held; the resulting [`SecondaryStatusWriteResult`] travels back inside
 /// the relevant [`LockedSectionError`] variant. Returns
 /// `LockedSectionError` so the call site can `.into()` into either
 /// `StartupError` or `AdoptError` without duplicating routing logic.

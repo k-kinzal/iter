@@ -42,7 +42,7 @@ impl<H: EventHandler> DynEventHandler for DynAdapter<H> {
     }
 }
 
-/// Outcome of a single [`EventEmitter::emit`] call.
+/// Report from a single [`EventEmitter::emit`] call.
 ///
 /// The emitter's contract is **best effort** — a failing handler is logged
 /// and the remaining handlers still run — but silence is a hostile default

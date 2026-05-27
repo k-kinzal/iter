@@ -1,6 +1,6 @@
-//! Coarse-grained classification of an agent run's outcome.
+//! Coarse-grained classification of an agent run's result.
 //!
-//! `AgentOutcomeKind` lives alongside [`AgentReport`] and [`AgentError`]
+//! `AgentResultKind` lives alongside [`AgentReport`] and [`AgentError`]
 //! because it classifies their values — it is agent-owned, not
 //! process-owned. Both the runner's user-facing [`Event`] stream and its
 //! system-facing [`RunnerLifecycle`] stream reference this type, but
@@ -16,14 +16,14 @@ use serde::{Deserialize, Serialize};
 use super::error::AgentError;
 use super::report::{AgentReport, ExitStatus};
 
-/// Coarse-grained classification of an agent run's outcome.
+/// Coarse-grained classification of an agent run's result.
 ///
 /// The lifecycle stream does not carry agent stdout, stderr, or report
 /// bodies — only this kind plus the optional exit code. This keeps the
 /// lifecycle tracing channel bounded in size and free of user payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AgentOutcomeKind {
+pub enum AgentResultKind {
     /// Agent process exited 0.
     Success,
     /// Agent process exited with a non-zero code.
@@ -46,8 +46,8 @@ pub enum AgentOutcomeKind {
     TokenLimit,
 }
 
-impl AgentOutcomeKind {
-    /// Project a successful [`AgentReport`] into a coarse outcome kind.
+impl AgentResultKind {
+    /// Project a successful [`AgentReport`] into a coarse result kind.
     #[must_use]
     pub fn from_report(report: &AgentReport) -> Self {
         match report.exit_status {
@@ -58,7 +58,7 @@ impl AgentOutcomeKind {
         }
     }
 
-    /// Project an [`AgentError`] into a coarse outcome kind.
+    /// Project an [`AgentError`] into a coarse result kind.
     #[must_use]
     pub fn from_error(err: &AgentError) -> Self {
         match err {
@@ -71,7 +71,7 @@ impl AgentOutcomeKind {
         }
     }
 
-    /// Project a `Result<&AgentReport, &AgentError>` into a coarse outcome
+    /// Project a `Result<&AgentReport, &AgentError>` into a coarse result
     /// kind. Convenience shortcut around [`Self::from_report`] /
     /// [`Self::from_error`].
     #[must_use]
@@ -88,52 +88,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn agent_outcome_kind_maps_each_exit_status() {
+    fn agent_result_kind_maps_each_exit_status() {
         let mk = |status| AgentReport {
             exit_status: status,
             last_output: None,
             turn_count: None,
         };
         assert_eq!(
-            AgentOutcomeKind::from_report(&mk(ExitStatus::Success)),
-            AgentOutcomeKind::Success
+            AgentResultKind::from_report(&mk(ExitStatus::Success)),
+            AgentResultKind::Success
         );
         assert_eq!(
-            AgentOutcomeKind::from_report(&mk(ExitStatus::Failure(2))),
-            AgentOutcomeKind::Failure
+            AgentResultKind::from_report(&mk(ExitStatus::Failure(2))),
+            AgentResultKind::Failure
         );
         assert_eq!(
-            AgentOutcomeKind::from_report(&mk(ExitStatus::Signal(9))),
-            AgentOutcomeKind::TerminatedBySignal
+            AgentResultKind::from_report(&mk(ExitStatus::Signal(9))),
+            AgentResultKind::TerminatedBySignal
         );
         assert_eq!(
-            AgentOutcomeKind::from_report(&mk(ExitStatus::Unknown)),
-            AgentOutcomeKind::UnknownExit
+            AgentResultKind::from_report(&mk(ExitStatus::Unknown)),
+            AgentResultKind::UnknownExit
         );
     }
 
     #[test]
-    fn agent_outcome_kind_maps_each_error() {
+    fn agent_result_kind_maps_each_error() {
         assert_eq!(
-            AgentOutcomeKind::from_error(&AgentError::Cancelled),
-            AgentOutcomeKind::Cancelled
+            AgentResultKind::from_error(&AgentError::Cancelled),
+            AgentResultKind::Cancelled
         );
         assert_eq!(
-            AgentOutcomeKind::from_error(&AgentError::UnknownExit),
-            AgentOutcomeKind::UnknownExit
+            AgentResultKind::from_error(&AgentError::UnknownExit),
+            AgentResultKind::UnknownExit
         );
         assert_eq!(
-            AgentOutcomeKind::from_error(&AgentError::TokenLimit("too large".into())),
-            AgentOutcomeKind::TokenLimit
+            AgentResultKind::from_error(&AgentError::TokenLimit("too large".into())),
+            AgentResultKind::TokenLimit
         );
         assert_eq!(
-            AgentOutcomeKind::from_error(&AgentError::EmptyCommand),
-            AgentOutcomeKind::Errored
+            AgentResultKind::from_error(&AgentError::EmptyCommand),
+            AgentResultKind::Errored
         );
         let io_err = std::io::Error::other("eio");
         assert_eq!(
-            AgentOutcomeKind::from_error(&AgentError::Io(io_err)),
-            AgentOutcomeKind::Errored
+            AgentResultKind::from_error(&AgentError::Io(io_err)),
+            AgentResultKind::Errored
         );
     }
 }

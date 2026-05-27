@@ -110,7 +110,7 @@ prompt "rest n={{iteration.count}}"
 }
 
 #[test]
-fn iteration_outcome_eq_selects_branch_when_no_previous_turn() {
+fn iteration_result_eq_selects_branch_when_no_previous_turn() {
     let source = r#"
 queue memory
 

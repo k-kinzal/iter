@@ -30,7 +30,7 @@ use super::janitor::janitor_sweep;
 use super::name::tmp_name_format;
 use super::name::validate_name;
 #[cfg(unix)]
-use super::stale::{StaleOutcome, stale_check};
+use super::stale::{StaleResolution, stale_check};
 #[cfg(unix)]
 use super::syscall::{
     best_effort_unlink, c_string, csprng_hex_16, dup_dirfd_cloexec, flock_exclusive, fstat_raw,
@@ -137,8 +137,8 @@ pub(crate) fn acquire(
 
         match errno.raw_os_error() {
             Some(libc::EEXIST) => match stale_check(locks_dirfd, proc_root, &cname)? {
-                StaleOutcome::Recovered => {}
-                StaleOutcome::Live => return Err(RegistryError::AlreadyExists),
+                StaleResolution::Recovered => {}
+                StaleResolution::Live => return Err(RegistryError::AlreadyExists),
             },
             Some(libc::ENOENT) => {}
             Some(libc::EPERM | libc::EOPNOTSUPP | libc::EXDEV) => {

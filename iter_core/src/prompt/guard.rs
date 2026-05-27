@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::runner::iteration::{IterationContext, PreviousOutcome};
+use crate::runner::iteration::{IterationContext, PreviousResult};
 use crate::signal::Signal;
 use crate::signal::metadata::MetadataValue;
 
@@ -51,17 +51,17 @@ pub enum PromptGuard {
         /// Right-hand-side integer literal.
         rhs: i64,
     },
-    /// `iteration.previous_outcome == "<value>"`. The accepted literals
+    /// `iteration.previous_result == "<value>"`. The accepted literals
     /// are exactly `"none" | "success" | "errored"` — anything else is
     /// rejected at semantic time so this variant only ever sees a valid
-    /// outcome string.
-    IterationOutcomeEq {
-        /// Outcome literal being compared against.
+    /// result string.
+    IterationResultEq {
+        /// Result literal being compared against.
         value: String,
     },
-    /// `iteration.previous_outcome != "<value>"`.
-    IterationOutcomeNeq {
-        /// Outcome literal being compared against.
+    /// `iteration.previous_result != "<value>"`.
+    IterationResultNeq {
+        /// Result literal being compared against.
         value: String,
     },
     /// Logical conjunction. Evaluates `lhs && rhs`, short-circuiting on
@@ -122,8 +122,8 @@ impl PromptGuard {
     ///   state is *not* represented as a number, so neither equality nor
     ///   inequality can be honestly answered; refusing to match is the
     ///   only consistent choice.
-    /// * `IterationOutcomeEq` / `IterationOutcomeNeq` compare the
-    ///   `previous_outcome` string against `value`. The semantic layer
+    /// * `IterationResultEq` / `IterationResultNeq` compare the
+    ///   `previous_result` string against `value`. The semantic layer
     ///   restricts `value` to `"none" | "success" | "errored"`, so we
     ///   compare on the canonical string projection.
     #[must_use]
@@ -145,11 +145,11 @@ impl PromptGuard {
                 Some(lhs) => apply_cmp(reduce_modulus(lhs, *modulus), *op, *rhs),
                 None => false,
             },
-            Self::IterationOutcomeEq { value } => {
-                outcome_matches(iteration.previous_outcome, value.as_str())
+            Self::IterationResultEq { value } => {
+                result_matches(iteration.previous_result, value.as_str())
             }
-            Self::IterationOutcomeNeq { value } => {
-                !outcome_matches(iteration.previous_outcome, value.as_str())
+            Self::IterationResultNeq { value } => {
+                !result_matches(iteration.previous_result, value.as_str())
             }
             Self::And(lhs, rhs) => lhs.matches(signal, iteration) && rhs.matches(signal, iteration),
             Self::Or(lhs, rhs) => lhs.matches(signal, iteration) || rhs.matches(signal, iteration),
@@ -191,11 +191,11 @@ fn apply_cmp(lhs: i64, op: CmpOp, rhs: i64) -> bool {
     }
 }
 
-fn outcome_matches(outcome: PreviousOutcome, expected: &str) -> bool {
-    let actual = match outcome {
-        PreviousOutcome::None => "none",
-        PreviousOutcome::Success => "success",
-        PreviousOutcome::Errored => "errored",
+fn result_matches(previous: PreviousResult, expected: &str) -> bool {
+    let actual = match previous {
+        PreviousResult::None => "none",
+        PreviousResult::Success => "success",
+        PreviousResult::Errored => "errored",
     };
     actual == expected
 }

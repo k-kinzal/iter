@@ -64,7 +64,7 @@ Root {
                 prompt: Match {
                     arms: [
                         PromptArm {
-                            guard: IterationOutcomeEq {
+                            guard: IterationResultEq {
                                 value: "none",
                             },
                             value: Inline(
@@ -72,7 +72,7 @@ Root {
                             ),
                         },
                         PromptArm {
-                            guard: IterationOutcomeEq {
+                            guard: IterationResultEq {
                                 value: "errored",
                             },
                             value: Inline(
@@ -80,7 +80,7 @@ Root {
                             ),
                         },
                         PromptArm {
-                            guard: IterationOutcomeNeq {
+                            guard: IterationResultNeq {
                                 value: "success",
                             },
                             value: Inline(

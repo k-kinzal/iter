@@ -36,7 +36,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::AgentOutcomeKind;
+use crate::agent::AgentResultKind;
 use crate::signal::{Metadata, SignalId};
 
 /// A single event in the Runner's system-facing lifecycle stream.
@@ -97,8 +97,8 @@ pub enum RunnerLifecycle {
     AgentFinished {
         /// Identifier of the signal currently being handled.
         signal_id: SignalId,
-        /// Coarse-grained outcome category.
-        outcome: AgentOutcomeKind,
+        /// Coarse-grained result category.
+        result_kind: AgentResultKind,
         /// Process exit code, when one is available.
         exit: Option<i32>,
     },
@@ -207,7 +207,7 @@ impl RedactedMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentOutcomeKind;
+    use crate::agent::AgentResultKind;
     use crate::signal::metadata::{MetadataKey, MetadataValue};
 
     fn signal_id() -> SignalId {
@@ -242,7 +242,7 @@ mod tests {
             RunnerLifecycle::AgentStarting { signal_id: id },
             RunnerLifecycle::AgentFinished {
                 signal_id: id,
-                outcome: AgentOutcomeKind::Success,
+                result_kind: AgentResultKind::Success,
                 exit: Some(0),
             },
             RunnerLifecycle::WorkspaceTearDown { signal_id: id },
@@ -340,7 +340,7 @@ mod tests {
         });
         drop(RunnerLifecycle::AgentFinished {
             signal_id: id,
-            outcome: AgentOutcomeKind::Success,
+            result_kind: AgentResultKind::Success,
             exit: Some(0),
         });
     }

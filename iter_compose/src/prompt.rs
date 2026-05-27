@@ -132,10 +132,10 @@ fn translate_guard(guard: &LangPromptGuard) -> CorePromptGuard {
             op: translate_cmp_op(*op),
             rhs: *rhs,
         },
-        LangPromptGuard::IterationOutcomeEq { value } => CorePromptGuard::IterationOutcomeEq {
+        LangPromptGuard::IterationResultEq { value } => CorePromptGuard::IterationResultEq {
             value: value.clone(),
         },
-        LangPromptGuard::IterationOutcomeNeq { value } => CorePromptGuard::IterationOutcomeNeq {
+        LangPromptGuard::IterationResultNeq { value } => CorePromptGuard::IterationResultNeq {
             value: value.clone(),
         },
         LangPromptGuard::And(lhs, rhs) => CorePromptGuard::And(

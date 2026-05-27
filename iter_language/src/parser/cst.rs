@@ -228,7 +228,7 @@ pub enum RawGuard {
     /// rejects any other field with a "string RHS only valid for
     /// `previous_outcome`" diagnostic, then validates the value against
     /// the closed `"none" | "success" | "errored"` set.
-    IterationOutcomeEq {
+    IterationResultEq {
         /// LHS field name as written (e.g. `"previous_outcome"`,
         /// `"count"`).
         field: String,
@@ -242,8 +242,8 @@ pub enum RawGuard {
         span: Span,
     },
     /// `iteration.<field> != "<value>"`. Same field-validation contract
-    /// as [`Self::IterationOutcomeEq`].
-    IterationOutcomeNeq {
+    /// as [`Self::IterationResultEq`].
+    IterationResultNeq {
         /// LHS field name as written.
         field: String,
         /// Span of the LHS field identifier.
@@ -286,8 +286,8 @@ impl RawGuard {
             RawGuard::MetadataEq { span, .. }
             | RawGuard::MetadataNeq { span, .. }
             | RawGuard::IterationCmp { span, .. }
-            | RawGuard::IterationOutcomeEq { span, .. }
-            | RawGuard::IterationOutcomeNeq { span, .. }
+            | RawGuard::IterationResultEq { span, .. }
+            | RawGuard::IterationResultNeq { span, .. }
             | RawGuard::And(_, _, span)
             | RawGuard::Or(_, _, span) => span.clone(),
         }

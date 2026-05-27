@@ -38,7 +38,7 @@ use super::syscall::{
 /// publish-after-write a chance to finish.
 const CORRUPT_LOCK_GRACE_SECS: u64 = 60;
 
-pub(super) enum StaleOutcome {
+pub(super) enum StaleResolution {
     /// Lock was successfully unlinked; caller must restart the publish loop.
     Recovered,
     /// Lock body refers to a still-live `proc/<ulid>` record.
@@ -50,7 +50,7 @@ pub(super) fn stale_check(
     locks_dirfd: BorrowedFd<'_>,
     proc_root: &Path,
     cname: &CString,
-) -> Result<StaleOutcome, RegistryError> {
+) -> Result<StaleResolution, RegistryError> {
     // SAFETY: `locks_dirfd` is a valid kernel file descriptor for the lifetime
     // of the borrow; `cname.as_ptr()` is a valid NUL-terminated C string.
     let raw_fd = unsafe {
@@ -63,7 +63,7 @@ pub(super) fn stale_check(
     if raw_fd < 0 {
         let err = io::Error::last_os_error();
         if err.raw_os_error() == Some(libc::ENOENT) {
-            return Ok(StaleOutcome::Recovered);
+            return Ok(StaleResolution::Recovered);
         }
         return Err(RegistryError::Io(err));
     }
@@ -79,12 +79,12 @@ pub(super) fn stale_check(
     let st_b = match fstatat_nofollow(locks_dirfd.as_raw_fd(), cname) {
         Ok(s) => s,
         Err(e) if e.raw_os_error() == Some(libc::ENOENT) => {
-            return Ok(StaleOutcome::Recovered);
+            return Ok(StaleResolution::Recovered);
         }
         Err(e) => return Err(RegistryError::Io(e)),
     };
     if (st_a.st_dev, st_a.st_ino) != (st_b.st_dev, st_b.st_ino) {
-        return Ok(StaleOutcome::Recovered);
+        return Ok(StaleResolution::Recovered);
     }
 
     // Bounded read: an oversized body is treated as a parse failure so
@@ -103,16 +103,16 @@ pub(super) fn stale_check(
             let age = lock_age(&st_b);
             if age.as_secs() >= CORRUPT_LOCK_GRACE_SECS {
                 unlinkat_allow_enoent(locks_dirfd, cname).map_err(RegistryError::Io)?;
-                return Ok(StaleOutcome::Recovered);
+                return Ok(StaleResolution::Recovered);
             }
             Err(RegistryError::CorruptLock)
         }
         Ok(ulid) => {
             if is_record_live(proc_root, ulid)? {
-                Ok(StaleOutcome::Live)
+                Ok(StaleResolution::Live)
             } else {
                 unlinkat_allow_enoent(locks_dirfd, cname).map_err(RegistryError::Io)?;
-                Ok(StaleOutcome::Recovered)
+                Ok(StaleResolution::Recovered)
             }
         }
     }

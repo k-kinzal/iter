@@ -8,7 +8,7 @@
 //!   `previous_outcome` — is rejected with a tailored hint.
 //! * `iteration.<field> % N <op> rhs` is rejected when `N == 0`.
 //! * `iteration.previous_outcome ==/!= "..."` accepts only the literal
-//!   outcomes `"none" | "success" | "errored"`.
+//!   values `"none" | "success" | "errored"`.
 //!
 //! Errors collected here surface through the analyzer's diagnostic vector,
 //! which means [`crate::parse`] returns `Err` for any non-well-formed
@@ -22,7 +22,7 @@ use crate::parser::{RawCmpOp, RawGuard};
 
 const ITERATION_NUMERIC_FIELDS_HINT: &str = "valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_outcome ==/!= \"none|success|errored\"` for the outcome string.";
 
-const ITERATION_OUTCOME_VALUES: &[&str] = &["none", "success", "errored"];
+const ITERATION_RESULT_VALUES: &[&str] = &["none", "success", "errored"];
 
 pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) -> PromptGuard {
     match guard {
@@ -96,25 +96,25 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
                 rhs,
             }
         }
-        RawGuard::IterationOutcomeEq {
+        RawGuard::IterationResultEq {
             field,
             field_span,
             value,
             value_span,
             ..
         } => {
-            check_outcome_string_rhs(&field, field_span, &value, value_span, errors);
-            PromptGuard::IterationOutcomeEq { value }
+            check_result_string_rhs(&field, field_span, &value, value_span, errors);
+            PromptGuard::IterationResultEq { value }
         }
-        RawGuard::IterationOutcomeNeq {
+        RawGuard::IterationResultNeq {
             field,
             field_span,
             value,
             value_span,
             ..
         } => {
-            check_outcome_string_rhs(&field, field_span, &value, value_span, errors);
-            PromptGuard::IterationOutcomeNeq { value }
+            check_result_string_rhs(&field, field_span, &value, value_span, errors);
+            PromptGuard::IterationResultNeq { value }
         }
         RawGuard::And(l, r, _) => PromptGuard::And(
             Box::new(lower_guard_pure(*l, errors)),
@@ -135,7 +135,7 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
 /// moot — the user's real mistake is the field name, and surfacing a
 /// second "unknown outcome" diagnostic in addition is confusing noise.
 /// We only check the value once we know the LHS is the outcome field.
-fn check_outcome_string_rhs(
+fn check_result_string_rhs(
     field: &str,
     field_span: crate::ast::Span,
     value: &str,
@@ -156,7 +156,7 @@ fn check_outcome_string_rhs(
         );
         return;
     }
-    if !ITERATION_OUTCOME_VALUES.contains(&value) {
+    if !ITERATION_RESULT_VALUES.contains(&value) {
         errors.push(
             Diagnostic::error(
                 value_span,

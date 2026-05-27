@@ -1,5 +1,5 @@
-//! Compose service types: orchestrator context, failure policy, task
-//! outcomes, and the aggregate report.
+//! Compose service types: orchestrator context, failure policy, completed
+//! tasks, and the aggregate report.
 
 use std::collections::BTreeMap;
 
@@ -25,9 +25,9 @@ impl Default for FailurePolicy {
     }
 }
 
-/// Outcome of a single spawned service task.
+/// Result of a single spawned service task.
 #[derive(Debug)]
-pub enum TaskOutcome {
+pub enum CompletedTask {
     /// A service runner completed (or errored).
     Service {
         /// Service name from the compose file.
@@ -38,7 +38,7 @@ pub enum TaskOutcome {
     },
     /// A subprocess-spawned service completed (or errored). Used when
     /// the service's queue has a cross-process URL form (file://, redis://);
-    /// non-addressable queues fall through to [`TaskOutcome::Service`]
+    /// non-addressable queues fall through to [`CompletedTask::Service`]
     /// (in-process) instead.
     ServiceSubprocess {
         /// Service name from the compose file.
@@ -75,8 +75,8 @@ pub enum TaskOutcome {
     },
 }
 
-impl TaskOutcome {
-    /// `true` when this outcome carries an error.
+impl CompletedTask {
+    /// `true` when this task completed with an error.
     #[must_use]
     pub fn is_err(&self) -> bool {
         match self {
@@ -103,14 +103,14 @@ impl TaskOutcome {
 #[derive(Debug, Default)]
 pub struct ComposeReport {
     /// One entry per spawned service task, in completion order.
-    pub outcomes: Vec<TaskOutcome>,
+    pub results: Vec<CompletedTask>,
 }
 
 impl ComposeReport {
-    /// `true` when at least one outcome carries an error.
+    /// `true` when at least one result carries an error.
     #[must_use]
     pub fn has_errors(&self) -> bool {
-        self.outcomes.iter().any(TaskOutcome::is_err)
+        self.results.iter().any(CompletedTask::is_err)
     }
 }
 

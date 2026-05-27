@@ -13,7 +13,7 @@
 //!   * the `RunnerFinished` `reason` matches the expected
 //!     termination reason.
 //!
-//! The signal-processing stages are stubbed via fake `Workspace`
+//! The signal-processing steps are stubbed via fake `Workspace`
 //! and `Agent` impls. We rely on `InMemoryQueue` for the queue.
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
@@ -550,7 +550,7 @@ impl EventHandler for CapturingIterHandler {
 }
 
 #[tokio::test]
-async fn teardown_failure_with_continue_on_error_carries_errored_outcome_to_next_iter() {
+async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_iter() {
     // With `continue_on_error = true`, a teardown failure must record
     // a failure on the iteration accumulator before bumping the
     // counter — so the *next* iteration's prompt/template sees
@@ -619,7 +619,7 @@ async fn teardown_failure_with_continue_on_error_carries_errored_outcome_to_next
     // Find the second iteration's `AgentStarting` snapshot. By then
     // turn 1's teardown has failed and `record_failure` must have
     // already run, so the threaded `IterationContext` carries the
-    // errored outcome forward.
+    // errored result forward.
     let second_agent_starting = events
         .iter()
         .filter(|(e, _)| matches!(e, Event::AgentStarting { .. }))
@@ -627,9 +627,9 @@ async fn teardown_failure_with_continue_on_error_carries_errored_outcome_to_next
         .map(|(_, iter)| iter.clone())
         .expect("a second AgentStarting must have been emitted");
     assert_eq!(
-        second_agent_starting.previous_outcome,
-        PreviousOutcome::Errored,
-        "the failed teardown of iter 1 must have flipped previous_outcome",
+        second_agent_starting.previous_result,
+        PreviousResult::Errored,
+        "the failed teardown of iter 1 must have flipped previous_result",
     );
     assert!(
         second_agent_starting.consecutive_failures >= 1,
@@ -796,8 +796,8 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
 async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
     // With `continue_on_error = true`, a timed-out iteration becomes
     // a recorded failure and the loop moves on. We use `once = true`
-    // so we get a single iteration and observe its outcome via the
-    // emitted `AgentFinished` event (`outcome = Errored`).
+    // so we get a single iteration and observe its result via the
+    // emitted `AgentFinished` event (`result_kind = Errored`).
     let queue = Arc::new(InMemoryQueue::new());
     queue
         .queue(Signal::new(Metadata::new()), Priority::default())

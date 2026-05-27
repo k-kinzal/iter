@@ -3,7 +3,7 @@
 //!
 //! [`IterationState`] is a mutable accumulator the [`Runner`](super::Runner)
 //! holds across the per-signal loop: it remembers when the runner started,
-//! the outcome of the previous turn, and the current win/lose streak.
+//! the result of the previous turn, and the current win/lose streak.
 //! [`IterationContext`] is the immutable view rendered against
 //! [`Template`](crate::template::Template) — it's what the user actually
 //! sees as `{{iteration.count}}`, `{{iteration.previous_outcome}}`, and so
@@ -23,11 +23,11 @@ use serde::Serialize;
 
 use crate::signal::SignalId;
 
-/// Outcome category attached to [`IterationState::record_success`] /
+/// Result category attached to [`IterationState::record_success`] /
 /// [`IterationState::record_failure`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PreviousOutcome {
+pub enum PreviousResult {
     /// No previous iteration has been recorded yet (first iteration).
     None,
     /// Previous iteration completed without error or non-zero agent exit
@@ -38,7 +38,7 @@ pub enum PreviousOutcome {
     Errored,
 }
 
-impl PreviousOutcome {
+impl PreviousResult {
     fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -59,7 +59,7 @@ impl PreviousOutcome {
 pub struct IterationState {
     runner_started_at: DateTime<Utc>,
     current_iteration_started_at: DateTime<Utc>,
-    previous_outcome: PreviousOutcome,
+    previous_result: PreviousResult,
     previous_exit_code: Option<i32>,
     previous_signal_id: Option<SignalId>,
     previous_finished_at: Option<DateTime<Utc>>,
@@ -76,7 +76,7 @@ impl IterationState {
         Self {
             runner_started_at,
             current_iteration_started_at: runner_started_at,
-            previous_outcome: PreviousOutcome::None,
+            previous_result: PreviousResult::None,
             previous_exit_code: None,
             previous_signal_id: None,
             previous_finished_at: None,
@@ -101,7 +101,7 @@ impl IterationState {
         exit_code: Option<i32>,
         finished_at: DateTime<Utc>,
     ) {
-        self.previous_outcome = PreviousOutcome::Success;
+        self.previous_result = PreviousResult::Success;
         self.previous_exit_code = exit_code;
         self.previous_signal_id = Some(signal_id);
         self.previous_finished_at = Some(finished_at);
@@ -118,7 +118,7 @@ impl IterationState {
         exit_code: Option<i32>,
         finished_at: DateTime<Utc>,
     ) {
-        self.previous_outcome = PreviousOutcome::Errored;
+        self.previous_result = PreviousResult::Errored;
         self.previous_exit_code = exit_code;
         self.previous_signal_id = Some(signal_id);
         self.previous_finished_at = Some(finished_at);
@@ -136,7 +136,7 @@ impl IterationState {
             count,
             started_at: self.current_iteration_started_at,
             runner_started_at: self.runner_started_at,
-            previous_outcome: self.previous_outcome,
+            previous_result: self.previous_result,
             previous_exit_code: self.previous_exit_code,
             previous_signal_id: self.previous_signal_id,
             consecutive_failures: self.consecutive_failures,
@@ -144,10 +144,10 @@ impl IterationState {
         }
     }
 
-    /// Borrow the latest recorded outcome category.
+    /// Borrow the latest recorded result category.
     #[must_use]
-    pub fn previous_outcome(&self) -> PreviousOutcome {
-        self.previous_outcome
+    pub fn previous_result(&self) -> PreviousResult {
+        self.previous_result
     }
 
     /// Borrow the latest recorded process exit code, when any.
@@ -176,7 +176,7 @@ impl IterationState {
 ///
 /// * `count` — 1-indexed iteration number.
 /// * `started_at` / `runner_started_at` — RFC 3339 timestamps.
-/// * `previous_outcome` — `"none" | "success" | "errored"`.
+/// * `previous_outcome` — `"none" | "success" | "errored"` (serialized name).
 /// * `previous_exit_code` — process exit code or `null`. Templates that
 ///   reference it without a previous turn surface a strict-mode error.
 /// * `previous_signal_id` — UUID v7 of the previous signal or `null`.
@@ -194,8 +194,9 @@ pub struct IterationContext {
     /// Wall-clock instant the runner entered its loop.
     #[serde(serialize_with = "serialize_rfc3339")]
     pub runner_started_at: DateTime<Utc>,
-    /// Outcome category of the previous iteration; `None` on the first.
-    pub previous_outcome: PreviousOutcome,
+    /// Result category of the previous iteration; `None` on the first.
+    #[serde(rename = "previous_outcome")]
+    pub previous_result: PreviousResult,
     /// Process exit code captured on the previous iteration, when one
     /// was available.
     pub previous_exit_code: Option<i32>,
@@ -212,7 +213,7 @@ pub struct IterationContext {
 impl IterationContext {
     /// Convenience: produce a deterministic, plausible context for tests
     /// that exercise prompt/guard rendering. Counts as iteration 1 with
-    /// no previous outcome. Crate-public rather than `#[cfg(test)]`
+    /// no previous result. Crate-public rather than `#[cfg(test)]`
     /// because downstream crates' integration tests construct contexts
     /// through this surface as well.
     #[must_use]
@@ -225,10 +226,10 @@ impl IterationContext {
     /// which matters for guard tests around `iteration.count % N`.
     ///
     /// The returned context is built from a fresh
-    /// [`IterationState`] — there is no simulated prior outcome
-    /// (`previous_outcome == "none"`, both streak counters `0`,
+    /// [`IterationState`] — there is no simulated prior result
+    /// (`previous_result == "none"`, both streak counters `0`,
     /// `previous_exit_code == None`, `previous_signal_id == None`).
-    /// Tests that need to exercise `previous_outcome == "errored"` /
+    /// Tests that need to exercise `previous_result == "errored"` /
     /// `"success"` or specific streak values must build their own
     /// `IterationState`, drive `record_success` / `record_failure`,
     /// and call `snapshot(count)` directly.
@@ -238,11 +239,11 @@ impl IterationContext {
         IterationState::new(now).snapshot(count)
     }
 
-    /// Project the outcome string a template renders for
-    /// `{{iteration.previous_outcome}}`.
+    /// Project the result string a template renders for
+    /// `{{iteration.previous_result}}`.
     #[must_use]
-    pub fn previous_outcome_str(&self) -> &'static str {
-        self.previous_outcome.as_str()
+    pub fn previous_result_str(&self) -> &'static str {
+        self.previous_result.as_str()
     }
 }
 
@@ -263,11 +264,11 @@ mod tests {
     }
 
     #[test]
-    fn fresh_state_has_no_previous_outcome() {
+    fn fresh_state_has_no_previous_result() {
         let state = IterationState::new(now());
         let snap = state.snapshot(1);
         assert_eq!(snap.count, 1);
-        assert_eq!(snap.previous_outcome, PreviousOutcome::None);
+        assert_eq!(snap.previous_result, PreviousResult::None);
         assert_eq!(snap.previous_exit_code, None);
         assert_eq!(snap.previous_signal_id, None);
         assert_eq!(snap.consecutive_failures, 0);
@@ -285,7 +286,7 @@ mod tests {
         state.record_success(signal.id(), Some(0), now());
         assert_eq!(state.consecutive_failures(), 0);
         assert_eq!(state.consecutive_successes(), 1);
-        assert_eq!(state.previous_outcome(), PreviousOutcome::Success);
+        assert_eq!(state.previous_result(), PreviousResult::Success);
     }
 
     #[test]
@@ -299,7 +300,7 @@ mod tests {
         state.record_failure(signal.id(), Some(1), now());
         assert_eq!(state.consecutive_failures(), 1);
         assert_eq!(state.consecutive_successes(), 0);
-        assert_eq!(state.previous_outcome(), PreviousOutcome::Errored);
+        assert_eq!(state.previous_result(), PreviousResult::Errored);
     }
 
     #[test]
@@ -316,7 +317,7 @@ mod tests {
         state.record_success(signal.id(), Some(0), now());
         let snap = state.snapshot(2);
         assert_eq!(snap.previous_signal_id, Some(signal.id()));
-        assert_eq!(snap.previous_outcome, PreviousOutcome::Success);
+        assert_eq!(snap.previous_result, PreviousResult::Success);
         assert_eq!(snap.previous_exit_code, Some(0));
     }
 
@@ -332,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn previous_outcome_serializes_as_snake_case() {
+    fn previous_result_serializes_as_snake_case() {
         let snap = IterationContext::for_count(1);
         let json = serde_json::to_value(&snap).expect("serialize");
         assert_eq!(json["previous_outcome"], "none");
@@ -349,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn streak_after_alternating_outcomes_resets_each_time() {
+    fn streak_after_alternating_results_resets_each_time() {
         let mut state = IterationState::new(now());
         let signal = Signal::synthesized();
         state.record_success(signal.id(), Some(0), now());

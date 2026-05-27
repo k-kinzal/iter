@@ -162,7 +162,7 @@ impl Parser<'_> {
                 rhs_span: rhs_tok.span,
                 span,
             }),
-            Token::String(value) => self.parse_outcome_string_rhs(OutcomeStringRhs {
+            Token::String(value) => self.parse_result_string_rhs(ResultStringRhs {
                 field_name,
                 field_span,
                 modulus,
@@ -184,8 +184,8 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_outcome_string_rhs(&mut self, args: OutcomeStringRhs) -> Option<RawGuard> {
-        let OutcomeStringRhs {
+    fn parse_result_string_rhs(&mut self, args: ResultStringRhs) -> Option<RawGuard> {
+        let ResultStringRhs {
             field_name,
             field_span,
             modulus,
@@ -194,9 +194,9 @@ impl Parser<'_> {
             rhs_span,
             span,
         } = args;
-        let outcome_equals = matches!(op, RawCmpOp::Eq) && modulus.is_none();
-        let outcome_differs = matches!(op, RawCmpOp::Neq) && modulus.is_none();
-        if !(outcome_equals || outcome_differs) {
+        let result_equals = matches!(op, RawCmpOp::Eq) && modulus.is_none();
+        let result_differs = matches!(op, RawCmpOp::Neq) && modulus.is_none();
+        if !(result_equals || result_differs) {
             self.errors.push(
                 Diagnostic::error(
                     rhs_span,
@@ -208,8 +208,8 @@ impl Parser<'_> {
             );
             return None;
         }
-        if outcome_equals {
-            Some(RawGuard::IterationOutcomeEq {
+        if result_equals {
+            Some(RawGuard::IterationResultEq {
                 field: field_name,
                 field_span,
                 value,
@@ -217,7 +217,7 @@ impl Parser<'_> {
                 span,
             })
         } else {
-            Some(RawGuard::IterationOutcomeNeq {
+            Some(RawGuard::IterationResultNeq {
                 field: field_name,
                 field_span,
                 value,
@@ -228,7 +228,7 @@ impl Parser<'_> {
     }
 }
 
-struct OutcomeStringRhs {
+struct ResultStringRhs {
     field_name: String,
     field_span: Span,
     modulus: Option<i64>,

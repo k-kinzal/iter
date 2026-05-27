@@ -1,4 +1,4 @@
-//! Outcome of the rollback `Failed` write performed by
+//! Result of the rollback `Failed` write performed by
 //! `locked_initial_write` / `locked_adoption_write` after a primary
 //! failure inside the critical section.
 //!
@@ -11,11 +11,11 @@
 
 use std::io;
 
-/// Outcome of the rollback `Failed` write performed inside the locked
+/// Result of the rollback `Failed` write performed inside the locked
 /// critical section. See module-level docs for the four shapes.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum SecondaryStatusWriteOutcome {
+pub enum SecondaryStatusWriteResult {
     /// `write_status_in_place(Failed)` and the subsequent `fsync` both
     /// succeeded.
     Wrote,
@@ -42,19 +42,19 @@ pub enum SecondaryStatusWriteOutcome {
     },
 }
 
-impl SecondaryStatusWriteOutcome {
+impl SecondaryStatusWriteResult {
     /// Combine the result of `write_status_in_place(Failed)` with the result
-    /// of the subsequent `fsync` into a single observable outcome.
+    /// of the subsequent `fsync` into a single observable result.
     #[must_use]
     pub fn from_write_and_fsync(
         write: io::Result<()>,
         fsync: io::Result<()>,
-    ) -> SecondaryStatusWriteOutcome {
+    ) -> SecondaryStatusWriteResult {
         match (write, fsync) {
-            (Ok(()), Ok(())) => SecondaryStatusWriteOutcome::Wrote,
-            (Ok(()), Err(source)) => SecondaryStatusWriteOutcome::WroteButFsyncFailed { source },
-            (Err(source), Ok(())) => SecondaryStatusWriteOutcome::WriteFailed { source },
-            (Err(write), Err(fsync)) => SecondaryStatusWriteOutcome::BothFailed { write, fsync },
+            (Ok(()), Ok(())) => SecondaryStatusWriteResult::Wrote,
+            (Ok(()), Err(source)) => SecondaryStatusWriteResult::WroteButFsyncFailed { source },
+            (Err(source), Ok(())) => SecondaryStatusWriteResult::WriteFailed { source },
+            (Err(write), Err(fsync)) => SecondaryStatusWriteResult::BothFailed { write, fsync },
         }
     }
 }
@@ -64,35 +64,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secondary_outcome_combinations_match() {
-        let oks = SecondaryStatusWriteOutcome::from_write_and_fsync(Ok(()), Ok(()));
-        assert!(matches!(oks, SecondaryStatusWriteOutcome::Wrote));
+    fn secondary_result_combinations_match() {
+        let oks = SecondaryStatusWriteResult::from_write_and_fsync(Ok(()), Ok(()));
+        assert!(matches!(oks, SecondaryStatusWriteResult::Wrote));
 
-        let fsync_only = SecondaryStatusWriteOutcome::from_write_and_fsync(
+        let fsync_only = SecondaryStatusWriteResult::from_write_and_fsync(
             Ok(()),
             Err(io::Error::other("nope")),
         );
         assert!(matches!(
             fsync_only,
-            SecondaryStatusWriteOutcome::WroteButFsyncFailed { .. }
+            SecondaryStatusWriteResult::WroteButFsyncFailed { .. }
         ));
 
-        let write_only = SecondaryStatusWriteOutcome::from_write_and_fsync(
+        let write_only = SecondaryStatusWriteResult::from_write_and_fsync(
             Err(io::Error::other("nope")),
             Ok(()),
         );
         assert!(matches!(
             write_only,
-            SecondaryStatusWriteOutcome::WriteFailed { .. }
+            SecondaryStatusWriteResult::WriteFailed { .. }
         ));
 
-        let both = SecondaryStatusWriteOutcome::from_write_and_fsync(
+        let both = SecondaryStatusWriteResult::from_write_and_fsync(
             Err(io::Error::other("w")),
             Err(io::Error::other("f")),
         );
         assert!(matches!(
             both,
-            SecondaryStatusWriteOutcome::BothFailed { .. }
+            SecondaryStatusWriteResult::BothFailed { .. }
         ));
     }
 }

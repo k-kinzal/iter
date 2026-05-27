@@ -333,7 +333,7 @@ pub fn leaves_record_non_terminal(err: &ProcessError) -> bool {
     )
 }
 
-/// Derive a [`ProcessTerminationReason`] from a runner outcome and
+/// Derive a [`ProcessTerminationReason`] from a runner result and
 /// shutdown state.
 ///
 /// The shutdown controller wins when set (signals already recorded a

@@ -151,13 +151,13 @@ fn zero_guard_spans(g: &mut RawGuard) {
             *rhs_span = 0..0;
             *span = 0..0;
         }
-        RawGuard::IterationOutcomeEq {
+        RawGuard::IterationResultEq {
             field_span,
             value_span,
             span,
             ..
         }
-        | RawGuard::IterationOutcomeNeq {
+        | RawGuard::IterationResultNeq {
             field_span,
             value_span,
             span,

@@ -61,7 +61,7 @@ pub mod error;
 mod hook_lifecycle;
 pub mod inner;
 pub mod mode;
-pub mod outcome;
+pub mod result_kind;
 pub(crate) mod process;
 pub mod report;
 
@@ -83,5 +83,5 @@ pub use drivers::opencode::{OpenCodeAgent, OpenCodeSettings};
 pub use error::AgentError;
 pub use inner::{Agent, AgentRunContext, run_with_timeout};
 pub use mode::AgentMode;
-pub use outcome::AgentOutcomeKind;
+pub use result_kind::AgentResultKind;
 pub use report::{AgentReport, ExitStatus};

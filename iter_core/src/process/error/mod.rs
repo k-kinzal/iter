@@ -33,7 +33,7 @@
 //!
 //! ```text
 //!   token            <- TokenCorruptKind (leaf)
-//!   secondary        <- SecondaryStatusWriteOutcome (leaf)
+//!   secondary        <- SecondaryStatusWriteResult (leaf)
 //!   process          <- ProcessError (outer, references Box<startup|adopt>)
 //!   locked_section   <- LockedSectionError (references ProcessError + secondary)
 //!   startup          <- StartupError (references LockedSectionError)
@@ -56,7 +56,7 @@ pub use locked_section::LockedSectionError;
 pub use observer::ObserverError;
 pub use process::ProcessError;
 pub use registry::RegistryError;
-pub use secondary::SecondaryStatusWriteOutcome;
+pub use secondary::SecondaryStatusWriteResult;
 pub use startup::StartupError;
 pub use token::TokenCorruptKind;
 

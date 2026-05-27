@@ -19,7 +19,7 @@ use crate::process::pid_file::PublishStep;
 use crate::process::status::{CorruptStatusKind, ProcessStatus};
 
 use super::process::ProcessError;
-use super::secondary::SecondaryStatusWriteOutcome;
+use super::secondary::SecondaryStatusWriteResult;
 
 /// Shared failure surface of the locked critical section walked by both
 /// `locked_initial_write` and `locked_adoption_write`. See module-level
@@ -36,22 +36,22 @@ pub enum LockedSectionError {
         kind: CorruptStatusKind,
         /// Verbatim file contents at observation.
         raw_bytes: Vec<u8>,
-        /// Outcome of the rollback `Failed` write.
-        secondary: SecondaryStatusWriteOutcome,
+        /// Result of the rollback `Failed` write.
+        secondary: SecondaryStatusWriteResult,
     },
     /// `openat(.pid.tmp, O_CREAT|O_EXCL)` returned `EEXIST`.
     PidTmpResidue {
         /// Underlying I/O error (errno).
         source: io::Error,
-        /// Outcome of the rollback `Failed` write.
-        secondary: SecondaryStatusWriteOutcome,
+        /// Result of the rollback `Failed` write.
+        secondary: SecondaryStatusWriteResult,
     },
     /// `linkat(.pid.tmp → pid)` returned `EEXIST`.
     PidAlreadyPresent {
         /// Underlying I/O error (errno).
         source: io::Error,
-        /// Outcome of the rollback `Failed` write.
-        secondary: SecondaryStatusWriteOutcome,
+        /// Result of the rollback `Failed` write.
+        secondary: SecondaryStatusWriteResult,
     },
     /// pid-file write failed at one of the [`PublishStep`] sites.
     PidWriteFailed {
@@ -61,22 +61,22 @@ pub enum LockedSectionError {
         step: PublishStep,
         /// Path of the pid file (for diagnostics).
         path: PathBuf,
-        /// Outcome of the rollback `Failed` write.
-        secondary: SecondaryStatusWriteOutcome,
+        /// Result of the rollback `Failed` write.
+        secondary: SecondaryStatusWriteResult,
     },
     /// `write_status_in_place(Running)` failed at the `write_all` step.
     StatusWriteFailed {
         /// Underlying I/O error.
         source: io::Error,
-        /// Outcome of the rollback `Failed` write.
-        secondary: SecondaryStatusWriteOutcome,
+        /// Result of the rollback `Failed` write.
+        secondary: SecondaryStatusWriteResult,
     },
     /// `fsync(status_file)` failed (one retry already attempted).
     StatusFsyncFailed {
         /// Underlying I/O error.
         source: io::Error,
-        /// Outcome of the rollback `Failed` write.
-        secondary: SecondaryStatusWriteOutcome,
+        /// Result of the rollback `Failed` write.
+        secondary: SecondaryStatusWriteResult,
     },
     /// `dirfd` of the proc directory is no longer valid (`fstat` reports
     /// `nlink == 0`, or returns `EBADF` / `ENODEV` / `ESTALE`). The

@@ -348,14 +348,14 @@ fn lower_guard_iter(pair: Pair<Rule>) -> RawGuard {
             span,
         },
         RhsLiteral::Str(value, value_span) => match op {
-            RawCmpOp::Eq => RawGuard::IterationOutcomeEq {
+            RawCmpOp::Eq => RawGuard::IterationResultEq {
                 field,
                 field_span,
                 value,
                 value_span,
                 span,
             },
-            RawCmpOp::Neq => RawGuard::IterationOutcomeNeq {
+            RawCmpOp::Neq => RawGuard::IterationResultNeq {
                 field,
                 field_span,
                 value,
