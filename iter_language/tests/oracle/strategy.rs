@@ -112,6 +112,8 @@ fn value_strategy() -> impl Strategy<Value = RawValue> {
                         fields,
                         routes: Vec::new(),
                         actions: Vec::new(),
+                        prompt_arms: Vec::new(),
+                        event_handlers: Vec::new(),
                         span: 0..0,
                     })
                 }),
@@ -153,6 +155,8 @@ fn route_strategy() -> impl Strategy<Value = RawRoute> {
                 fields,
                 routes: Vec::new(),
                 actions: Vec::new(),
+                prompt_arms: Vec::new(),
+                event_handlers: Vec::new(),
                 span: 0..0,
             },
             span: 0..0,
@@ -169,6 +173,8 @@ fn block_strategy() -> impl Strategy<Value = RawBlock> {
             fields,
             routes,
             actions,
+            prompt_arms: Vec::new(),
+            event_handlers: Vec::new(),
             span: 0..0,
         })
 }

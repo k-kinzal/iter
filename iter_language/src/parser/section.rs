@@ -180,6 +180,8 @@ impl Parser<'_> {
                 }],
                 routes: Vec::new(),
                 actions: Vec::new(),
+                prompt_arms: Vec::new(),
+                event_handlers: Vec::new(),
                 span: name.span.start..span_end,
             })
         } else {
@@ -196,6 +198,7 @@ impl Parser<'_> {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) fn parse_block(&mut self) -> RawBlock {
         let lbrace_span = self.peek_span();
         if !self.expect(&Token::LBrace, "`{`") {
@@ -203,6 +206,8 @@ impl Parser<'_> {
                 fields: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
+                prompt_arms: Vec::new(),
+                event_handlers: Vec::new(),
                 span: lbrace_span,
             };
         }
@@ -210,6 +215,8 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         let mut routes = Vec::new();
         let mut actions = Vec::new();
+        let mut prompt_arms = Vec::new();
+        let mut event_handlers = Vec::new();
 
         loop {
             match self.peek() {
@@ -220,6 +227,8 @@ impl Parser<'_> {
                         fields,
                         routes,
                         actions,
+                        prompt_arms,
+                        event_handlers,
                         span: start..end,
                     };
                 }
@@ -232,13 +241,40 @@ impl Parser<'_> {
                         fields,
                         routes,
                         actions,
+                        prompt_arms,
+                        event_handlers,
                         span: start..self.source_len,
                     };
                 }
                 Some(Token::Ident(name)) => match name.as_str() {
+                    // `_ => value` — prompt match default arm.
+                    "_" if matches!(self.peek_at(1), Some(Token::FatArrow)) => {
+                        if let Some(arm) = self.parse_prompt_match_default_arm() {
+                            prompt_arms.push(arm);
+                        } else {
+                            self.recover_inside_block();
+                        }
+                    }
+                    // Guard expression start followed by `.` — prompt match arm.
+                    "metadata" | "iteration"
+                        if matches!(self.peek_at(1), Some(Token::Dot)) =>
+                    {
+                        if let Some(arm) = self.parse_prompt_match_guard_arm() {
+                            prompt_arms.push(arm);
+                        } else {
+                            self.recover_inside_block();
+                        }
+                    }
                     "on" => {
-                        // Nested webhook route: on "<pattern>" [when "<str>"] { ... }
-                        if let Some(route) = self.parse_nested_route() {
+                        // Disambiguate: `on <ident> { ... }` is an event handler,
+                        // `on "<string>" ...` is a webhook route.
+                        if matches!(self.peek_at(1), Some(Token::Ident(_))) {
+                            if let Some(handler) = self.parse_nested_event_handler() {
+                                event_handlers.push(handler);
+                            } else {
+                                self.recover_inside_block();
+                            }
+                        } else if let Some(route) = self.parse_nested_route() {
                             routes.push(route);
                         } else {
                             self.recover_inside_block();

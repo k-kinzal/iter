@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use super::{Analyzer, CONTINUE_ON_ERROR_HINT, RUNNER_BEHAVIOR_HINT};
 use crate::ast::{
-    EventHandlerDecl, PromptExpr, PromptValue, RunnerBehavior, RunnerDecl, Span, Spanned,
+    EventHandlerDecl, PromptArm, PromptExpr, PromptValue, RunnerBehavior, RunnerDecl, Span,
+    Spanned,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
@@ -24,6 +25,32 @@ impl Analyzer {
                 kind.span.clone(),
                 format!("`runner` takes no kind, found `{}`", kind.name),
             ));
+        }
+        if let Some(ref b) = body {
+            for route in &b.routes {
+                self.errors.push(Diagnostic::error(
+                    route.span.clone(),
+                    "nested `on \"...\"` routes are not valid in a runner block",
+                ));
+            }
+            for action in &b.actions {
+                self.errors.push(Diagnostic::error(
+                    action.span.clone(),
+                    "`shell` actions are not valid directly in a runner block",
+                ));
+            }
+            for arm in &b.prompt_arms {
+                self.errors.push(Diagnostic::error(
+                    arm.span.clone(),
+                    "prompt match arms are not valid directly in a runner block",
+                ));
+            }
+            for handler in &b.event_handlers {
+                self.errors.push(Diagnostic::error(
+                    handler.span.clone(),
+                    "event handlers are not valid in a flat Iterfile runner block; use top-level `on <event>` instead",
+                ));
+            }
         }
         let mut fields = self.collect_fields(body);
         let continue_on_error = self.take_required_bool_explicit(
@@ -71,23 +98,35 @@ impl Analyzer {
             return None;
         };
 
-        // Separate out `on <event> { ... }` actions and prompt block/field.
-        let mut regular_fields = Vec::new();
         let mut events: Vec<Spanned<EventHandlerDecl>> = Vec::new();
 
-        for field in block.fields {
-            regular_fields.push(field);
+        for route in &block.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "nested `on \"...\"` routes are not valid in a runner block",
+            ));
         }
-        // Handle nested `on <event>` blocks from the raw block's actions/routes.
-        // In the current parser, `on` inside blocks appears as routes.
-        // Event handlers in runner body are parsed by the top-level `on` parser,
-        // so they appear as top-level sections. For now, runner events must be
-        // top-level `on` sections (handled by caller) or nested fields.
-        // We'll look for `on_*` fields as a workaround, but the preferred
-        // path is top-level `on` attached by the caller.
-        let _ = &mut events;
+        for action in &block.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "`shell` actions are not valid directly in a runner block; use `on <event> { shell \"...\" }`",
+            ));
+        }
+        for arm in &block.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid directly in a runner block; use `prompt { guard => \"...\" }`",
+            ));
+        }
 
-        let mut fields = self.collect_fields_from_vec(regular_fields);
+        // Lower nested `on <event> { ... }` event handlers from the block.
+        for handler in block.event_handlers {
+            if let Some(decl) = self.lower_event(&handler.event, &handler.body, handler.span) {
+                events.push(decl);
+            }
+        }
+
+        let mut fields = self.collect_fields_from_vec(block.fields);
 
         // Extract binding references.
         let agent = self.take_required_ident(&mut fields, "agent", keyword_span, "runner");
@@ -219,11 +258,112 @@ impl Analyzer {
     }
 
     /// Parse `prompt { guard => value, ... _ => default }`.
-    ///
-    /// Guard expressions in block syntax are not yet supported — the parser
-    /// would need `=>` as a token and a guard-expression sub-parser. For now
-    /// only the `_ = "default"` arm is accepted; all other fields emit an error.
     fn parse_prompt_match_block(&mut self, block: RawBlock) -> PromptExpr {
+        // Legacy fallback: if the block has fields but no prompt_arms, accept
+        // `_ = "default"` for backward compatibility.
+        if block.prompt_arms.is_empty() {
+            return self.parse_prompt_match_block_legacy(block);
+        }
+
+        let mut arms = Vec::new();
+        let mut default: Option<PromptValue> = None;
+
+        for arm in block.prompt_arms {
+            let value = match arm.value {
+                RawValue::String(s, span) => {
+                    self.validate_template(&s, &span);
+                    PromptValue::Inline(s)
+                }
+                RawValue::Ident(name, _) => PromptValue::Ref(name),
+                other => {
+                    self.errors.push(Diagnostic::error(
+                        other.span(),
+                        "prompt match arm value must be a string or a name reference",
+                    ));
+                    continue;
+                }
+            };
+
+            match arm.guard {
+                None => {
+                    if default.is_some() {
+                        self.errors.push(Diagnostic::error(
+                            arm.span,
+                            "duplicate default arm `_` in prompt match",
+                        ));
+                    } else {
+                        default = Some(value);
+                    }
+                }
+                Some(raw_guard) => {
+                    let guard = self.lower_guard(raw_guard);
+                    arms.push(PromptArm { guard, value });
+                }
+            }
+        }
+
+        // Reject anything that isn't a prompt arm in the match block.
+        for field in &block.fields {
+            self.errors.push(Diagnostic::error(
+                field.span.clone(),
+                "unexpected field in prompt match block; use `guard => value` arms",
+            ));
+        }
+        for route in &block.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "nested routes are not valid inside a prompt match block",
+            ));
+        }
+        for action in &block.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "`shell` actions are not valid inside a prompt match block",
+            ));
+        }
+        for handler in &block.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "event handlers are not valid inside a prompt match block",
+            ));
+        }
+
+        let Some(default) = default else {
+            self.errors.push(Diagnostic::error(
+                block.span.clone(),
+                "prompt match block requires a default arm (`_ => \"...\"` or `_ => name`)",
+            ));
+            return PromptExpr::Single(PromptValue::Inline(String::new()));
+        };
+
+        if arms.is_empty() {
+            PromptExpr::Single(default)
+        } else {
+            PromptExpr::Match { arms, default }
+        }
+    }
+
+    /// Legacy prompt match block: `prompt { _ = "default" }` using `=` syntax.
+    fn parse_prompt_match_block_legacy(&mut self, block: RawBlock) -> PromptExpr {
+        for route in &block.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "nested routes are not valid inside a prompt match block",
+            ));
+        }
+        for action in &block.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "`shell` actions are not valid inside a prompt match block",
+            ));
+        }
+        for handler in &block.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "event handlers are not valid inside a prompt match block",
+            ));
+        }
+
         let mut default: Option<PromptValue> = None;
 
         for field in block.fields {
@@ -254,7 +394,10 @@ impl Analyzer {
             } else {
                 self.errors.push(Diagnostic::error(
                     field.name.span,
-                    "prompt match guard expressions are not yet supported; use `prompt = \"...\"` for now",
+                    format!(
+                        "unknown field `{}` in prompt match block; use `guard => value` arms with `=>` syntax",
+                        field.name.name,
+                    ),
                 ));
             }
         }

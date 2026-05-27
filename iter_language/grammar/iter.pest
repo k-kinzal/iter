@@ -73,8 +73,10 @@ runner_section = { kw_runner ~ block? }
 kinded_section = {
       block_keyword
     ~ ident
-    ~ ( kind2_with_block | block )?
+    ~ ( as_alias ~ block? | kind2_with_block | block )?
 }
+
+as_alias = { kw_as ~ ident }
 
 // `kind2 + body` consumed atomically: the second ident only counts when a
 // block immediately follows it. Mirrors the hand-written parser's
@@ -116,7 +118,8 @@ block_keyword = @{
 // ============================================================================
 // Prompt: `prompt [when <guard>] <string>`
 // ============================================================================
-prompt_section = { kw_prompt ~ prompt_guard? ~ string_literal }
+prompt_section = { kw_prompt ~ ( prompt_as_alias | prompt_guard? ~ string_literal ) }
+prompt_as_alias = { kw_as ~ ident ~ string_literal }
 prompt_guard   = { kw_when ~ guard }
 
 guard       = { guard_or }
@@ -157,7 +160,19 @@ on_section = { kw_on ~ ident ~ block }
 // Block bodies
 // ============================================================================
 block       = { "{" ~ block_entry* ~ "}" }
-block_entry = { nested_route | action | field }
+block_entry = { prompt_match_default_arm | prompt_match_guard_arm | nested_event_handler | nested_route | action | field }
+
+// `_ => <value>` — prompt match default arm.
+prompt_match_default_arm = { "_" ~ "=>" ~ prompt_arm_value }
+
+// `<guard> => <value>` — guarded prompt match arm.
+prompt_match_guard_arm = { guard ~ "=>" ~ prompt_arm_value }
+
+// Prompt arm value: a string literal or an identifier reference.
+prompt_arm_value = { string_literal | ident }
+
+// `on <ident> { ... }` — nested event handler inside a block.
+nested_event_handler = { kw_on ~ ident ~ block }
 
 // `on "<pattern>" [when "<expr>"] { ... }`  (webhook routes).
 nested_route = { kw_on ~ string ~ route_when? ~ block }
@@ -218,6 +233,7 @@ string_literal = { triple_string | string }
 // ============================================================================
 // Reserved keywords (word boundaries enforced)
 // ============================================================================
+kw_as        = @{ "as"        ~ !ident_continue }
 kw_arg       = @{ "arg"       ~ !ident_continue }
 kw_queue     = @{ "queue"     ~ !ident_continue }
 kw_workspace = @{ "workspace" ~ !ident_continue }

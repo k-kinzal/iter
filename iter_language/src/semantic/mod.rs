@@ -68,11 +68,26 @@ impl Analyzer {
         // New syntax: definitions use `as <name>`, runner carries
         //   `agent = <ref>`, `workspace = <ref>`, etc.
         //
-        // Heuristic: if any block section has an alias OR runner body
-        // contains `agent =` / `workspace =` fields, treat as new syntax.
-        // Otherwise, desugar as deprecated old syntax.
+        // Heuristic: if any section has an `as` alias, a named prompt,
+        // or a runner body that uses new-syntax features (binding fields
+        // like `agent =` / `workspace =`, or nested event handlers),
+        // treat as new syntax. Otherwise, desugar as deprecated old syntax.
         let has_new_syntax = file.sections.iter().any(|s| match s {
-            RawSection::Block { alias, .. } => alias.is_some(),
+            RawSection::Block {
+                alias,
+                keyword,
+                body,
+                ..
+            } => {
+                alias.is_some()
+                    || (keyword == "runner"
+                        && body.as_ref().is_some_and(|b| {
+                            !b.event_handlers.is_empty()
+                                || b.fields
+                                    .iter()
+                                    .any(|f| f.name.name == "agent" || f.name.name == "workspace")
+                        }))
+            }
             RawSection::Prompt { name, .. } => name.is_some(),
             RawSection::On { .. } => false,
         });

@@ -1,0 +1,76 @@
+---
+source: iter_language/tests/conformance.rs
+description: named-definitions.iter
+---
+Root {
+    args: [],
+    queues: [
+        Spanned {
+            node: NamedDef {
+                name: "main",
+                decl: File {
+                    path: "./.iter/queue",
+                },
+            },
+            span: 210..259,
+        },
+    ],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "dev",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
+                    excludes: [],
+                    includes: [],
+                    preserve_mtime: false,
+                    apply_back: ApplyBackDecl {
+                        mode: Discard,
+                        excludes: [],
+                        includes: [],
+                    },
+                },
+            },
+            span: 72..208,
+        },
+    ],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "primary",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
+            },
+            span: 0..70,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDecl {
+                name: None,
+                agent: "primary",
+                workspace: "dev",
+                queue: Some(
+                    "main",
+                ),
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
+            },
+            span: 261..418,
+        },
+    ],
+}

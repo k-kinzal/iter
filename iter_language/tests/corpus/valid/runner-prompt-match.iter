@@ -1,0 +1,30 @@
+agent claude as primary {
+    mode    = print
+    command = "claude"
+}
+
+workspace local as dev {
+    base = "."
+}
+
+prompt as recovery """
+Fix the error from the previous iteration.
+Review the failure output and correct the approach.
+"""
+
+runner {
+    agent     = primary
+    workspace = dev
+    behavior  = loop
+    continue_on_error = false
+
+    prompt {
+        iteration.previous_outcome == "errored" => recovery
+        iteration.count % 25 == 0               => "review changes"
+        _                                       => "refactor the module"
+    }
+
+    on agent_finished {
+        shell "echo done"
+    }
+}

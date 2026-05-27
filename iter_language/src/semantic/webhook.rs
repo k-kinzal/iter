@@ -15,6 +15,8 @@ impl Analyzer {
                 fields: route.body.fields.clone(),
                 routes: Vec::new(),
                 actions: Vec::new(),
+                prompt_arms: Vec::new(),
+                event_handlers: Vec::new(),
                 span: route.body.span.clone(),
             };
             let mut fields: BTreeMap<String, RawField> = self.collect_fields(Some(block));
@@ -33,6 +35,18 @@ impl Analyzer {
                 self.errors.push(Diagnostic::error(
                     nested.span.clone(),
                     "webhook routes cannot themselves contain nested `on \"...\"` blocks",
+                ));
+            }
+            for arm in &route.body.prompt_arms {
+                self.errors.push(Diagnostic::error(
+                    arm.span.clone(),
+                    "prompt match arms are not valid inside webhook routes",
+                ));
+            }
+            for handler in &route.body.event_handlers {
+                self.errors.push(Diagnostic::error(
+                    handler.span.clone(),
+                    "event handlers are not valid inside webhook routes",
                 ));
             }
             out.push(WebhookRoute {

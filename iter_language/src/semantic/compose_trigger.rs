@@ -86,6 +86,8 @@ impl Analyzer {
                 .collect(),
             routes: b.routes,
             actions: b.actions,
+            prompt_arms: b.prompt_arms,
+            event_handlers: b.event_handlers,
             span: b.span,
         });
         self.lower_trigger(Some(kind), body, keyword_span)

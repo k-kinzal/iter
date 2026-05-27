@@ -1,0 +1,24 @@
+agent claude as primary {
+    mode    = print
+    command = "claude"
+}
+
+workspace clone as dev {
+    base           = "."
+    excludes       = []
+    preserve_mtime = false
+    apply_back { mode = discard }
+}
+
+queue file as main {
+    path = "./.iter/queue"
+}
+
+runner {
+    agent     = primary
+    workspace = dev
+    queue     = main
+    behavior  = wait
+    continue_on_error = false
+    prompt    = "do the thing"
+}

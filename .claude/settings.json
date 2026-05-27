@@ -15,7 +15,10 @@
       "Bash(*.claude/*)",
       "Bash(* .claude *)",
       "Bash(*AGENTS.md*)",
-      "Bash(*CLAUDE.md*)"
+      "Bash(*CLAUDE.md*)",
+      "Edit(./.sloc-guard.toml)",
+      "Write(./.sloc-guard.toml)",
+      "Bash(*.sloc-guard*)"
     ]
   },
   "hooks": {

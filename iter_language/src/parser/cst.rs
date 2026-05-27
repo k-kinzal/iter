@@ -89,6 +89,11 @@ pub struct RawBlock {
     pub routes: Vec<RawRoute>,
     /// Nested `shell "<cmd>"` actions (used by top-level event handlers).
     pub actions: Vec<RawAction>,
+    /// Prompt match arms: `<guard> => <value>` entries (used inside runner
+    /// prompt match blocks).
+    pub prompt_arms: Vec<RawPromptMatchArm>,
+    /// Nested `on <ident> { ... }` event handlers (used inside runner blocks).
+    pub event_handlers: Vec<RawEventHandler>,
     /// Full span of the block including braces.
     pub span: Span,
 }
@@ -147,6 +152,30 @@ impl RawValue {
             RawValue::Call { span, .. } => span.clone(),
         }
     }
+}
+
+/// A nested `on <ident> { <actions> }` event handler inside a block
+/// (e.g. runner body).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawEventHandler {
+    /// Event name identifier.
+    pub event: RawIdent,
+    /// Body block containing actions.
+    pub body: RawBlock,
+    /// Full span of the event handler.
+    pub span: Span,
+}
+
+/// A `<guard> => <value>` arm inside a prompt match block. The default
+/// arm uses `_` as the guard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawPromptMatchArm {
+    /// Guard expression (or `None` for the `_` wildcard default arm).
+    pub guard: Option<RawGuard>,
+    /// Value — either a string literal or a bareword identifier reference.
+    pub value: RawValue,
+    /// Full span of the arm.
+    pub span: Span,
 }
 
 /// A nested `on "<pattern>" [when "<expr>"] { ... }` webhook route.

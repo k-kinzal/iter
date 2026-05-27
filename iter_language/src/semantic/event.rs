@@ -58,6 +58,18 @@ impl Analyzer {
                 ));
             }
         }
+        for arm in &body.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid inside an event handler block",
+            ));
+        }
+        for handler in &body.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "nested event handlers are not valid inside an event handler block",
+            ));
+        }
         Some(Spanned::new(
             EventHandlerDecl {
                 event: event_name,

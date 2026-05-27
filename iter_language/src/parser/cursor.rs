@@ -172,7 +172,7 @@ impl<'a> Parser<'a> {
                 }
                 Token::Ident(name)
                     if depth == 0
-                        && matches!(name.as_str(), "shell" | "on" | "metadata" | "queue") =>
+                        && matches!(name.as_str(), "shell" | "on" | "metadata" | "iteration" | "queue" | "_") =>
                 {
                     return;
                 }

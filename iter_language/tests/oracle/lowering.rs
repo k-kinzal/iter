@@ -8,8 +8,8 @@
 //! each call site.
 
 use iter_language::{
-    RawAction, RawBlock, RawCmpOp, RawField, RawFile, RawGuard, RawIdent, RawRoute, RawSection,
-    RawValue, Span,
+    RawAction, RawBlock, RawCmpOp, RawEventHandler, RawField, RawFile, RawGuard, RawIdent,
+    RawPromptMatchArm, RawRoute, RawSection, RawValue, Span,
 };
 use pest::iterators::Pair;
 
@@ -68,6 +68,8 @@ fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
             }],
             routes: Vec::new(),
             actions: Vec::new(),
+            prompt_arms: Vec::new(),
+            event_handlers: Vec::new(),
             span: name.span.start..span.end,
         }
     });
@@ -125,9 +127,17 @@ fn lower_kinded_section(pair: Pair<Rule>) -> RawSection {
     let kind_pair = inner.next().expect("kinded section kind ident");
     let kind = Some(lower_ident(&kind_pair));
     let mut kind2: Option<RawIdent> = None;
+    let mut alias: Option<RawIdent> = None;
     let mut body: Option<RawBlock> = None;
     for tail in inner {
         match tail.as_rule() {
+            Rule::as_alias => {
+                let alias_ident = tail
+                    .into_inner()
+                    .find(|c| c.as_rule() == Rule::ident)
+                    .expect("as_alias contains ident");
+                alias = Some(lower_ident(&alias_ident));
+            }
             Rule::kind2_with_block => {
                 let mut k2_inner = tail.into_inner();
                 let k2_ident = k2_inner.next().expect("kind2 ident");
@@ -144,7 +154,7 @@ fn lower_kinded_section(pair: Pair<Rule>) -> RawSection {
         keyword_span,
         kind,
         kind2,
-        alias: None,
+        alias,
         body,
         span,
     }
@@ -172,11 +182,22 @@ fn lower_prompt_section(pair: Pair<Rule>) -> RawSection {
     let kw_pair = inner.next().expect("prompt keyword");
     let keyword_span = pair_span(&kw_pair);
 
+    let mut name: Option<RawIdent> = None;
     let mut guard: Option<RawGuard> = None;
     let mut body_pair: Option<Pair<Rule>> = None;
 
     for p in inner {
         match p.as_rule() {
+            Rule::prompt_as_alias => {
+                for c in p.into_inner() {
+                    match c.as_rule() {
+                        Rule::kw_as => {}
+                        Rule::ident => name = Some(lower_ident(&c)),
+                        Rule::string_literal => body_pair = Some(c),
+                        other => panic!("unexpected rule under `prompt_as_alias`: {other:?}"),
+                    }
+                }
+            }
             Rule::prompt_guard => {
                 let guard_pair = p
                     .into_inner()
@@ -194,7 +215,7 @@ fn lower_prompt_section(pair: Pair<Rule>) -> RawSection {
     let body = lower_string_literal(body_pair);
     RawSection::Prompt {
         keyword_span,
-        name: None,
+        name,
         guard,
         body,
         body_span,
@@ -412,11 +433,22 @@ fn lower_block(pair: Pair<Rule>) -> RawBlock {
     let mut fields = Vec::new();
     let mut routes = Vec::new();
     let mut actions = Vec::new();
+    let mut prompt_arms = Vec::new();
+    let mut event_handlers = Vec::new();
     for entry in pair.into_inner() {
         match entry.as_rule() {
             Rule::block_entry => {
                 let inner = first_child(entry);
                 match inner.as_rule() {
+                    Rule::prompt_match_default_arm => {
+                        prompt_arms.push(lower_prompt_match_default_arm(inner));
+                    }
+                    Rule::prompt_match_guard_arm => {
+                        prompt_arms.push(lower_prompt_match_guard_arm(inner));
+                    }
+                    Rule::nested_event_handler => {
+                        event_handlers.push(lower_nested_event_handler(inner));
+                    }
                     Rule::nested_route => routes.push(lower_nested_route(inner)),
                     Rule::action => actions.push(lower_action(inner)),
                     Rule::field => fields.push(lower_field(inner)),
@@ -430,6 +462,73 @@ fn lower_block(pair: Pair<Rule>) -> RawBlock {
         fields,
         routes,
         actions,
+        prompt_arms,
+        event_handlers,
+        span,
+    }
+}
+
+fn lower_prompt_match_default_arm(pair: Pair<Rule>) -> RawPromptMatchArm {
+    assert_eq!(pair.as_rule(), Rule::prompt_match_default_arm);
+    let span = pair_span(&pair);
+    let value_pair = pair
+        .into_inner()
+        .find(|c| c.as_rule() == Rule::prompt_arm_value)
+        .expect("prompt_match_default_arm contains prompt_arm_value");
+    let value = lower_prompt_arm_value(value_pair);
+    RawPromptMatchArm {
+        guard: None,
+        value,
+        span,
+    }
+}
+
+fn lower_prompt_match_guard_arm(pair: Pair<Rule>) -> RawPromptMatchArm {
+    assert_eq!(pair.as_rule(), Rule::prompt_match_guard_arm);
+    let span = pair_span(&pair);
+    let mut guard_out: Option<RawGuard> = None;
+    let mut value_out: Option<RawValue> = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::guard => guard_out = Some(lower_guard(p)),
+            Rule::prompt_arm_value => value_out = Some(lower_prompt_arm_value(p)),
+            other => panic!("unexpected prompt_match_guard_arm child: {other:?}"),
+        }
+    }
+    RawPromptMatchArm {
+        guard: guard_out,
+        value: value_out.expect("prompt_match_guard_arm value"),
+        span,
+    }
+}
+
+fn lower_prompt_arm_value(pair: Pair<Rule>) -> RawValue {
+    assert_eq!(pair.as_rule(), Rule::prompt_arm_value);
+    let inner = first_child(pair);
+    let span = pair_span(&inner);
+    match inner.as_rule() {
+        Rule::string_literal => RawValue::String(lower_string_literal(inner), span),
+        Rule::ident => RawValue::Ident(inner.as_str().to_string(), span),
+        other => panic!("unexpected prompt_arm_value child: {other:?}"),
+    }
+}
+
+fn lower_nested_event_handler(pair: Pair<Rule>) -> RawEventHandler {
+    assert_eq!(pair.as_rule(), Rule::nested_event_handler);
+    let span = pair_span(&pair);
+    let mut event: Option<RawIdent> = None;
+    let mut body: Option<RawBlock> = None;
+    for p in pair.into_inner() {
+        match p.as_rule() {
+            Rule::kw_on => {}
+            Rule::ident => event = Some(lower_ident(&p)),
+            Rule::block => body = Some(lower_block(p)),
+            other => panic!("unexpected nested_event_handler child: {other:?}"),
+        }
+    }
+    RawEventHandler {
+        event: event.expect("nested_event_handler event"),
+        body: body.expect("nested_event_handler body"),
         span,
     }
 }

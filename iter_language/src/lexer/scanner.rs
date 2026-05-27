@@ -56,6 +56,8 @@ impl<'a> Lexer<'a> {
                 b'=' => {
                     if self.peek_at(1) == Some(b'=') {
                         self.push(start, Token::EqEq, 2);
+                    } else if self.peek_at(1) == Some(b'>') {
+                        self.push(start, Token::FatArrow, 2);
                     } else {
                         self.push(start, Token::Equals, 1);
                     }

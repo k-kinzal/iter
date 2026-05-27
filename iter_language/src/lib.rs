@@ -74,8 +74,8 @@ pub use ast::{
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{
-    RawAction, RawBlock, RawCmpOp, RawField, RawFile, RawGuard, RawIdent, RawRoute, RawSection,
-    RawValue,
+    RawAction, RawBlock, RawCmpOp, RawEventHandler, RawField, RawFile, RawGuard, RawIdent,
+    RawPromptMatchArm, RawRoute, RawSection, RawValue,
 };
 
 /// Semantic version of the grammar implemented by this crate.
@@ -93,7 +93,7 @@ pub use parser::{
 /// component. Adding a new optional field, a new kind that is parsed but not
 /// required, or a new diagnostic message bumps the minor component. Bug
 /// fixes and documentation changes bump the patch component.
-pub const GRAMMAR_VERSION: &str = "4.0.0";
+pub const GRAMMAR_VERSION: &str = "4.1.0";
 
 /// Parse the given source text into a validated [`Root`].
 ///

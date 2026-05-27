@@ -1,0 +1,100 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-prompt-match.iter
+---
+Root {
+    args: [],
+    queues: [],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "dev",
+                decl: Local {
+                    base: ".",
+                },
+            },
+            span: 72..113,
+        },
+    ],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "primary",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
+            },
+            span: 0..70,
+        },
+    ],
+    prompts: [
+        Spanned {
+            node: NamedPrompt {
+                name: "recovery",
+                body: "Fix the error from the previous iteration.\nReview the failure output and correct the approach.",
+            },
+            span: 115..236,
+        },
+    ],
+    runners: [
+        Spanned {
+            node: RunnerDecl {
+                name: None,
+                agent: "primary",
+                workspace: "dev",
+                queue: None,
+                continue_on_error: false,
+                behavior: Loop {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: None,
+                prompt: Match {
+                    arms: [
+                        PromptArm {
+                            guard: IterationResultEq {
+                                value: "errored",
+                            },
+                            value: Ref(
+                                "recovery",
+                            ),
+                        },
+                        PromptArm {
+                            guard: IterationCmp {
+                                field: Count,
+                                modulus: Some(
+                                    25,
+                                ),
+                                op: Eq,
+                                rhs: 0,
+                            },
+                            value: Inline(
+                                "review changes",
+                            ),
+                        },
+                    ],
+                    default: Inline(
+                        "refactor the module",
+                    ),
+                },
+                events: [
+                    Spanned {
+                        node: EventHandlerDecl {
+                            event: AgentFinished,
+                            actions: [
+                                Shell(
+                                    "echo done",
+                                ),
+                            ],
+                        },
+                        span: 568..619,
+                    },
+                ],
+            },
+            span: 238..621,
+        },
+    ],
+}

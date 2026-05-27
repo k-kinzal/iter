@@ -30,6 +30,20 @@ impl Analyzer {
             &["loop", "cron", "watch", "files", "command", "webhook"],
         )?;
         let body_block = body;
+        if let Some(ref b) = body_block {
+            for arm in &b.prompt_arms {
+                self.errors.push(Diagnostic::error(
+                    arm.span.clone(),
+                    "prompt match arms are not valid inside a trigger block",
+                ));
+            }
+            for handler in &b.event_handlers {
+                self.errors.push(Diagnostic::error(
+                    handler.span.clone(),
+                    "event handlers are not valid inside a trigger block",
+                ));
+            }
+        }
         let mut fields = self.collect_fields(body_block.clone());
         let decl = match kind.name.as_str() {
             "loop" => self.lower_trigger_loop(&mut fields),

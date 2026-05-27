@@ -31,6 +31,7 @@ pub(crate) enum Token {
     AmpAmp,
     PipePipe,
     Dot,
+    FatArrow,
 
     // Literals
     String(String),
@@ -64,6 +65,7 @@ impl Token {
             Token::AmpAmp => "`&&`".into(),
             Token::PipePipe => "`||`".into(),
             Token::Dot => "`.`".into(),
+            Token::FatArrow => "`=>`".into(),
             Token::String(_) => "string literal".into(),
             Token::Integer(_) => "integer literal".into(),
             Token::Duration(_) => "duration literal".into(),

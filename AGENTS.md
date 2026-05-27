@@ -58,6 +58,10 @@ Quality takes precedence when in doubt. Less shipped with confidence beats more 
 
 It is a given that the code works. Beyond that, it must be designed with separation of concerns and the single responsibility principle, as well as appropriate module management and layering. Please note that this is not about simply breaking things into small pieces. Aim for a level of granularity based on concepts and behaviors.
 
+## Protected Files
+
+`.sloc-guard.toml` is a protected configuration file. Do not modify it.
+
 ## Related Projects
 
 - **~/Projects/agent-loop:** Predecessor to iter's agent control implementation.

@@ -25,8 +25,8 @@ mod section;
 mod value;
 
 pub use cst::{
-    RawAction, RawBlock, RawCmpOp, RawField, RawFile, RawGuard, RawIdent, RawRoute, RawSection,
-    RawValue,
+    RawAction, RawBlock, RawCmpOp, RawEventHandler, RawField, RawFile, RawGuard, RawIdent,
+    RawPromptMatchArm, RawRoute, RawSection, RawValue,
 };
 
 use crate::diagnostic::Diagnostic;
