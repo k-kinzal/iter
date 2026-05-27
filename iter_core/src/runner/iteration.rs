@@ -30,10 +30,10 @@ use crate::signal::SignalId;
 pub enum PreviousOutcome {
     /// No previous iteration has been recorded yet (first iteration).
     None,
-    /// Previous iteration completed without a stage error or non-zero
-    /// agent exit (per the runner's success path).
+    /// Previous iteration completed without error or non-zero agent exit
+    /// (per the runner's success path).
     Success,
-    /// Previous iteration recorded a runner stage error or a non-zero /
+    /// Previous iteration recorded a processing error or a non-zero /
     /// signal-terminated agent exit.
     Errored,
 }
@@ -52,7 +52,7 @@ impl PreviousOutcome {
 ///
 /// On every turn the runner snapshots the state into an
 /// [`IterationContext`] before rendering the prompt and dispatching
-/// events; after the agent finishes (or a stage fails) it calls
+/// events; after the agent finishes (or a step fails) it calls
 /// [`Self::record_success`] / [`Self::record_failure`] before incrementing
 /// `iteration_count`.
 #[derive(Debug, Clone)]
@@ -110,8 +110,8 @@ impl IterationState {
     }
 
     /// Record an errored iteration. Bumps the failure streak and clears
-    /// the success streak. `exit_code` is `None` for stage errors that
-    /// did not surface a process exit code.
+    /// the success streak. `exit_code` is `None` for errors that did not
+    /// surface a process exit code.
     pub fn record_failure(
         &mut self,
         signal_id: SignalId,

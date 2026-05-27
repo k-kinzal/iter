@@ -1,8 +1,23 @@
-use super::event::ErrorStage;
+/// Wire-format labels identifying which runner step produced an error.
+///
+/// These are part of the serialized event format (`"stage"` field in
+/// `runner_error` and `runner_finished` events). Changing a value is a
+/// backward-incompatible wire-format change.
+pub mod error_source {
+    /// Pulling a signal off the queue.
+    pub const DEQUEUE: &str = "dequeue";
+    /// Rendering a prompt template.
+    pub const RENDER_PROMPT: &str = "render_prompt";
+    /// Setting up the workspace.
+    pub const WORKSPACE_SETUP: &str = "workspace_setup";
+    /// Running the agent.
+    pub const AGENT_RUN: &str = "agent_run";
+    /// Tearing down the workspace.
+    pub const WORKSPACE_TEARDOWN: &str = "workspace_teardown";
+}
 
 /// Errors emitted by [`super::Runner::run`].
 #[derive(Debug, thiserror::Error)]
-// All variants name the stage that failed; shared suffix is intentional.
 #[allow(clippy::enum_variant_names)]
 pub enum RunnerExitError {
     /// A dequeue operation failed and `continue_on_error` was `false`.
@@ -73,15 +88,15 @@ pub enum RunnerExitError {
 }
 
 impl RunnerExitError {
-    /// Return the [`ErrorStage`] label for this error.
+    /// Return a label identifying which runner step produced this error.
     #[must_use]
-    pub fn stage(&self) -> ErrorStage {
+    pub fn error_source(&self) -> &'static str {
         match self {
-            Self::DequeueFailed { .. } => ErrorStage::Dequeue,
-            Self::RenderPromptFailed { .. } => ErrorStage::RenderPrompt,
-            Self::WorkspaceSetupFailed { .. } => ErrorStage::WorkspaceSetup,
-            Self::AgentRunFailed { .. } => ErrorStage::AgentRun,
-            Self::WorkspaceTeardownFailed { .. } => ErrorStage::WorkspaceTeardown,
+            Self::DequeueFailed { .. } => error_source::DEQUEUE,
+            Self::RenderPromptFailed { .. } => error_source::RENDER_PROMPT,
+            Self::WorkspaceSetupFailed { .. } => error_source::WORKSPACE_SETUP,
+            Self::AgentRunFailed { .. } => error_source::AGENT_RUN,
+            Self::WorkspaceTeardownFailed { .. } => error_source::WORKSPACE_TEARDOWN,
         }
     }
 

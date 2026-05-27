@@ -198,44 +198,8 @@ impl Event {
     }
 }
 
-/// Label identifying which runner step produced an error.
-///
-/// Used in [`RunnerExitError`](crate::runner::RunnerExitError),
-/// [`RunnerTerminationReason`], and
-/// [`RunnerLifecycle`](crate::runner::RunnerLifecycle) for
-/// display and serialization. Not a behavioral dispatch mechanism.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ErrorStage {
-    /// Pulling a signal off the queue.
-    Dequeue,
-    /// Rendering a prompt template.
-    RenderPrompt,
-    /// Setting up the workspace.
-    WorkspaceSetup,
-    /// Running the agent.
-    AgentRun,
-    /// Tearing down the workspace.
-    WorkspaceTeardown,
-}
-
-impl std::fmt::Display for ErrorStage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let label = match self {
-            Self::Dequeue => "dequeue",
-            Self::RenderPrompt => "render_prompt",
-            Self::WorkspaceSetup => "workspace_setup",
-            Self::AgentRun => "agent_run",
-            Self::WorkspaceTeardown => "workspace_teardown",
-        };
-        f.write_str(label)
-    }
-}
-
 impl Event {
     /// Return the signal id associated with this event, if any.
-    ///
-    /// Useful for log formatting and cross-event grouping.
     #[must_use]
     pub fn signal_id(&self) -> Option<SignalId> {
         match self {

@@ -327,7 +327,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
         }
         RunnerLifecycle::RunnerError {
             signal_id,
-            stage,
+            error_source,
             error_message,
         } => {
             let signal_id_field = signal_id.map(signal_id_short);
@@ -335,7 +335,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 target: LIFECYCLE_TARGET,
                 event = "runner_error",
                 signal_id = ?signal_id_field,
-                stage = %stage,
+                stage = %error_source,
                 error = %error_message,
                 "runner error"
             );
@@ -405,12 +405,12 @@ fn format_lifecycle_line(ev: &RunnerLifecycle) -> String {
         }
         RunnerLifecycle::RunnerError {
             signal_id,
-            stage,
+            error_source,
             error_message,
         } => {
             let signal_id_field = signal_id.map_or_else(|| "None".to_owned(), signal_id_short);
             format!(
-                "runner error event=runner_error signal_id={signal_id_field} stage={stage} error={error_message}"
+                "runner error event=runner_error signal_id={signal_id_field} stage={error_source} error={error_message}"
             )
         }
     }

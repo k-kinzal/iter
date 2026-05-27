@@ -1,5 +1,5 @@
-//! [`Runner`] — drives the per-signal stages that connect a [`Queue`],
-//! a [`Workspace`], and an [`Agent`].
+//! [`Runner`] — receives a signal, sets up a workspace, runs an agent, and
+//! tears down the workspace.
 //!
 //! The runner exposes a single `run` method that returns once one of the
 //! configured termination conditions fires (or the supplied
@@ -34,7 +34,7 @@ use crate::workspace::Workspace;
 pub use builder::{BuilderError, RunnerBuilder};
 pub use config::{RunnerBehavior, RunnerConfig, RunnerSummary, RunnerTerminationReason};
 pub use error::RunnerExitError;
-pub use event::{ErrorStage, Event, EventName};
+pub use event::{Event, EventName};
 pub use event_emitter::{EmitReport, EventEmitter};
 pub use event_handler::{BoxError, EventHandler};
 pub use iteration::{IterationContext, IterationState, PreviousOutcome};
@@ -98,7 +98,7 @@ where
     /// * the queue is drained (`dequeue` returns `Ok(None)`) — only when
     ///   the runner has a queue and `behavior = wait`,
     /// * `once` is set in [`RunnerConfig`] and one signal was processed, or
-    /// * a runner stage error occurs and `continue_on_error` is `false`.
+    /// * a processing error occurs and `continue_on_error` is `false`.
     ///
     /// When `behavior = loop` is configured the runner synthesises a
     /// signal each time the queue is empty (or whenever it has no queue),
@@ -148,7 +148,7 @@ where
             Ok(s) => (s.termination_reason.clone(), s.iteration_count),
             Err(err) => (
                 RunnerTerminationReason::Error {
-                    stage: err.stage(),
+                    error_source: err.error_source().to_owned(),
                     message: err.message().to_owned(),
                 },
                 iteration_count,
@@ -170,17 +170,16 @@ where
 // ─────────────────────────────────────────────────────────────────────────
 // Composition primitives for `Runner::run`.
 //
-// `run` is a workflow over per-signal stages.  Each concern below holds
-// exactly one responsibility: `RunnerEvents` (in events.rs) owns the
-// broadcast + tally pair; `ProcessingFailure` and `NextSignal` are the
-// data shapes that compose stage outcomes;
+// Each concern below holds exactly one responsibility: `RunnerEvents`
+// (in events.rs) owns the broadcast + tally pair; `ProcessingFailure`
+// and `NextSignal` are the data shapes that compose processing outcomes;
 // `decide_after_processing_failure` is the pure failure-policy decision;
-// the `next_signal` / `render_prompt` / `drive_workspace` stage
-// functions are typed and side-effect-explicit.  Each function receives
-// only the parameters it actually uses.
+// the `next_signal` / `render_prompt` / `drive_workspace` functions are
+// typed and side-effect-explicit.  Each function receives only the
+// parameters it actually uses.
 // ─────────────────────────────────────────────────────────────────────────
 
-type StageError = Box<dyn std::error::Error + Send + Sync + 'static>;
+type BoxedError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Pre-iteration failure from a queue `dequeue` call.
 ///
@@ -190,7 +189,7 @@ type StageError = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// subject to the `once` policy.
 struct DequeueError {
     message: String,
-    source: StageError,
+    source: BoxedError,
 }
 
 impl DequeueError {
@@ -224,23 +223,23 @@ impl DequeueError {
 enum ProcessingFailure {
     Render {
         signal_id: SignalId,
-        source: StageError,
+        source: BoxedError,
         message: String,
     },
     Setup {
         signal_id: SignalId,
-        source: StageError,
+        source: BoxedError,
         message: String,
     },
     Agent {
         signal_id: SignalId,
-        source: StageError,
+        source: BoxedError,
         message: String,
         exit: Option<i32>,
     },
     Teardown {
         signal_id: SignalId,
-        source: StageError,
+        source: BoxedError,
         message: String,
     },
 }
@@ -271,12 +270,12 @@ impl ProcessingFailure {
         }
     }
 
-    fn stage_label(&self) -> &'static str {
+    fn error_source(&self) -> &'static str {
         match self {
-            Self::Render { .. } => "render_prompt",
-            Self::Setup { .. } => "workspace_setup",
-            Self::Agent { .. } => "agent_run",
-            Self::Teardown { .. } => "workspace_teardown",
+            Self::Render { .. } => error::error_source::RENDER_PROMPT,
+            Self::Setup { .. } => error::error_source::WORKSPACE_SETUP,
+            Self::Agent { .. } => error::error_source::AGENT_RUN,
+            Self::Teardown { .. } => error::error_source::WORKSPACE_TEARDOWN,
         }
     }
 
@@ -491,7 +490,7 @@ struct AgentRecord {
 async fn best_effort_teardown<W>(
     workspace: &mut W,
     signal_id: SignalId,
-    stage_label: &str,
+    failed_step: &str,
     cancel: &CancellationToken,
 ) where
     W: Workspace,
@@ -502,9 +501,9 @@ async fn best_effort_teardown<W>(
         iter_tracing::record_span_error(&span, "workspace_teardown", &message);
         tracing::warn!(
             signal_id = %signal_id,
-            stage = stage_label,
+            failed_step = failed_step,
             error = %message,
-            "best-effort workspace teardown after stage failure returned an \
+            "best-effort workspace teardown after failure returned an \
              error; workspace may not be fully cleaned up",
         );
     }
@@ -550,7 +549,16 @@ where
         let message = err.to_string();
         iter_tracing::record_span_error(&setup_span, "workspace_setup", &message);
         events
-            .workspace_setup_failed(signal_id, &message, snap)
+            .runner_error(
+                error::error_source::WORKSPACE_SETUP,
+                Some(signal_id),
+                &message,
+                Event::WorkspaceSetupFailed {
+                    signal_id,
+                    error: message.clone(),
+                },
+                snap,
+            )
             .await;
         best_effort_teardown(&mut workspace, signal_id, "workspace_setup", cancel).await;
         return Err(ProcessingFailure::Setup {
@@ -637,7 +645,18 @@ where
     if let Err(err) = agent_result {
         let message = err.to_string();
         iter_tracing::record_span_error(&agent_span, "agent_run", &message);
-        events.agent_run_failed(signal_id, &message, snap).await;
+        events
+            .runner_error(
+                error::error_source::AGENT_RUN,
+                Some(signal_id),
+                &message,
+                Event::AgentRunFailed {
+                    signal_id,
+                    error: message.clone(),
+                },
+                snap,
+            )
+            .await;
         best_effort_teardown(&mut workspace, signal_id, "agent_run", cancel).await;
         return Err(ProcessingFailure::Agent {
             signal_id,
@@ -666,7 +685,16 @@ where
         let message = err.to_string();
         iter_tracing::record_span_error(&teardown_span, "workspace_teardown", &message);
         events
-            .workspace_teardown_failed(signal_id, &message, snap)
+            .runner_error(
+                error::error_source::WORKSPACE_TEARDOWN,
+                Some(signal_id),
+                &message,
+                Event::WorkspaceTeardownFailed {
+                    signal_id,
+                    error: message.clone(),
+                },
+                snap,
+            )
             .await;
         return Err(ProcessingFailure::Teardown {
             signal_id,
@@ -738,7 +766,16 @@ where
             } = failure
             {
                 events
-                    .render_prompt_failed(signal_id, message, &snap)
+                    .runner_error(
+                        error::error_source::RENDER_PROMPT,
+                        Some(signal_id),
+                        message,
+                        Event::RenderPromptFailed {
+                            signal_id,
+                            error: message.clone(),
+                        },
+                        &snap,
+                    )
                     .await;
             }
             return Err(failure);
@@ -762,8 +799,8 @@ where
 
 /// Drive repetition + termination policy.
 ///
-/// Treats dequeue failures and stage failures **asymmetrically**: dequeue
-/// failures do NOT bump `iteration_count` and do NOT call
+/// Treats dequeue failures and processing failures **asymmetrically**:
+/// dequeue failures do NOT bump `iteration_count` and do NOT call
 /// `iter_state.record_failure` — they happen pre-iteration. Only
 /// `process_signal` errors bump the counter and update streak state.
 #[allow(clippy::too_many_arguments)]
@@ -817,7 +854,17 @@ where
                 ));
             }
             NextSignal::Failed(dequeue_err) => {
-                events.dequeue_failed(dequeue_err.message(), &snap).await;
+                events
+                    .runner_error(
+                        error::error_source::DEQUEUE,
+                        None,
+                        dequeue_err.message(),
+                        Event::DequeueFailed {
+                            error: dequeue_err.message().to_owned(),
+                        },
+                        &snap,
+                    )
+                    .await;
                 if !config.continue_on_error {
                     return Err(dequeue_err.into_exit_error(0, 0));
                 }
@@ -881,7 +928,7 @@ where
                         span.record("iter.runner.outcome", "failure");
                         iter_tracing::record_span_error(
                             &span,
-                            failure.stage_label(),
+                            failure.error_source(),
                             failure.message(),
                         );
                         iter_state.record_failure(failure.signal_id(), failure.exit(), Utc::now());

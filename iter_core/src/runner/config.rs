@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::event::ErrorStage;
 use crate::signal::SignalId;
 
 /// What the [`Runner`](super::Runner) should do when no signal is available.
@@ -60,7 +59,7 @@ impl Default for RunnerBehavior {
 pub struct RunnerConfig {
     /// Run exactly one signal then exit.
     pub once: bool,
-    /// Continue processing further signals after a non-fatal runner stage error.
+    /// Continue processing further signals after a non-fatal error.
     pub continue_on_error: bool,
     /// What to do when no signal is available — wait on the queue or
     /// synthesise one.
@@ -103,11 +102,14 @@ pub enum RunnerTerminationReason {
     /// signal was dequeued. The runner exits gracefully without invoking
     /// the agent for that signal.
     TerminateSignalReceived,
-    /// A runner stage error stopped the loop because `continue_on_error`
-    /// was `false`.
+    /// An error stopped the loop because `continue_on_error` was `false`.
     Error {
-        /// Which runner step produced the fatal error.
-        stage: ErrorStage,
+        /// Which runner step produced the fatal error (e.g. `"dequeue"`,
+        /// `"workspace_setup"`, `"agent_run"`, `"workspace_teardown"`,
+        /// `"render_prompt"`). Serialized as `"stage"` in the JSON wire
+        /// format for backward compatibility with existing log consumers.
+        #[serde(rename = "stage")]
+        error_source: String,
         /// Stringified error message.
         message: String,
     },
@@ -153,4 +155,55 @@ pub struct RunnerSummary {
     /// field still deserialize cleanly.
     #[serde(default)]
     pub observer_error_count: u32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn termination_reason_error_serializes_stage_key() {
+        let reason = RunnerTerminationReason::Error {
+            error_source: "workspace_teardown".into(),
+            message: "boom".into(),
+        };
+        let json = serde_json::to_value(&reason).expect("serialize");
+        let inner = &json["Error"];
+        assert_eq!(inner["stage"], "workspace_teardown");
+        assert!(
+            inner.get("error_source").is_none(),
+            "field must serialize as 'stage', not 'error_source'"
+        );
+    }
+
+    #[test]
+    fn termination_reason_error_deserializes_from_legacy_stage_key() {
+        let json = serde_json::json!({
+            "Error": {
+                "stage": "dequeue",
+                "message": "oops"
+            }
+        });
+        let reason: RunnerTerminationReason =
+            serde_json::from_value(json).expect("deserialize legacy");
+        assert_eq!(
+            reason,
+            RunnerTerminationReason::Error {
+                error_source: "dequeue".into(),
+                message: "oops".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn termination_reason_error_roundtrips() {
+        let original = RunnerTerminationReason::Error {
+            error_source: "agent_run".into(),
+            message: "timeout".into(),
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let recovered: RunnerTerminationReason =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(original, recovered);
+    }
 }

@@ -432,7 +432,7 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
 }
 
 #[tokio::test]
-async fn stage_error_path_emits_runner_starting_and_finished_exactly_once() {
+async fn error_path_emits_runner_starting_and_finished_exactly_once() {
     // Workspace teardown fails with continue_on_error=false →
     // `RunnerExitError`. The post-loop block must
     // still emit RunnerFinished with an Error reason.
@@ -472,15 +472,15 @@ async fn stage_error_path_emits_runner_starting_and_finished_exactly_once() {
     assert_eq!(count_runner_finished(&events), 1, "finished once on Err");
     let reason = finished_reason(&events);
     match reason {
-        RunnerTerminationReason::Error { stage, .. } => {
-            assert_eq!(stage, ErrorStage::WorkspaceTeardown);
+        RunnerTerminationReason::Error { error_source, .. } => {
+            assert_eq!(error_source, "workspace_teardown");
         }
         other => panic!("expected Error reason, got {other:?}"),
     }
 }
 
 #[tokio::test]
-async fn stage_error_path_carries_handler_counts_in_exit_error() {
+async fn error_path_carries_handler_counts_in_exit_error() {
     // The `Err` exit path now propagates handler/observer counts
     // via error variant fields, mirroring the `Ok` path's
     // `RunnerSummary` fields. This test asserts the count survives.
@@ -1230,7 +1230,7 @@ impl Queue for FailingQueue {
 }
 
 #[tokio::test]
-async fn dequeue_failure_without_continue_on_error_exits_with_stage_dequeue() {
+async fn dequeue_failure_without_continue_on_error_exits_with_error() {
     let queue = Arc::new(FailingQueue::new(1));
     let handler = CapturingHandler::default();
     let runner = Runner::<FailingQueue, FakeWorkspace, StubAgent>::builder()
@@ -1261,11 +1261,27 @@ async fn dequeue_failure_without_continue_on_error_exits_with_stage_dequeue() {
     let events = handler.events.lock().unwrap().clone();
     assert_eq!(count_runner_starting(&events), 1);
     assert_eq!(count_runner_finished(&events), 1);
-    match finished_reason(&events) {
-        RunnerTerminationReason::Error { stage, .. } => {
-            assert_eq!(stage, ErrorStage::Dequeue);
+    let finished_event = events
+        .iter()
+        .find(|e| matches!(e, Event::RunnerFinished { .. }))
+        .expect("RunnerFinished must be present");
+    match finished_event {
+        Event::RunnerFinished {
+            reason,
+            iteration_count,
+        } => {
+            match reason {
+                RunnerTerminationReason::Error { error_source, .. } => {
+                    assert_eq!(error_source, "dequeue");
+                }
+                other => panic!("expected Error reason, got {other:?}"),
+            }
+            assert_eq!(
+                *iteration_count, 0,
+                "dequeue failures must not bump iteration_count"
+            );
         }
-        other => panic!("expected Error reason, got {other:?}"),
+        _ => unreachable!(),
     }
 }
 

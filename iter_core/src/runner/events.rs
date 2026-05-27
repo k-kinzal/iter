@@ -4,7 +4,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use super::config::RunnerTerminationReason;
-use super::event::{ErrorStage, Event};
+use super::event::Event;
 use super::event_emitter::EventEmitter;
 use super::iteration::IterationContext;
 use crate::agent::{AgentOutcomeKind, AgentReport};
@@ -185,86 +185,18 @@ impl RunnerEvents {
         self.emit(event, Some(&lifecycle), snap).await;
     }
 
-    pub(super) async fn dequeue_failed(&mut self, message: &str, snap: &IterationContext) {
-        let lifecycle = RunnerLifecycle::RunnerError {
-            signal_id: None,
-            stage: ErrorStage::Dequeue,
-            error_message: message.to_owned(),
-        };
-        let event = Event::DequeueFailed {
-            error: message.to_owned(),
-        };
-        self.emit(event, Some(&lifecycle), snap).await;
-    }
-
-    pub(super) async fn render_prompt_failed(
+    pub(super) async fn runner_error(
         &mut self,
-        signal_id: SignalId,
+        error_source: &'static str,
+        signal_id: Option<SignalId>,
         message: &str,
+        event: Event,
         snap: &IterationContext,
     ) {
         let lifecycle = RunnerLifecycle::RunnerError {
-            signal_id: Some(signal_id),
-            stage: ErrorStage::RenderPrompt,
-            error_message: message.to_owned(),
-        };
-        let event = Event::RenderPromptFailed {
             signal_id,
-            error: message.to_owned(),
-        };
-        self.emit(event, Some(&lifecycle), snap).await;
-    }
-
-    pub(super) async fn workspace_setup_failed(
-        &mut self,
-        signal_id: SignalId,
-        message: &str,
-        snap: &IterationContext,
-    ) {
-        let lifecycle = RunnerLifecycle::RunnerError {
-            signal_id: Some(signal_id),
-            stage: ErrorStage::WorkspaceSetup,
+            error_source: error_source.to_owned(),
             error_message: message.to_owned(),
-        };
-        let event = Event::WorkspaceSetupFailed {
-            signal_id,
-            error: message.to_owned(),
-        };
-        self.emit(event, Some(&lifecycle), snap).await;
-    }
-
-    pub(super) async fn agent_run_failed(
-        &mut self,
-        signal_id: SignalId,
-        message: &str,
-        snap: &IterationContext,
-    ) {
-        let lifecycle = RunnerLifecycle::RunnerError {
-            signal_id: Some(signal_id),
-            stage: ErrorStage::AgentRun,
-            error_message: message.to_owned(),
-        };
-        let event = Event::AgentRunFailed {
-            signal_id,
-            error: message.to_owned(),
-        };
-        self.emit(event, Some(&lifecycle), snap).await;
-    }
-
-    pub(super) async fn workspace_teardown_failed(
-        &mut self,
-        signal_id: SignalId,
-        message: &str,
-        snap: &IterationContext,
-    ) {
-        let lifecycle = RunnerLifecycle::RunnerError {
-            signal_id: Some(signal_id),
-            stage: ErrorStage::WorkspaceTeardown,
-            error_message: message.to_owned(),
-        };
-        let event = Event::WorkspaceTeardownFailed {
-            signal_id,
-            error: message.to_owned(),
         };
         self.emit(event, Some(&lifecycle), snap).await;
     }

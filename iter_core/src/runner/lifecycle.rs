@@ -37,7 +37,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentOutcomeKind;
-use crate::runner::ErrorStage;
 use crate::signal::{Metadata, SignalId};
 
 /// A single event in the Runner's system-facing lifecycle stream.
@@ -112,8 +111,12 @@ pub enum RunnerLifecycle {
     RunnerError {
         /// Identifier of the signal in flight, when one is in flight.
         signal_id: Option<SignalId>,
-        /// Which runner step produced the error.
-        stage: ErrorStage,
+        /// Which runner step produced the error (e.g. `"dequeue"`,
+        /// `"workspace_setup"`, `"agent_run"`, `"workspace_teardown"`,
+        /// `"render_prompt"`). Serialized as `"stage"` for backward
+        /// compatibility with existing log consumers.
+        #[serde(rename = "stage")]
+        error_source: String,
         /// Stringified error message.
         error_message: String,
     },
@@ -254,16 +257,32 @@ mod tests {
         let id = signal_id();
         let with = RunnerLifecycle::RunnerError {
             signal_id: Some(id),
-            stage: ErrorStage::AgentRun,
+            error_source: "agent_run".into(),
             error_message: "x".into(),
         };
         let without = RunnerLifecycle::RunnerError {
             signal_id: None,
-            stage: ErrorStage::Dequeue,
+            error_source: "dequeue".into(),
             error_message: "y".into(),
         };
         assert_eq!(with.signal_id(), Some(id));
         assert_eq!(without.signal_id(), None);
+    }
+
+    #[test]
+    fn runner_error_serializes_error_source_as_stage_key() {
+        let id = signal_id();
+        let lifecycle = RunnerLifecycle::RunnerError {
+            signal_id: Some(id),
+            error_source: "agent_run".into(),
+            error_message: "boom".into(),
+        };
+        let json = serde_json::to_value(&lifecycle).expect("serialize");
+        assert_eq!(json["stage"], "agent_run");
+        assert!(
+            json.get("error_source").is_none(),
+            "field must serialize as 'stage', not 'error_source'"
+        );
     }
 
     #[test]

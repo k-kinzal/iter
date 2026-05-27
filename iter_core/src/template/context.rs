@@ -100,7 +100,7 @@ impl<'a> RenderContext<'a> {
 }
 
 /// Render context for runner-level lifecycle events that have no signal
-/// in flight (`runner_starting`, `runner_finished`, dequeue-stage
+/// in flight (`runner_starting`, `runner_finished`, dequeue-level
 /// `runner_error`). Templates here can reference `{{today}}` and the
 /// full `{{iteration.*}}` root, but **not** `{{signal.*}}` or
 /// `{{metadata.*}}` — strict mode surfaces a rendering error if they do.
