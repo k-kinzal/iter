@@ -23,6 +23,7 @@ fn canon_section(s: &mut RawSection) {
             keyword_span,
             kind,
             kind2,
+            alias,
             body,
             span,
             keyword: _,
@@ -35,12 +36,16 @@ fn canon_section(s: &mut RawSection) {
             if let Some(k) = kind2 {
                 canon_ident(k);
             }
+            if let Some(a) = alias {
+                canon_ident(a);
+            }
             if let Some(b) = body {
                 canon_block(b);
             }
         }
         RawSection::Prompt {
             keyword_span,
+            name: _,
             guard,
             body_span,
             span,

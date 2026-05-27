@@ -12,3 +12,11 @@ Error: `policy` block requires `network`
    │     
    │     Help: iter no longer defaults sandbox network access — set `network = off`, `network = all`, or `network = [ "host1", ... ]`. Agent-required hosts are merged in automatically; list only project-additional hosts.
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[sandbox-without-network.iter:1:1]
+   │
+ 1 │ workspace sandbox {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

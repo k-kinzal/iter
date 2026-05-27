@@ -229,8 +229,10 @@ fn load_iterfile_queue(path: &Path) -> Result<QueueDecl, EnqueueCmdError> {
     let loaded = super::load::load_iterfile(Some(path))?;
     loaded
         .iterfile
-        .queue
-        .map(|q| q.node)
+        .queues
+        .into_iter()
+        .next()
+        .map(|q| q.node.decl)
         .ok_or_else(|| EnqueueCmdError::IterfileMissingQueue {
             path: path.to_path_buf(),
         })

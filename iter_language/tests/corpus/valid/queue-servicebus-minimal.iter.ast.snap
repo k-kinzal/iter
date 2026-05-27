@@ -4,80 +4,92 @@ description: queue-servicebus-minimal.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: ServiceBus(
-                ServiceBusConfig {
-                    fully_qualified_namespace: Some(
-                        "iter-bus.servicebus.windows.net",
-                    ),
-                    entity_kind: Some(
-                        "queue",
-                    ),
-                    queue_name: Some(
-                        "signals",
-                    ),
-                    topic_name: None,
-                    subscription_name: None,
-                    transport: None,
-                    custom_endpoint_address: None,
-                    web_proxy: None,
-                    connection_idle_timeout_secs: None,
-                    identifier: None,
-                    authority_host: None,
-                    auth: Some(
-                        ServiceBusAuth {
-                            kind: AadDefault,
-                        },
-                    ),
-                    sender: None,
-                    receiver: None,
-                    session: None,
-                    retry: None,
-                    dlq: None,
-                },
-            ),
+            node: NamedDef {
+                name: "servicebus",
+                decl: ServiceBus(
+                    ServiceBusConfig {
+                        fully_qualified_namespace: Some(
+                            "iter-bus.servicebus.windows.net",
+                        ),
+                        entity_kind: Some(
+                            "queue",
+                        ),
+                        queue_name: Some(
+                            "signals",
+                        ),
+                        topic_name: None,
+                        subscription_name: None,
+                        transport: None,
+                        custom_endpoint_address: None,
+                        web_proxy: None,
+                        connection_idle_timeout_secs: None,
+                        identifier: None,
+                        authority_host: None,
+                        auth: Some(
+                            ServiceBusAuth {
+                                kind: AadDefault,
+                            },
+                        ),
+                        sender: None,
+                        receiver: None,
+                        session: None,
+                        retry: None,
+                        dlq: None,
+                    },
+                ),
+            },
             span: 0..171,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 173..205,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 207..259,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "servicebus",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
             },
             span: 283..336,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "do the thing",
-            },
-            span: 261..282,
-        },
     ],
-    events: [],
 }

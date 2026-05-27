@@ -231,6 +231,7 @@ fn block_section_strategy() -> impl Strategy<Value = RawSection> {
                 span: 0..0,
             }),
             kind2: None,
+            alias: None,
             body,
             span: 0..0,
         })
@@ -242,6 +243,7 @@ fn runner_section_strategy() -> impl Strategy<Value = RawSection> {
         keyword_span: 0..0,
         kind: None,
         kind2: None,
+        alias: None,
         body,
         span: 0..0,
     })
@@ -251,6 +253,7 @@ fn prompt_section_strategy() -> impl Strategy<Value = RawSection> {
     (proptest::option::of(guard_strategy()), string_lit()).prop_map(|(guard, body)| {
         RawSection::Prompt {
             keyword_span: 0..0,
+            name: None,
             guard,
             body,
             body_span: 0..0,

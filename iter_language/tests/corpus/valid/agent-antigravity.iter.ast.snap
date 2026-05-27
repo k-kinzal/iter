@@ -4,55 +4,67 @@ description: agent-antigravity.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 14..46,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Antigravity {
-                mode: Print,
-                command: "agy",
-                args: [
-                    "--print-timeout",
-                    "600",
-                ],
-                conversation_id: Some(
-                    "my-session",
-                ),
-                env: {},
+            node: NamedDef {
+                name: "antigravity",
+                decl: Antigravity {
+                    mode: Print,
+                    command: "agy",
+                    args: [
+                        "--print-timeout",
+                        "600",
+                    ],
+                    conversation_id: Some(
+                        "my-session",
+                    ),
+                    env: {},
+                },
             },
             span: 48..201,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "antigravity",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Antigravity test.",
+                    ),
+                ),
+                events: [],
             },
             span: 203..259,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Antigravity test.",
-            },
-            span: 261..287,
-        },
     ],
-    events: [],
 }

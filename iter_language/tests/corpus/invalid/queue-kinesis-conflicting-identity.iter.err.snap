@@ -11,3 +11,11 @@ Error: queue kinesis: `stream_arn` and `stream_name` are mutually exclusive
    │ 
    │ Help: supply only one (ARN preferred)
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[queue-kinesis-conflicting-identity.iter:1:1]
+   │
+ 1 │ queue kinesis {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

@@ -4,67 +4,79 @@ description: agent-router.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 14..46,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Router {
-                agents: [
-                    (
-                        "primary",
-                        Claude {
-                            mode: Print,
-                            command: "claude",
-                            args: [],
-                            session_id_file: None,
-                            env: {},
-                        },
-                    ),
-                    (
-                        "secondary",
-                        Codex {
-                            mode: Print,
-                            command: "codex",
-                            args: [],
-                            env: {},
-                        },
-                    ),
-                ],
-                strategy: Fallback,
+            node: NamedDef {
+                name: "router",
+                decl: Router {
+                    agents: [
+                        (
+                            "primary",
+                            Claude {
+                                mode: Print,
+                                command: "claude",
+                                args: [],
+                                session_id_file: None,
+                                env: {},
+                            },
+                        ),
+                        (
+                            "secondary",
+                            Codex {
+                                mode: Print,
+                                command: "codex",
+                                args: [],
+                                env: {},
+                            },
+                        ),
+                    ],
+                    strategy: Fallback,
+                },
             },
             span: 48..248,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "router",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Router fallback test.",
+                    ),
+                ),
+                events: [],
             },
             span: 250..306,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Router fallback test.",
-            },
-            span: 308..338,
-        },
     ],
-    events: [],
 }

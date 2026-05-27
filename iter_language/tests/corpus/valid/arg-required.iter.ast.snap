@@ -12,50 +12,62 @@ Root {
             span: 0..17,
         },
     ],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 19..31,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 33..65,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Interactive,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Interactive,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 67..125,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Working on {{arg.worktree_name}}.",
+                    ),
+                ),
+                events: [],
             },
             span: 127..183,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Working on {{arg.worktree_name}}.",
-            },
-            span: 185..227,
-        },
     ],
-    events: [],
 }

@@ -4,53 +4,65 @@ description: agent-generic-env.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 14..46,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Generic {
-                command: [
-                    "python",
-                    "./agent.py",
-                ],
-                env: {
-                    "API_KEY": "sk-test",
-                    "DEBUG": "1",
+            node: NamedDef {
+                name: "generic",
+                decl: Generic {
+                    command: [
+                        "python",
+                        "./agent.py",
+                    ],
+                    env: {
+                        "API_KEY": "sk-test",
+                        "DEBUG": "1",
+                    },
                 },
             },
             span: 48..156,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "generic",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Generic env test.",
+                    ),
+                ),
+                events: [],
             },
             span: 158..214,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Generic env test.",
-            },
-            span: 216..242,
-        },
     ],
-    events: [],
 }

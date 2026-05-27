@@ -11,7 +11,10 @@ use std::sync::Arc;
 
 use iter_core::process::ProcessRuntime;
 use iter_core::{Runner, RunnerBuilder, TemplateError};
-use iter_language::{AgentDecl, EventHandlerDecl, PromptDecl, RunnerDecl, Spanned, WorkspaceDecl};
+use iter_language::{
+    AgentDecl, EventHandlerDecl, NamedPrompt, PromptDecl, PromptExpr, PromptValue, RunnerDecl,
+    Spanned, WorkspaceDecl,
+};
 use thiserror::Error;
 
 use crate::agent::{AgentBuildError, AnyAgent, build_agent};
@@ -37,6 +40,9 @@ pub enum AssemblyError {
     /// type but route through [`PromptBuildError`] instead.
     #[error("invalid event handler template: {0}")]
     EventTemplate(#[source] TemplateError),
+    /// Building the queue from its declaration failed.
+    #[error(transparent)]
+    QueueBuild(Box<crate::queue::QueueBuildError>),
 }
 
 /// Assemble a [`RunnerBuilder`] from language declarations.
@@ -82,6 +88,121 @@ pub(crate) fn assemble_runner_builder(
     Ok(builder)
 }
 
+/// Assemble a [`RunnerBuilder`] from the new-style `Root` AST where
+/// runner declarations carry their own references.
+///
+/// Resolves agent/workspace/queue names from the `Root`'s definition
+/// vectors and delegates to the existing assembly logic.
+pub(crate) fn assemble_from_root(
+    root: &iter_language::Root,
+    runner: &RunnerDecl,
+    queue_override: Option<Arc<AnyQueue>>,
+    once: bool,
+) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, AssemblyError> {
+    let agent_decl = root
+        .agents
+        .iter()
+        .find(|a| a.node.name == runner.agent)
+        .map(|a| &a.node.decl)
+        .expect("semantic analyzer validated agent reference");
+
+    let workspace_decl = root
+        .workspaces
+        .iter()
+        .find(|w| w.node.name == runner.workspace)
+        .map(|w| &w.node.decl)
+        .expect("semantic analyzer validated workspace reference");
+
+    // Build prompt declarations from the runner's PromptExpr + named prompts.
+    let prompts = build_prompt_decls_from_expr(&runner.prompt, &root.prompts);
+
+    // Use override queue or build from runner's queue reference.
+    let queue = if let Some(q) = queue_override {
+        Some(q)
+    } else if let Some(ref queue_name) = runner.queue {
+        let queue_decl = root
+            .queues
+            .iter()
+            .find(|q| q.node.name == *queue_name)
+            .map(|q| &q.node.decl)
+            .expect("semantic analyzer validated queue reference");
+        Some(Arc::new(
+            crate::queue::build_queue(queue_decl).map_err(|e| AssemblyError::QueueBuild(Box::new(e)))?,
+        ))
+    } else {
+        None
+    };
+
+    assemble_runner_builder(
+        queue,
+        workspace_decl,
+        agent_decl,
+        runner,
+        &prompts,
+        &runner.events,
+        once,
+    )
+}
+
+/// Convert a `PromptExpr` (from the new AST) back into `Vec<Spanned<PromptDecl>>`
+/// for compatibility with the existing `build_prompt_selector_from_prompts`.
+///
+/// Public alias for use by `prompt.rs`.
+pub(crate) fn build_prompt_decls_from_expr_pub(
+    expr: &PromptExpr,
+    named_prompts: &[Spanned<NamedPrompt>],
+) -> Vec<Spanned<PromptDecl>> {
+    build_prompt_decls_from_expr(expr, named_prompts)
+}
+
+fn build_prompt_decls_from_expr(
+    expr: &PromptExpr,
+    named_prompts: &[Spanned<NamedPrompt>],
+) -> Vec<Spanned<PromptDecl>> {
+    let resolve = |v: &PromptValue| -> String {
+        match v {
+            PromptValue::Inline(s) => s.clone(),
+            PromptValue::Ref(name) => named_prompts
+                .iter()
+                .find(|p| p.node.name == *name)
+                .map(|p| p.node.body.clone())
+                .unwrap_or_default(),
+        }
+    };
+
+    match expr {
+        PromptExpr::Single(v) => {
+            vec![Spanned::new(
+                PromptDecl {
+                    guard: None,
+                    body: resolve(v),
+                },
+                0..0,
+            )]
+        }
+        PromptExpr::Match { arms, default } => {
+            let mut decls = Vec::new();
+            for arm in arms {
+                decls.push(Spanned::new(
+                    PromptDecl {
+                        guard: Some(arm.guard.clone()),
+                        body: resolve(&arm.value),
+                    },
+                    0..0,
+                ));
+            }
+            decls.push(Spanned::new(
+                PromptDecl {
+                    guard: None,
+                    body: resolve(default),
+                },
+                0..0,
+            ));
+            decls
+        }
+    }
+}
+
 /// Wire [`ProcessRuntime`] observer and stdio sink onto a builder.
 ///
 /// Both `iter run` and compose in-process services use this to ensure
@@ -106,8 +227,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use iter_language::{
-        Action, AgentDecl, AgentMode, EventHandlerDecl, EventName, PromptDecl, RunnerBehavior,
-        RunnerDecl, Spanned, WorkspaceDecl,
+        Action, AgentDecl, AgentMode, EventHandlerDecl, EventName, PromptDecl, PromptExpr,
+        PromptValue, RunnerBehavior, RunnerDecl, Spanned, WorkspaceDecl,
     };
 
     fn minimal_workspace() -> WorkspaceDecl {
@@ -128,9 +249,15 @@ mod tests {
 
     fn minimal_runner() -> RunnerDecl {
         RunnerDecl {
+            name: None,
+            agent: "claude".into(),
+            workspace: "local".into(),
+            queue: None,
             continue_on_error: false,
             behavior: RunnerBehavior::Loop { delay_secs: None },
             iteration_timeout_secs: None,
+            prompt: PromptExpr::Single(PromptValue::Inline("test prompt".into())),
+            events: Vec::new(),
         }
     }
 
@@ -168,9 +295,15 @@ mod tests {
             &minimal_workspace(),
             &minimal_agent(),
             &RunnerDecl {
+                name: None,
+                agent: "claude".into(),
+                workspace: "local".into(),
+                queue: Some("memory".into()),
                 continue_on_error: false,
                 behavior: RunnerBehavior::Wait,
                 iteration_timeout_secs: None,
+                prompt: PromptExpr::Single(PromptValue::Inline("test prompt".into())),
+                events: Vec::new(),
             },
             &minimal_prompts(),
             &[],
@@ -228,12 +361,6 @@ mod tests {
 
     #[test]
     fn iterfile_and_compose_service_both_use_shared_assembly() {
-        // Both the Iterfile path (iterfile.rs) and the compose service
-        // path (compose/plan.rs) now delegate to assemble_runner_builder.
-        // This test builds equivalent declarations via both surfaces and
-        // verifies they both produce buildable runners through the same
-        // assembly function — if one path wires a field, the other
-        // necessarily does too.
         let dir = tempfile::tempdir().expect("tmp");
 
         let iterfile_src = "\
@@ -246,13 +373,27 @@ mod tests {
         let root = iter_language::parse(iterfile_src).expect("parse iterfile");
         let queue =
             crate::queue::build_queue(&iter_language::QueueDecl::Memory).expect("memory queue");
+        let runner = root.runners.first().expect("should have a runner");
+        let agent_decl = root
+            .agents
+            .iter()
+            .find(|a| a.node.name == runner.node.agent)
+            .map(|a| &a.node.decl)
+            .expect("agent");
+        let workspace_decl = root
+            .workspaces
+            .iter()
+            .find(|w| w.node.name == runner.node.workspace)
+            .map(|w| &w.node.decl)
+            .expect("workspace");
+        let prompts = build_prompt_decls_from_expr(&runner.node.prompt, &root.prompts);
         let iterfile_builder = assemble_runner_builder(
             Some(Arc::new(queue)),
-            &root.workspace.as_ref().unwrap().node,
-            &root.agent.as_ref().unwrap().node,
-            &root.runner.as_ref().unwrap().node,
-            &root.prompts,
-            &root.events,
+            workspace_decl,
+            agent_decl,
+            &runner.node,
+            &prompts,
+            &runner.node.events,
             false,
         )
         .expect("iterfile assembly");
@@ -363,17 +504,28 @@ mod tests {
             prompt \"hello\"\n";
 
         let root = iter_language::parse(iterfile_content).expect("parse");
-        let workspace_decl = root.workspace.as_ref().unwrap();
-        let agent_decl = root.agent.as_ref().unwrap();
-        let runner_decl = root.runner.as_ref().unwrap();
+        let runner = root.runners.first().expect("runner");
+        let workspace_decl = root
+            .workspaces
+            .iter()
+            .find(|w| w.node.name == runner.node.workspace)
+            .map(|w| &w.node.decl)
+            .expect("workspace");
+        let agent_decl = root
+            .agents
+            .iter()
+            .find(|a| a.node.name == runner.node.agent)
+            .map(|a| &a.node.decl)
+            .expect("agent");
+        let prompts = build_prompt_decls_from_expr(&runner.node.prompt, &root.prompts);
 
         let builder = assemble_runner_builder(
             None,
-            &workspace_decl.node,
-            &agent_decl.node,
-            &runner_decl.node,
-            &root.prompts,
-            &root.events,
+            workspace_decl,
+            agent_decl,
+            &runner.node,
+            &prompts,
+            &runner.node.events,
             false,
         )
         .expect("assembly from parsed Iterfile");

@@ -11,3 +11,11 @@ Error: `trigger` is no longer a valid top-level section in an Iterfile
    │ 
    │ Help: trigger declarations belong in `compose.iter`, not in an Iterfile. Run `iter compose up` against a `compose.iter` that wires this trigger to a service.
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[trigger-in-iterfile.iter:1:1]
+   │
+ 1 │ queue memory
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

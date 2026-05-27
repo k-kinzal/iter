@@ -96,6 +96,7 @@ impl Parser<'_> {
             "prompt",
             "on",
             "arg",
+            "as",
         ];
         let keyword_tok = self.bump()?.clone();
         let Token::Ident(keyword) = keyword_tok.token else {
@@ -112,11 +113,25 @@ impl Parser<'_> {
         } else {
             self.expect_ident()
         };
-        let kind2 = if let Some(Token::Ident(name)) = self.peek()
-            && !RESERVED_SECTION_KEYWORDS.contains(&name.as_str())
-            && matches!(self.peek_at(1), Some(Token::LBrace))
-        {
+        // `as <name>` — Iterfile naming clause:
+        //   `agent claude as primary { ... }`
+        // The alias is captured here; the semantic layer decides whether
+        // it is valid (Iterfile) or rejected (compose.iter).
+        let alias = if matches!(self.peek(), Some(Token::Ident(name)) if name == "as") {
+            self.bump(); // consume `as`
             self.expect_ident()
+        } else {
+            None
+        };
+        let kind2 = if alias.is_none() {
+            if let Some(Token::Ident(name)) = self.peek()
+                && !RESERVED_SECTION_KEYWORDS.contains(&name.as_str())
+                && matches!(self.peek_at(1), Some(Token::LBrace))
+            {
+                self.expect_ident()
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -133,6 +148,7 @@ impl Parser<'_> {
             keyword_span: keyword_span.clone(),
             kind,
             kind2,
+            alias,
             body,
             span: keyword_span.start..span_end,
         })
@@ -174,6 +190,7 @@ impl Parser<'_> {
             keyword_span: keyword_span.clone(),
             kind: Some(name),
             kind2: None,
+            alias: None,
             body,
             span: keyword_span.start..span_end,
         })

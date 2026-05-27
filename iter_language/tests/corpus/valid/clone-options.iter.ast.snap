@@ -4,66 +4,78 @@ description: clone-options.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Clone {
-                base: ".",
-                remote: None,
-                excludes: [
-                    "build-output",
-                    "vendor-cache",
-                    ".scratch",
-                    ".vcs",
-                ],
-                includes: [
-                    ".vcs",
-                ],
-                preserve_mtime: false,
-                apply_back: ApplyBackDecl {
-                    mode: Merge,
-                    excludes: [],
-                    includes: [],
+            node: NamedDef {
+                name: "clone",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
+                    excludes: [
+                        "build-output",
+                        "vendor-cache",
+                        ".scratch",
+                        ".vcs",
+                    ],
+                    includes: [
+                        ".vcs",
+                    ],
+                    preserve_mtime: false,
+                    apply_back: ApplyBackDecl {
+                        mode: Merge,
+                        excludes: [],
+                        includes: [],
+                    },
                 },
             },
             span: 14..188,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 190..242,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "clone",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "explore",
+                    ),
+                ),
+                events: [],
             },
             span: 244..300,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "explore",
-            },
-            span: 302..318,
-        },
     ],
-    events: [],
 }

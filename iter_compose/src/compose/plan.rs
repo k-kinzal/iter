@@ -7,9 +7,8 @@ use std::sync::Arc;
 
 use iter_core::RunnerBuilder;
 use iter_language::{
-    AgentDecl, ComposeRoot, ComposeTriggerOverride, EventHandlerDecl, InlineService, NamedQueue,
-    NamedService, NamedTrigger, PromptDecl, QueueDecl, QueueRef, Root, RunnerDecl, ServiceSource,
-    Spanned, TelemetryDecl, WorkspaceDecl, parse,
+    ComposeRoot, ComposeTriggerOverride, InlineService, NamedQueue, NamedService, NamedTrigger,
+    QueueDecl, QueueRef, Root, ServiceSource, Spanned, TelemetryDecl, parse,
 };
 
 use super::error::ComposeError;
@@ -353,7 +352,7 @@ fn build_service(
                 std::fs::read_to_string(&absolute).map_err(|e| ComposeError::io(&absolute, e))?;
             let mut root = parse(&source_text)
                 .map_err(|diags| ComposeError::parse(&absolute, &source_text, &diags))?;
-            if root.queue.is_some() {
+            if !root.queues.is_empty() {
                 return Err(ComposeError::BuildTargetHasQueue {
                     service: name.to_owned(),
                     path: absolute,
@@ -395,39 +394,39 @@ fn build_service_from_root(
     once: bool,
     queue_decl: QueueDecl,
 ) -> Result<ComposeService, ComposeError> {
-    let workspace_decl = root.workspace.as_ref().map(|s| &s.node).ok_or_else(|| {
-        ComposeError::ServiceMissingSection {
-            service: name.to_owned(),
-            section: "workspace",
-        }
-    })?;
-    let agent_decl = root.agent.as_ref().map(|s| &s.node).ok_or_else(|| {
-        ComposeError::ServiceMissingSection {
-            service: name.to_owned(),
-            section: "agent",
-        }
-    })?;
-    let runner_decl = root.runner.as_ref().map(|s| &s.node).ok_or_else(|| {
+    let runner = root.runners.first().ok_or_else(|| {
         ComposeError::ServiceMissingSection {
             service: name.to_owned(),
             section: "runner",
         }
     })?;
+    if root.workspaces.is_empty() {
+        return Err(ComposeError::ServiceMissingSection {
+            service: name.to_owned(),
+            section: "workspace",
+        });
+    }
+    if root.agents.is_empty() {
+        return Err(ComposeError::ServiceMissingSection {
+            service: name.to_owned(),
+            section: "agent",
+        });
+    }
 
-    finalize_service(
-        name,
-        queue,
-        ServiceDecls {
-            workspace: workspace_decl,
-            agent: agent_decl,
-            runner: runner_decl,
-            prompts: &root.prompts,
-            events: &root.events,
-        },
+    let builder =
+        assembly::assemble_from_root(root, &runner.node, Some(queue), once).map_err(|source| {
+            ComposeError::Assembly {
+                service: name.to_owned(),
+                source,
+            }
+        })?;
+
+    Ok(ComposeService {
+        name: name.to_string(),
         iterfile_path,
-        once,
         queue_decl,
-    )
+        builder,
+    })
 }
 
 fn build_service_from_inline(
@@ -457,46 +456,13 @@ fn build_service_from_inline(
         }
     })?;
 
-    finalize_service(
-        name,
-        queue,
-        ServiceDecls {
-            workspace: workspace_decl,
-            agent: agent_decl,
-            runner: runner_decl,
-            prompts: &inline.prompts,
-            events: &inline.events,
-        },
-        iterfile_path,
-        once,
-        queue_decl,
-    )
-}
-
-#[derive(Clone, Copy)]
-struct ServiceDecls<'a> {
-    workspace: &'a WorkspaceDecl,
-    agent: &'a AgentDecl,
-    runner: &'a RunnerDecl,
-    prompts: &'a [Spanned<PromptDecl>],
-    events: &'a [Spanned<EventHandlerDecl>],
-}
-
-fn finalize_service(
-    name: &str,
-    queue: Arc<AnyQueue>,
-    decls: ServiceDecls<'_>,
-    iterfile_path: PathBuf,
-    once: bool,
-    queue_decl: QueueDecl,
-) -> Result<ComposeService, ComposeError> {
     let builder = assembly::assemble_runner_builder(
         Some(queue),
-        decls.workspace,
-        decls.agent,
-        decls.runner,
-        decls.prompts,
-        decls.events,
+        workspace_decl,
+        agent_decl,
+        runner_decl,
+        &inline.prompts,
+        &inline.events,
         once,
     )
     .map_err(|source| ComposeError::Assembly {

@@ -11,3 +11,11 @@ Error: queue servicebus requires `entity_kind`
    │ 
    │ Help: set `entity_kind = "queue"` or `entity_kind = "subscription"`
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[queue-servicebus-missing-entity-kind.iter:1:1]
+   │
+ 1 │ queue servicebus {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

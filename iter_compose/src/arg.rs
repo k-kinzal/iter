@@ -133,22 +133,51 @@ fn arg_name_end(s: &str) -> Option<usize> {
 }
 
 fn render_root(root: &mut Root, values: &BTreeMap<String, String>) -> Result<(), ArgError> {
-    if let Some(ref mut ws) = root.workspace {
-        render_workspace(&mut ws.node, values)?;
+    for ws in &mut root.workspaces {
+        render_workspace(&mut ws.node.decl, values)?;
     }
-    if let Some(ref mut agent) = root.agent {
-        render_agent(&mut agent.node, values)?;
+    for agent in &mut root.agents {
+        render_agent(&mut agent.node.decl, values)?;
     }
-    if let Some(ref mut queue) = root.queue {
-        render_queue(&mut queue.node, values)?;
+    for queue in &mut root.queues {
+        render_queue(&mut queue.node.decl, values)?;
     }
     for prompt in &mut root.prompts {
         render_str(&mut prompt.node.body, values)?;
     }
-    for event in &mut root.events {
-        render_event(&mut event.node, values)?;
+    for runner in &mut root.runners {
+        for event in &mut runner.node.events {
+            render_event(&mut event.node, values)?;
+        }
+        // Render inline prompt strings.
+        render_prompt_expr(&mut runner.node.prompt, values)?;
     }
     Ok(())
+}
+
+fn render_prompt_expr(
+    expr: &mut iter_language::PromptExpr,
+    values: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
+    match expr {
+        iter_language::PromptExpr::Single(v) => render_prompt_value(v, values),
+        iter_language::PromptExpr::Match { arms, default } => {
+            for arm in arms {
+                render_prompt_value(&mut arm.value, values)?;
+            }
+            render_prompt_value(default, values)
+        }
+    }
+}
+
+fn render_prompt_value(
+    value: &mut iter_language::PromptValue,
+    values: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
+    match value {
+        iter_language::PromptValue::Inline(s) => render_str(s, values),
+        iter_language::PromptValue::Ref(_) => Ok(()),
+    }
 }
 
 fn render_workspace(
@@ -391,7 +420,7 @@ prompt "noop"
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        match &root.workspace.as_ref().unwrap().node {
+        match &root.workspaces.first().unwrap().node.decl {
             iter_language::WorkspaceDecl::Local { base } => {
                 assert_eq!(base, "/path/to/default-name");
             }
@@ -412,7 +441,7 @@ prompt "noop"
         let mut overrides = BTreeMap::new();
         overrides.insert("worktree_name".to_owned(), "override-name".to_owned());
         resolve_args(&mut root, &overrides).expect("resolve");
-        match &root.workspace.as_ref().unwrap().node {
+        match &root.workspaces.first().unwrap().node.decl {
             iter_language::WorkspaceDecl::Local { base } => {
                 assert_eq!(base, "/path/to/override-name");
             }
@@ -460,7 +489,12 @@ prompt "Do the {{arg.task}} task."
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        assert_eq!(root.prompts[0].node.body, "Do the review task.");
+        match &root.runners.first().unwrap().node.prompt {
+            iter_language::PromptExpr::Single(iter_language::PromptValue::Inline(s)) => {
+                assert_eq!(s, "Do the review task.");
+            }
+            other => panic!("unexpected prompt expr: {other:?}"),
+        }
     }
 
     #[test]
@@ -475,7 +509,7 @@ on runner_starting { shell "mkdir -p {{arg.dir}}" }
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        match &root.events[0].node.actions[0] {
+        match &root.runners.first().unwrap().node.events[0].node.actions[0] {
             iter_language::Action::Shell(cmd) => {
                 assert_eq!(cmd, "mkdir -p /tmp/work");
             }
@@ -499,7 +533,7 @@ prompt "noop"
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        let env = match &root.agent.as_ref().unwrap().node {
+        let env = match &root.agents.first().unwrap().node.decl {
             iter_language::AgentDecl::Claude { env, .. } => env,
             other => panic!("unexpected agent: {other:?}"),
         };
@@ -531,7 +565,7 @@ prompt "noop"
         let mut overrides = BTreeMap::new();
         overrides.insert("worktree_name".to_owned(), "supplied-name".to_owned());
         resolve_args(&mut root, &overrides).expect("resolve");
-        match &root.workspace.as_ref().unwrap().node {
+        match &root.workspaces.first().unwrap().node.decl {
             iter_language::WorkspaceDecl::Local { base } => {
                 assert_eq!(base, "/path/to/supplied-name");
             }
@@ -550,10 +584,15 @@ prompt "Deploy {{arg.env}} for {{signal.id}} via {{metadata.source}}."
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        assert_eq!(
-            root.prompts[0].node.body,
-            "Deploy staging for {{signal.id}} via {{metadata.source}}."
-        );
+        match &root.runners.first().unwrap().node.prompt {
+            iter_language::PromptExpr::Single(iter_language::PromptValue::Inline(s)) => {
+                assert_eq!(
+                    s,
+                    "Deploy staging for {{signal.id}} via {{metadata.source}}."
+                );
+            }
+            other => panic!("unexpected prompt expr: {other:?}"),
+        }
     }
 
     #[test]
@@ -581,7 +620,12 @@ prompt \"{{arg.greeting}} \u{4e16}\u{754c}\"
 ";
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        assert_eq!(root.prompts[0].node.body, "hello \u{4e16}\u{754c}");
+        match &root.runners.first().unwrap().node.prompt {
+            iter_language::PromptExpr::Single(iter_language::PromptValue::Inline(s)) => {
+                assert_eq!(s, "hello \u{4e16}\u{754c}");
+            }
+            other => panic!("unexpected prompt expr: {other:?}"),
+        }
     }
 
     #[test]

@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use super::Analyzer;
 use crate::ast::{
     ComposeRoot, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,
-    NamedQueue, NamedService, NamedTrigger, QueueRef, ServiceSource, Span, Spanned, TelemetryDecl,
-    TelemetryProtocol, TriggerDecl,
+    NamedQueue, NamedService, NamedTrigger, QueueRef, RunnerDecl, ServiceSource, Span, Spanned,
+    TelemetryDecl, TelemetryProtocol, TriggerDecl,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawField, RawFile, RawIdent, RawSection, RawValue};
@@ -61,9 +61,17 @@ impl Analyzer {
                     keyword_span,
                     kind,
                     kind2,
+                    alias,
                     body,
                     span,
-                } => match keyword.as_str() {
+                } => {
+                    if let Some(ref a) = alias {
+                        self.errors.push(Diagnostic::error(
+                            a.span.clone(),
+                            format!("`as {}` naming is not valid in compose.iter", a.name),
+                        ).with_hint("compose.iter uses `<keyword> <name> [<kind>] {{ ... }}` — the first identifier is the name."));
+                    }
+                    match keyword.as_str() {
                     "queue" => {
                         self.lower_compose_queue(
                             &mut root,
@@ -140,7 +148,8 @@ impl Analyzer {
                             ),
                         );
                     }
-                },
+                }
+                }
                 RawSection::Prompt { span, .. } => {
                     self.errors.push(
                         Diagnostic::error(
@@ -737,7 +746,7 @@ impl Analyzer {
         let mut arg_overrides: BTreeMap<String, String> = BTreeMap::new();
         let mut workspace_section: Option<Spanned<crate::ast::WorkspaceDecl>> = None;
         let mut agent_section: Option<Spanned<crate::ast::AgentDecl>> = None;
-        let mut runner_section: Option<Spanned<crate::ast::RunnerDecl>> = None;
+        let mut runner_section: Option<Spanned<RunnerDecl>> = None;
         let mut prompts: Vec<Spanned<crate::ast::PromptDecl>> = Vec::new();
         let mut events: Vec<Spanned<crate::ast::EventHandlerDecl>> = Vec::new();
         let mut leftover_fields: Vec<RawField> = Vec::new();
@@ -826,7 +835,7 @@ impl Analyzer {
         field: RawField,
         workspace_section: &mut Option<Spanned<crate::ast::WorkspaceDecl>>,
         agent_section: &mut Option<Spanned<crate::ast::AgentDecl>>,
-        runner_section: &mut Option<Spanned<crate::ast::RunnerDecl>>,
+        runner_section: &mut Option<Spanned<RunnerDecl>>,
     ) {
         let RawValue::Block(_) = field.value else {
             self.errors.push(Diagnostic::error(
@@ -873,8 +882,23 @@ impl Analyzer {
                 }
             }
             "runner" => {
-                if let Some(decl) = self.lower_runner(None, sub_body, &sub_keyword_span) {
-                    *runner_section = Some(Spanned::new(decl, sub_keyword_span));
+                if let Some(decl) = self.lower_runner_old(None, sub_body, &sub_keyword_span) {
+                    *runner_section = Some(Spanned::new(
+                        RunnerDecl {
+                            name: None,
+                            agent: String::new(),
+                            workspace: String::new(),
+                            queue: None,
+                            continue_on_error: decl.continue_on_error,
+                            behavior: decl.behavior,
+                            iteration_timeout_secs: decl.iteration_timeout_secs,
+                            prompt: crate::ast::PromptExpr::Single(
+                                crate::ast::PromptValue::Inline(String::new()),
+                            ),
+                            events: Vec::new(),
+                        },
+                        sub_keyword_span,
+                    ));
                 }
             }
             other => {

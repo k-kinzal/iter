@@ -9,3 +9,11 @@ Error: `% 0` is not a valid iteration-guard modulus
     │                               ┬  
     │                               ╰── `% 0` is not a valid iteration-guard modulus
 ────╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[prompt-iteration-modulo-zero.iter:1:1]
+   │
+ 1 │ queue memory
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

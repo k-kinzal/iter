@@ -11,3 +11,11 @@ Error: queue sqs: `queue_url` and `queue_name`/`account_id` are mutually exclusi
    │ 
    │ Help: set either `queue_url` OR both `queue_name` and `account_id`
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[queue-sqs-conflicting-identity.iter:1:1]
+   │
+ 1 │ queue sqs {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

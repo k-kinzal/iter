@@ -4,56 +4,68 @@ description: queue-shell-minimal.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Shell {
-                enqueue: "true",
-                dequeue: "true",
-                close: None,
-                interpreter: None,
-                enqueue_timeout_secs: None,
+            node: NamedDef {
+                name: "shell",
+                decl: Shell {
+                    enqueue: "true",
+                    dequeue: "true",
+                    close: None,
+                    interpreter: None,
+                    enqueue_timeout_secs: None,
+                },
             },
             span: 0..53,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 55..87,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 89..141,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "shell",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
             },
             span: 165..218,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "do the thing",
-            },
-            span: 143..164,
-        },
     ],
-    events: [],
 }

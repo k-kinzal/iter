@@ -4,77 +4,89 @@ description: agent-router-rotate.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 14..46,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Router {
-                agents: [
-                    (
-                        "alpha",
-                        Claude {
-                            mode: Print,
-                            command: "claude",
-                            args: [],
-                            session_id_file: None,
-                            env: {},
-                        },
-                    ),
-                    (
-                        "beta",
-                        Gemini {
-                            mode: Print,
-                            command: "gemini",
-                            args: [],
-                            env: {},
-                        },
-                    ),
-                    (
-                        "gamma",
-                        Generic {
-                            command: [
-                                "echo",
-                                "fallback",
-                            ],
-                            env: {},
-                        },
-                    ),
-                ],
-                strategy: Rotate,
+            node: NamedDef {
+                name: "router",
+                decl: Router {
+                    agents: [
+                        (
+                            "alpha",
+                            Claude {
+                                mode: Print,
+                                command: "claude",
+                                args: [],
+                                session_id_file: None,
+                                env: {},
+                            },
+                        ),
+                        (
+                            "beta",
+                            Gemini {
+                                mode: Print,
+                                command: "gemini",
+                                args: [],
+                                env: {},
+                            },
+                        ),
+                        (
+                            "gamma",
+                            Generic {
+                                command: [
+                                    "echo",
+                                    "fallback",
+                                ],
+                                env: {},
+                            },
+                        ),
+                    ],
+                    strategy: Rotate,
+                },
             },
             span: 48..313,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "router",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Router rotate test.",
+                    ),
+                ),
+                events: [],
             },
             span: 315..371,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Router rotate test.",
-            },
-            span: 373..401,
-        },
     ],
-    events: [],
 }

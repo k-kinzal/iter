@@ -123,7 +123,7 @@ prompt "Iterate."
 
         let warnings: Vec<_> = diags
             .iter()
-            .filter(|d| d.severity == Severity::Warning)
+            .filter(|d| d.severity == Severity::Warning && !d.message.contains("flat Iterfile syntax"))
             .collect();
         assert_eq!(
             warnings.len(),
@@ -159,7 +159,7 @@ prompt "Iterate."
         let diags = analyze(&src);
         let warnings: Vec<_> = diags
             .iter()
-            .filter(|d| d.severity == Severity::Warning)
+            .filter(|d| d.severity == Severity::Warning && !d.message.contains("flat Iterfile syntax"))
             .collect();
         assert!(
             warnings.is_empty(),
@@ -186,7 +186,7 @@ prompt "Iterate."
         let diags = analyze(&src);
         let warnings: Vec<_> = diags
             .iter()
-            .filter(|d| d.severity == Severity::Warning)
+            .filter(|d| d.severity == Severity::Warning && !d.message.contains("flat Iterfile syntax"))
             .collect();
         assert_eq!(warnings.len(), cases.len(), "one warning per alias");
         for (alias, canonical) in cases {

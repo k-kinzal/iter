@@ -34,6 +34,7 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 /// Register every `on <event> { shell "..." }` block from `iterfile` against
 /// `builder`.
 ///
+/// Collects event handlers from all runners in the Root and registers them.
 /// Convenience wrapper around [`register_event_handlers_from_events`] for the
 /// Iterfile case. Compose-side code that ships its own event slice should
 /// call [`register_event_handlers_from_events`] directly.
@@ -43,10 +44,13 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
 pub fn register_event_handlers(
-    builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
+    mut builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
     iterfile: &Root,
 ) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, TemplateError> {
-    register_event_handlers_from_events(builder, &iterfile.events)
+    for runner in &iterfile.runners {
+        builder = register_event_handlers_from_events(builder, &runner.node.events)?;
+    }
+    Ok(builder)
 }
 
 /// Register `on <event> { shell "..." }` blocks from a flat slice of event

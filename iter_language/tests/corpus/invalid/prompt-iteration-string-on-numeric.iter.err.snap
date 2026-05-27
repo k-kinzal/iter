@@ -11,3 +11,11 @@ Error: string right-hand side is only valid for `iteration.previous_outcome`, bu
     │ 
     │ Help: numeric `iteration.*` fields require an integer RHS; only `previous_outcome` accepts a string
 ────╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[prompt-iteration-string-on-numeric.iter:1:1]
+   │
+ 1 │ queue memory
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

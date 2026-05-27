@@ -29,3 +29,11 @@ Error: workspace local requires `base`
    │ 
    │ Help: add `base = "..."`
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[bad-string.iter:1:1]
+   │
+ 1 │ workspace local { base = "unterminated
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

@@ -4,44 +4,60 @@ description: runner-iteration-timeout.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Clone {
-                base: ".",
-                remote: None,
-                excludes: [],
-                includes: [],
-                preserve_mtime: true,
-                apply_back: ApplyBackDecl {
-                    mode: Sync,
+            node: NamedDef {
+                name: "clone",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
                     excludes: [],
                     includes: [],
+                    preserve_mtime: true,
+                    apply_back: ApplyBackDecl {
+                        mode: Sync,
+                        excludes: [],
+                        includes: [],
+                    },
                 },
             },
             span: 14..114,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 116..168,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "clone",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: true,
                 behavior: Loop {
                     delay_secs: None,
@@ -49,18 +65,14 @@ Root {
                 iteration_timeout_secs: Some(
                     900,
                 ),
+                prompt: Single(
+                    Inline(
+                        "iterate",
+                    ),
+                ),
+                events: [],
             },
             span: 170..256,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "iterate",
-            },
-            span: 258..274,
-        },
     ],
-    events: [],
 }

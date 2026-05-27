@@ -17,11 +17,11 @@ pub struct RawFile {
 /// A top-level section of a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawSection {
-    /// `queue <kind> [{ ... }]`, `workspace <kind> { ... }`, etc.
+    /// `queue <kind> [as <alias>] [{ ... }]`, `workspace <kind> [as <alias>] { ... }`, etc.
     ///
-    /// The Iterfile grammar uses `<keyword> [<kind>] { ... }` (`kind2` is
-    /// always `None`). The compose.iter grammar reuses the same CST node
-    /// with `kind` carrying the section name and `kind2` carrying the kind:
+    /// The Iterfile grammar uses `<keyword> [<kind>] [as <alias>] { ... }`.
+    /// The compose.iter grammar reuses the same CST node with `kind`
+    /// carrying the section name and `kind2` carrying the kind:
     /// `<keyword> <name> [<kind2>] { ... }`. Disambiguation between the two
     /// shapes is the semantic layer's job, not the parser's.
     Block {
@@ -35,16 +35,21 @@ pub enum RawSection {
         /// Optional second identifier. compose.iter uses this to carry the
         /// kind (`queue main file { ... }`); Iterfile semantic rejects it.
         kind2: Option<RawIdent>,
+        /// Optional `as <name>` alias. Iterfile uses this to name a
+        /// definition: `agent claude as primary { ... }`.
+        alias: Option<RawIdent>,
         /// Optional brace-delimited body.
         body: Option<RawBlock>,
         /// Full span of the section.
         span: Span,
     },
-    /// `prompt [when <expr>] "<body>"`.
+    /// `prompt [when <expr>] "<body>"` (old) or `prompt as <name> "<body>"` (new).
     Prompt {
         /// Source span of the `prompt` keyword.
         keyword_span: Span,
-        /// Optional `when` guard.
+        /// Optional `as <name>` for named prompt definitions.
+        name: Option<RawIdent>,
+        /// Optional `when` guard (old syntax).
         guard: Option<RawGuard>,
         /// Literal body of the prompt (triple-string contents are dedented).
         body: String,

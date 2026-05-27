@@ -4,109 +4,121 @@ description: worker.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Redis {
-                url: "redis://localhost:6379/0",
-                key: "iter:worker",
+            node: NamedDef {
+                name: "redis",
+                decl: Redis {
+                    url: "redis://localhost:6379/0",
+                    key: "iter:worker",
+                },
             },
             span: 71..143,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Clone {
-                base: ".",
-                remote: None,
-                excludes: [],
-                includes: [],
-                preserve_mtime: true,
-                apply_back: ApplyBackDecl {
-                    mode: Sync,
+            node: NamedDef {
+                name: "clone",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
                     excludes: [],
                     includes: [],
+                    preserve_mtime: true,
+                    apply_back: ApplyBackDecl {
+                        mode: Sync,
+                        excludes: [],
+                        includes: [],
+                    },
                 },
             },
             span: 144..244,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 245..297,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "clone",
+                queue: Some(
+                    "redis",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
-            },
-            span: 299..355,
-        },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: Some(
-                    MetadataEq {
-                        key: "kind",
-                        value: "issue",
-                    },
-                ),
-                body: "A new issue was opened in {{metadata.repo}}.\nInvestigate and post your findings as a comment.",
-            },
-            span: 357..499,
-        },
-        Spanned {
-            node: PromptDecl {
-                guard: Some(
-                    MetadataEq {
-                        key: "kind",
-                        value: "ci_fix",
-                    },
-                ),
-                body: "CI is failing on {{metadata.repo}}. Diagnose the failure and prepare a patch.",
-            },
-            span: 501..626,
-        },
-        Spanned {
-            node: PromptDecl {
-                guard: Some(
-                    And(
-                        MetadataNeq {
-                            key: "kind",
-                            value: "issue",
+                prompt: Match {
+                    arms: [
+                        PromptArm {
+                            guard: MetadataEq {
+                                key: "kind",
+                                value: "issue",
+                            },
+                            value: Inline(
+                                "A new issue was opened in {{metadata.repo}}.\nInvestigate and post your findings as a comment.",
+                            ),
                         },
-                        MetadataNeq {
-                            key: "kind",
-                            value: "ci_fix",
+                        PromptArm {
+                            guard: MetadataEq {
+                                key: "kind",
+                                value: "ci_fix",
+                            },
+                            value: Inline(
+                                "CI is failing on {{metadata.repo}}. Diagnose the failure and prepare a patch.",
+                            ),
                         },
+                        PromptArm {
+                            guard: And(
+                                MetadataNeq {
+                                    key: "kind",
+                                    value: "issue",
+                                },
+                                MetadataNeq {
+                                    key: "kind",
+                                    value: "ci_fix",
+                                },
+                            ),
+                            value: Inline(
+                                "Unknown signal kind {{metadata.kind}} — log it and exit.",
+                            ),
+                        },
+                    ],
+                    default: Inline(
+                        "",
                     ),
-                ),
-                body: "Unknown signal kind {{metadata.kind}} — log it and exit.",
-            },
-            span: 628..762,
-        },
-    ],
-    events: [
-        Spanned {
-            node: EventHandlerDecl {
-                event: WorkspaceTeardownFinished,
-                actions: [
-                    Shell(
-                        "./scripts/persist-worker-run.sh {{signal.id}}",
-                    ),
+                },
+                events: [
+                    Spanned {
+                        node: EventHandlerDecl {
+                            event: WorkspaceTeardownFinished,
+                            actions: [
+                                Shell(
+                                    "./scripts/persist-worker-run.sh {{signal.id}}",
+                                ),
+                            ],
+                        },
+                        span: 764..852,
+                    },
                 ],
             },
-            span: 764..852,
+            span: 299..355,
         },
     ],
 }

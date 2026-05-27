@@ -35,13 +35,6 @@ pub fn build_runner_config(runner: &RunnerDecl, once: bool) -> RunnerConfig {
         continue_on_error: runner.continue_on_error,
         behavior: lower_behavior(&runner.behavior),
         iteration_timeout: runner.iteration_timeout_secs.map(|s| {
-            // The semantic layer (`iter_language::semantic::runner`) rejects
-            // `iteration_timeout_secs <= 0` before lowering, so a non-positive
-            // value here is a contract violation by an upstream caller of
-            // `build_runner_config` (which is `pub`).  Treat it as such: a
-            // silent fallback to either `None` (unbounded) or
-            // `Duration::ZERO` (immediate timeout) would just trade one
-            // kind of breakage for another.  Surface the violation directly.
             Duration::from_secs(u64::try_from(s).expect(
                 "iteration_timeout_secs must be positive (the semantic layer \
                  enforces this; if you reached this panic you constructed a \
@@ -65,71 +58,70 @@ fn lower_behavior(behavior: &DslRunnerBehavior) -> RunnerBehavior {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iter_language::{PromptExpr, PromptValue};
+
+    fn test_runner(
+        continue_on_error: bool,
+        behavior: DslRunnerBehavior,
+        iteration_timeout_secs: Option<i64>,
+    ) -> RunnerDecl {
+        RunnerDecl {
+            name: None,
+            agent: String::new(),
+            workspace: String::new(),
+            queue: None,
+            continue_on_error,
+            behavior,
+            iteration_timeout_secs,
+            prompt: PromptExpr::Single(PromptValue::Inline(String::new())),
+            events: Vec::new(),
+        }
+    }
 
     #[test]
     fn once_flag_propagates() {
-        let decl = RunnerDecl {
-            continue_on_error: false,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: None,
-        };
+        let decl = test_runner(false, DslRunnerBehavior::Wait, None);
         let config = build_runner_config(&decl, true);
         assert!(config.once);
     }
 
     #[test]
     fn continue_on_error_is_plumbed_through_when_false() {
-        let decl = RunnerDecl {
-            continue_on_error: false,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: None,
-        };
+        let decl = test_runner(false, DslRunnerBehavior::Wait, None);
         let config = build_runner_config(&decl, false);
         assert!(!config.continue_on_error);
     }
 
     #[test]
     fn continue_on_error_is_plumbed_through_when_true() {
-        let decl = RunnerDecl {
-            continue_on_error: true,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: None,
-        };
+        let decl = test_runner(true, DslRunnerBehavior::Wait, None);
         let config = build_runner_config(&decl, false);
         assert!(config.continue_on_error);
     }
 
     #[test]
     fn wait_behavior_lowers_to_wait() {
-        let decl = RunnerDecl {
-            continue_on_error: false,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: None,
-        };
+        let decl = test_runner(false, DslRunnerBehavior::Wait, None);
         let config = build_runner_config(&decl, false);
         assert_eq!(config.behavior, RunnerBehavior::Wait);
     }
 
     #[test]
     fn loop_behavior_without_delay_lowers_to_loop_none() {
-        let decl = RunnerDecl {
-            continue_on_error: false,
-            behavior: DslRunnerBehavior::Loop { delay_secs: None },
-            iteration_timeout_secs: None,
-        };
+        let decl = test_runner(false, DslRunnerBehavior::Loop { delay_secs: None }, None);
         let config = build_runner_config(&decl, false);
         assert_eq!(config.behavior, RunnerBehavior::Loop { delay: None });
     }
 
     #[test]
     fn loop_behavior_with_delay_lowers_to_loop_some() {
-        let decl = RunnerDecl {
-            continue_on_error: false,
-            behavior: DslRunnerBehavior::Loop {
+        let decl = test_runner(
+            false,
+            DslRunnerBehavior::Loop {
                 delay_secs: Some(30),
             },
-            iteration_timeout_secs: None,
-        };
+            None,
+        );
         let config = build_runner_config(&decl, false);
         assert_eq!(
             config.behavior,
@@ -141,33 +133,21 @@ mod tests {
 
     #[test]
     fn iteration_timeout_none_lowers_to_none() {
-        let decl = RunnerDecl {
-            continue_on_error: true,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: None,
-        };
+        let decl = test_runner(true, DslRunnerBehavior::Wait, None);
         let config = build_runner_config(&decl, false);
         assert_eq!(config.iteration_timeout, None);
     }
 
     #[test]
     fn iteration_timeout_some_lowers_to_duration() {
-        let decl = RunnerDecl {
-            continue_on_error: true,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: Some(900),
-        };
+        let decl = test_runner(true, DslRunnerBehavior::Wait, Some(900));
         let config = build_runner_config(&decl, false);
         assert_eq!(config.iteration_timeout, Some(Duration::from_secs(900)));
     }
 
     #[test]
     fn iteration_timeout_large_value_preserved() {
-        let decl = RunnerDecl {
-            continue_on_error: true,
-            behavior: DslRunnerBehavior::Wait,
-            iteration_timeout_secs: Some(3_600_000),
-        };
+        let decl = test_runner(true, DslRunnerBehavior::Wait, Some(3_600_000));
         let config = build_runner_config(&decl, false);
         assert_eq!(
             config.iteration_timeout,

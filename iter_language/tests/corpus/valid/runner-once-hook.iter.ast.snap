@@ -4,82 +4,94 @@ description: runner-once-hook.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Clone {
-                base: ".",
-                remote: None,
-                excludes: [],
-                includes: [],
-                preserve_mtime: true,
-                apply_back: ApplyBackDecl {
-                    mode: Sync,
+            node: NamedDef {
+                name: "clone",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
                     excludes: [],
                     includes: [],
+                    preserve_mtime: true,
+                    apply_back: ApplyBackDecl {
+                        mode: Sync,
+                        excludes: [],
+                        includes: [],
+                    },
                 },
             },
             span: 14..114,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 116..168,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "clone",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Iterate on the workspace once.",
+                    ),
+                ),
+                events: [
+                    Spanned {
+                        node: EventHandlerDecl {
+                            event: RunnerStarting,
+                            actions: [
+                                Shell(
+                                    "test -d .iter/wt || git worktree add .iter/wt HEAD",
+                                ),
+                            ],
+                        },
+                        span: 269..352,
+                    },
+                    Spanned {
+                        node: EventHandlerDecl {
+                            event: RunnerFinished,
+                            actions: [
+                                Shell(
+                                    "echo 'runner done; worktree retained at .iter/wt'",
+                                ),
+                            ],
+                        },
+                        span: 354..436,
+                    },
+                ],
             },
             span: 170..226,
-        },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Iterate on the workspace once.",
-            },
-            span: 228..267,
-        },
-    ],
-    events: [
-        Spanned {
-            node: EventHandlerDecl {
-                event: RunnerStarting,
-                actions: [
-                    Shell(
-                        "test -d .iter/wt || git worktree add .iter/wt HEAD",
-                    ),
-                ],
-            },
-            span: 269..352,
-        },
-        Spanned {
-            node: EventHandlerDecl {
-                event: RunnerFinished,
-                actions: [
-                    Shell(
-                        "echo 'runner done; worktree retained at .iter/wt'",
-                    ),
-                ],
-            },
-            span: 354..436,
         },
     ],
 }

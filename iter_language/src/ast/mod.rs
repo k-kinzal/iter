@@ -47,7 +47,10 @@ pub use compose::{
     NamedQueue, NamedService, NamedTrigger, QueueRef, ServiceSource,
 };
 pub use event::{Action, EventHandlerDecl, EventName};
-pub use prompt::{CmpOp, IterationField, PriorityKeyword, PromptDecl, PromptGuard};
+pub use prompt::{
+    CmpOp, IterationField, NamedPrompt, PriorityKeyword, PromptArm, PromptDecl, PromptExpr,
+    PromptGuard, PromptValue,
+};
 pub use queue::{
     DlqPolicyDecl, DlqTargetDecl, KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity,
     KinesisCheckpoint, KinesisConfig, KinesisConsumer, KinesisIdentity, KinesisProducer,
@@ -95,12 +98,25 @@ impl<T> Spanned<T> {
     }
 }
 
+/// Wrapper that pairs a named identifier with its declaration.
+///
+/// Used for top-level definitions that carry a user-facing name:
+/// `agent claude as primary { ... }` → `NamedDef { name: "primary", decl: AgentDecl::Claude { ... } }`.
+/// When the `as <name>` clause is omitted, the kind doubles as the name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedDef<T> {
+    /// User-facing name. Defaults to the kind when `as` is absent.
+    pub name: String,
+    /// The underlying declaration.
+    pub decl: T,
+}
+
 /// A fully-parsed and semantically validated root of the iter language AST.
 ///
-/// All top-level sections are optional because the language permits "partial"
-/// files: webhook handlers may omit `workspace`/`agent`, while worker files
-/// may omit `runner`. Only the well-formedness of *present* sections is
-/// enforced.
+/// Definitions are named and stored in vectors (multiple of each kind
+/// allowed). Runners bind definitions by name. Old-style flat Iterfiles
+/// are desugared into this structure by the semantic analyzer with
+/// deprecation warnings.
 ///
 /// The Iterfile model has no top-level `trigger` section — triggers live in
 /// `compose.iter`. A `trigger { ... }` block at Iterfile root is a semantic
@@ -109,17 +125,14 @@ impl<T> Spanned<T> {
 pub struct Root {
     /// `arg <name> [= "<default>"]` declarations in source order.
     pub args: Vec<Spanned<ArgDecl>>,
-    /// `queue <kind> { ... }` declaration, if present.
-    pub queue: Option<Spanned<QueueDecl>>,
-    /// `workspace <kind> { ... }` declaration, if present.
-    pub workspace: Option<Spanned<WorkspaceDecl>>,
-    /// `agent <kind> { ... }` declaration, if present.
-    pub agent: Option<Spanned<AgentDecl>>,
-    /// `runner { ... }` declaration, if present.
-    pub runner: Option<Spanned<RunnerDecl>>,
-    /// All `prompt [when ...] "..."` declarations in source order.
-    pub prompts: Vec<Spanned<PromptDecl>>,
-    /// All top-level `on <event-name> { ... }` event handler declarations
-    /// (NOT the per-route handlers nested inside `trigger webhook`).
-    pub events: Vec<Spanned<EventHandlerDecl>>,
+    /// Named queue definitions: `queue <kind> [as <name>] { ... }`.
+    pub queues: Vec<Spanned<NamedDef<QueueDecl>>>,
+    /// Named workspace definitions: `workspace <kind> [as <name>] { ... }`.
+    pub workspaces: Vec<Spanned<NamedDef<WorkspaceDecl>>>,
+    /// Named agent definitions: `agent <kind> [as <name>] { ... }`.
+    pub agents: Vec<Spanned<NamedDef<AgentDecl>>>,
+    /// Named prompt templates: `prompt as <name> "..."`.
+    pub prompts: Vec<Spanned<NamedPrompt>>,
+    /// Runner declarations (each binds definitions by reference).
+    pub runners: Vec<Spanned<RunnerDecl>>,
 }

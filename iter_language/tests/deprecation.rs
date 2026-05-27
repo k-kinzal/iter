@@ -36,18 +36,10 @@ fn build_source(on_block: &str) -> String {
 #[test]
 fn deprecated_workspace_torndown_warns_and_recommends_canonical() {
     let source = build_source(r#"on workspace_torndown { shell "echo done" }"#);
-    // `parse` only returns Err when at least one diagnostic has
-    // Severity::Error. A pure-warning result therefore returns Ok and
-    // the warnings are folded into the Root via `parse` returning Ok —
-    // they don't surface here. So we use the lower-level paths to
-    // observe them: re-parse and walk the diagnostics by re-running
-    // through parse_to_cst plus semantic analysis.
-    //
-    // Simpler check: parse() must succeed, and the canonical lowering
-    // must store the renamed enum variant.
     let root = parse(&source).expect("deprecated alias parses successfully");
-    assert_eq!(root.events.len(), 1, "exactly one on-block lowered");
-    let event = root.events[0].node.event;
+    let runner = root.runners.first().expect("runner present");
+    assert_eq!(runner.node.events.len(), 1, "exactly one on-block lowered");
+    let event = runner.node.events[0].node.event;
     assert_eq!(
         event.as_str(),
         "workspace_teardown_finished",
@@ -74,9 +66,10 @@ fn deprecated_aliases_resolve_to_canonical_variants() {
                     .collect::<Vec<_>>()
             )
         });
-        assert_eq!(root.events.len(), 1, "{alias}: one event lowered");
+        let runner = root.runners.first().expect("runner present");
+        assert_eq!(runner.node.events.len(), 1, "{alias}: one event lowered");
         assert_eq!(
-            root.events[0].node.event.as_str(),
+            runner.node.events[0].node.event.as_str(),
             canonical,
             "alias `{alias}` should resolve to `{canonical}`"
         );
@@ -97,9 +90,6 @@ fn deprecated_aliases_resolve_to_canonical_variants() {
 #[test]
 fn deprecated_alias_does_not_become_an_error() {
     let source = build_source(r#"on workspace_setting_up { shell "echo legacy" }"#);
-    // The existence of `Severity::Warning` is part of the public
-    // language API contract — keep the import live so a future
-    // regression that drops the variant would break this test.
     let _ = Severity::Warning;
     parse(&source).expect("deprecated alias must not be promoted to error");
 }

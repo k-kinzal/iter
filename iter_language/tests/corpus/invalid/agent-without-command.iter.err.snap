@@ -11,3 +11,11 @@ Error: agent claude requires `command`
    │ 
    │ Help: iter no longer resolves agent binaries from `PATH` by default — set `command = "..."` to the binary name (e.g. `"claude"`) or an absolute path to pin it.
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[agent-without-command.iter:1:1]
+   │
+ 1 │ agent claude {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

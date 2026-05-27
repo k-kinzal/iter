@@ -18,7 +18,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use iter_core::process::{AdoptError, ProcessError, ProcessId, ProcessRuntime, ShutdownController};
 use iter_core::{BuilderError, RunnerExitError, RunnerSummary};
@@ -34,7 +33,7 @@ use crate::process_lifecycle::{
     self, AdoptedBootstrapError, LifecycleError, derive_finalize_reason,
     leaves_record_non_terminal, log_finalize_report,
 };
-use crate::queue::{AnyQueue, QueueBuildError, build_queue};
+use crate::queue::{AnyQueue, QueueBuildError};
 use crate::workspace::AnyWorkspace;
 
 pub use crate::process_lifecycle::RunRecordMetadata;
@@ -322,37 +321,19 @@ fn build_iterfile_builder(
     let mut iterfile = load_and_parse(iterfile_path)?;
     resolve_args(&mut iterfile, arg_overrides)?;
 
-    let workspace_decl = iterfile
-        .workspace
-        .as_ref()
-        .map(|s| &s.node)
-        .ok_or(IterfileError::MissingSection("workspace"))?;
-    let agent_decl = iterfile
-        .agent
-        .as_ref()
-        .map(|s| &s.node)
-        .ok_or(IterfileError::MissingSection("agent"))?;
-    let runner_decl = iterfile
-        .runner
-        .as_ref()
-        .map(|s| &s.node)
+    let runner = iterfile
+        .runners
+        .first()
         .ok_or(IterfileError::MissingSection("runner"))?;
 
-    let queue = iterfile
-        .queue
-        .as_ref()
-        .map(|s| build_queue(&s.node).map(Arc::new))
-        .transpose()?;
+    if iterfile.workspaces.is_empty() {
+        return Err(IterfileError::MissingSection("workspace"));
+    }
+    if iterfile.agents.is_empty() {
+        return Err(IterfileError::MissingSection("agent"));
+    }
 
-    let builder = assembly::assemble_runner_builder(
-        queue,
-        workspace_decl,
-        agent_decl,
-        runner_decl,
-        &iterfile.prompts,
-        &iterfile.events,
-        once,
-    )?;
+    let builder = assembly::assemble_from_root(&iterfile, &runner.node, None, once)?;
 
     Ok((builder, iterfile_path.to_owned()))
 }

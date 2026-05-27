@@ -1859,7 +1859,7 @@ pub fn validate_path_autodetect(
                 let envelope = ValidateOk {
                     ok: true,
                     summary: ValidateSummary {
-                        queues: usize::from(loaded.iterfile.queue.is_some()),
+                        queues: loaded.iterfile.queues.len(),
                         services: 1,
                         triggers: 0,
                     },

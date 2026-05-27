@@ -4,73 +4,85 @@ description: iter-explore.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Clone {
-                base: ".",
-                remote: None,
-                excludes: [],
-                includes: [],
-                preserve_mtime: true,
-                apply_back: ApplyBackDecl {
-                    mode: Sync,
+            node: NamedDef {
+                name: "clone",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
                     excludes: [],
                     includes: [],
+                    preserve_mtime: true,
+                    apply_back: ApplyBackDecl {
+                        mode: Sync,
+                        excludes: [],
+                        includes: [],
+                    },
                 },
             },
             span: 14..114,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Interactive,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Interactive,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 116..174,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "clone",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Loop {
                     delay_secs: None,
                 },
                 iteration_timeout_secs: None,
-            },
-            span: 176..232,
-        },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Continue improving iter. When you believe the iteration is complete, write \"ITER_DONE\".",
-            },
-            span: 234..338,
-        },
-    ],
-    events: [
-        Spanned {
-            node: EventHandlerDecl {
-                event: WorkspaceTeardownFinished,
-                actions: [
-                    Shell(
-                        "./scripts/on-torndown.sh {{signal.id}}",
+                prompt: Single(
+                    Inline(
+                        "Continue improving iter. When you believe the iteration is complete, write \"ITER_DONE\".",
                     ),
+                ),
+                events: [
+                    Spanned {
+                        node: EventHandlerDecl {
+                            event: WorkspaceTeardownFinished,
+                            actions: [
+                                Shell(
+                                    "./scripts/on-torndown.sh {{signal.id}}",
+                                ),
+                            ],
+                        },
+                        span: 340..423,
+                    },
                 ],
             },
-            span: 340..423,
+            span: 176..232,
         },
     ],
 }

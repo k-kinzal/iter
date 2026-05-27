@@ -4,190 +4,202 @@ description: queue-kinesis.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Kinesis(
-                KinesisConfig {
-                    identity: Arn(
-                        "arn:aws:kinesis:us-east-1:123456789012:stream/iter-signals",
-                    ),
-                    region: Some(
-                        "us-east-1",
-                    ),
-                    endpoint_url: Some(
-                        "https://kinesis.us-east-1.amazonaws.com",
-                    ),
-                    credentials: Some(
-                        SqsCredentials {
-                            kind: Default,
-                        },
-                    ),
-                    http_client: Some(
-                        SqsHttpClient {
-                            connect_timeout_secs: Some(
-                                5,
-                            ),
-                            read_timeout_secs: None,
-                            operation_timeout_secs: Some(
-                                30,
-                            ),
-                            operation_attempt_timeout_secs: None,
-                            tcp_keepalive_secs: None,
-                            max_idle_connections_per_host: None,
-                            connection_pool_idle_timeout_secs: None,
-                            proxy_url: None,
-                            no_proxy: None,
-                        },
-                    ),
-                    producer: Some(
-                        KinesisProducer {
-                            partition_key_strategy: Some(
-                                FromMetadata(
-                                    "workspace",
+            node: NamedDef {
+                name: "kinesis",
+                decl: Kinesis(
+                    KinesisConfig {
+                        identity: Arn(
+                            "arn:aws:kinesis:us-east-1:123456789012:stream/iter-signals",
+                        ),
+                        region: Some(
+                            "us-east-1",
+                        ),
+                        endpoint_url: Some(
+                            "https://kinesis.us-east-1.amazonaws.com",
+                        ),
+                        credentials: Some(
+                            SqsCredentials {
+                                kind: Default,
+                            },
+                        ),
+                        http_client: Some(
+                            SqsHttpClient {
+                                connect_timeout_secs: Some(
+                                    5,
                                 ),
-                            ),
-                            explicit_hash_key: None,
-                            ordering: Some(
-                                "strict_per_key",
-                            ),
-                            batch_size: Some(
-                                200,
-                            ),
-                            batch_max_bytes: Some(
-                                5242880,
-                            ),
-                            batch_linger_secs: Some(
-                                1,
-                            ),
-                            aggregation: Some(
-                                false,
-                            ),
-                        },
-                    ),
-                    consumer: Some(
-                        KinesisConsumer {
-                            consumer_mode: Some(
-                                "polling",
-                            ),
-                            iterator_type: Some(
-                                "TRIM_HORIZON",
-                            ),
-                            starting_sequence_number: None,
-                            starting_timestamp: None,
-                            fetch_max_records: Some(
-                                1000,
-                            ),
-                            poll_interval_ms: Some(
-                                1000,
-                            ),
-                            consumer_arn: None,
-                            consumer_name: None,
-                            shard_discovery_interval_secs: Some(
-                                60,
-                            ),
-                            shard_id_filter: None,
-                            shard_list_filter: None,
-                        },
-                    ),
-                    checkpoint: Some(
-                        KinesisCheckpoint {
-                            store: Some(
-                                "file",
-                            ),
-                            table_name: None,
-                            region: None,
-                            endpoint_url: None,
-                            path: Some(
-                                "/var/lib/iter/kinesis-cp",
-                            ),
-                            interval_secs: Some(
-                                30,
-                            ),
-                            lease_duration_secs: Some(
-                                30,
-                            ),
-                        },
-                    ),
-                    retry: Some(
-                        RetryPolicyDecl {
-                            mode: Some(
-                                "adaptive",
-                            ),
-                            max_attempts: Some(
-                                5,
-                            ),
-                            initial_backoff_secs: None,
-                            max_backoff_secs: None,
-                            try_timeout_secs: None,
-                            retryable_codes: None,
-                        },
-                    ),
-                    dlq: Some(
-                        DlqPolicyDecl {
-                            kind: Some(
-                                "iter_republish",
-                            ),
-                            max_receive_count: Some(
-                                5,
-                            ),
-                            reason_template: None,
-                            include_headers: None,
-                            target: Some(
-                                S3 {
-                                    bucket: "iter-poison-records",
-                                    prefix: Some(
-                                        "kinesis/iter-signals/",
+                                read_timeout_secs: None,
+                                operation_timeout_secs: Some(
+                                    30,
+                                ),
+                                operation_attempt_timeout_secs: None,
+                                tcp_keepalive_secs: None,
+                                max_idle_connections_per_host: None,
+                                connection_pool_idle_timeout_secs: None,
+                                proxy_url: None,
+                                no_proxy: None,
+                            },
+                        ),
+                        producer: Some(
+                            KinesisProducer {
+                                partition_key_strategy: Some(
+                                    FromMetadata(
+                                        "workspace",
                                     ),
-                                    region: Some(
-                                        "us-east-1",
-                                    ),
-                                },
-                            ),
-                        },
-                    ),
-                },
-            ),
+                                ),
+                                explicit_hash_key: None,
+                                ordering: Some(
+                                    "strict_per_key",
+                                ),
+                                batch_size: Some(
+                                    200,
+                                ),
+                                batch_max_bytes: Some(
+                                    5242880,
+                                ),
+                                batch_linger_secs: Some(
+                                    1,
+                                ),
+                                aggregation: Some(
+                                    false,
+                                ),
+                            },
+                        ),
+                        consumer: Some(
+                            KinesisConsumer {
+                                consumer_mode: Some(
+                                    "polling",
+                                ),
+                                iterator_type: Some(
+                                    "TRIM_HORIZON",
+                                ),
+                                starting_sequence_number: None,
+                                starting_timestamp: None,
+                                fetch_max_records: Some(
+                                    1000,
+                                ),
+                                poll_interval_ms: Some(
+                                    1000,
+                                ),
+                                consumer_arn: None,
+                                consumer_name: None,
+                                shard_discovery_interval_secs: Some(
+                                    60,
+                                ),
+                                shard_id_filter: None,
+                                shard_list_filter: None,
+                            },
+                        ),
+                        checkpoint: Some(
+                            KinesisCheckpoint {
+                                store: Some(
+                                    "file",
+                                ),
+                                table_name: None,
+                                region: None,
+                                endpoint_url: None,
+                                path: Some(
+                                    "/var/lib/iter/kinesis-cp",
+                                ),
+                                interval_secs: Some(
+                                    30,
+                                ),
+                                lease_duration_secs: Some(
+                                    30,
+                                ),
+                            },
+                        ),
+                        retry: Some(
+                            RetryPolicyDecl {
+                                mode: Some(
+                                    "adaptive",
+                                ),
+                                max_attempts: Some(
+                                    5,
+                                ),
+                                initial_backoff_secs: None,
+                                max_backoff_secs: None,
+                                try_timeout_secs: None,
+                                retryable_codes: None,
+                            },
+                        ),
+                        dlq: Some(
+                            DlqPolicyDecl {
+                                kind: Some(
+                                    "iter_republish",
+                                ),
+                                max_receive_count: Some(
+                                    5,
+                                ),
+                                reason_template: None,
+                                include_headers: None,
+                                target: Some(
+                                    S3 {
+                                        bucket: "iter-poison-records",
+                                        prefix: Some(
+                                            "kinesis/iter-signals/",
+                                        ),
+                                        region: Some(
+                                            "us-east-1",
+                                        ),
+                                    },
+                                ),
+                            },
+                        ),
+                    },
+                ),
+            },
             span: 0..1054,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 1056..1088,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 1090..1142,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "kinesis",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
             },
             span: 1166..1219,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "do the thing",
-            },
-            span: 1144..1165,
-        },
     ],
-    events: [],
 }

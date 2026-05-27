@@ -107,11 +107,14 @@ prompt "hello"
         )
         .expect("write");
         let loaded = load_iterfile(Some(&path)).expect("load");
-        assert!(loaded.iterfile.queue.is_some());
-        assert!(loaded.iterfile.workspace.is_some());
-        assert!(loaded.iterfile.agent.is_some());
-        assert!(loaded.iterfile.runner.is_some());
-        assert_eq!(loaded.iterfile.prompts.len(), 1);
+        assert!(!loaded.iterfile.queues.is_empty());
+        assert!(!loaded.iterfile.workspaces.is_empty());
+        assert!(!loaded.iterfile.agents.is_empty());
+        assert!(!loaded.iterfile.runners.is_empty());
+        assert!(matches!(
+            loaded.iterfile.runners.first().unwrap().node.prompt,
+            iter_language::PromptExpr::Single(_)
+        ));
     }
 
     #[test]

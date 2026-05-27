@@ -8,7 +8,16 @@ impl Parser<'_> {
     pub(super) fn parse_prompt_section(&mut self) -> Option<RawSection> {
         let keyword_span = self.peek_span();
         self.bump(); // `prompt`
-        let guard = if matches!(self.peek(), Some(Token::Ident(name)) if name == "when") {
+        // `prompt as <name> "..."` — named prompt definition.
+        let name = if matches!(self.peek(), Some(Token::Ident(name)) if name == "as") {
+            self.bump(); // consume `as`
+            self.expect_ident()
+        } else {
+            None
+        };
+        let guard = if name.is_none()
+            && matches!(self.peek(), Some(Token::Ident(name)) if name == "when")
+        {
             self.bump();
             self.parse_guard()
         } else {
@@ -17,6 +26,7 @@ impl Parser<'_> {
         let (body, body_span) = self.expect_string()?;
         Some(RawSection::Prompt {
             keyword_span: keyword_span.clone(),
+            name,
             guard,
             body,
             body_span: body_span.clone(),

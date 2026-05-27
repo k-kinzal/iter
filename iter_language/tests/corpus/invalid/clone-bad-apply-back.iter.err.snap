@@ -11,3 +11,11 @@ Error: unknown apply_back mode `teleport`
    │ 
    │ Help: valid modes: sync, discard, merge
 ───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[clone-bad-apply-back.iter:1:1]
+   │
+ 1 │ workspace clone {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

@@ -4,62 +4,74 @@ description: queue-shell.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Shell {
-                enqueue: "redis-cli -u $REDIS_URL ZADD myq $ITER_SIGNAL_PRIORITY -",
-                dequeue: "./scripts/poll-myq.sh",
-                close: Some(
-                    "redis-cli -u $REDIS_URL DEL myq",
-                ),
-                interpreter: Some(
-                    "bash -c",
-                ),
-                enqueue_timeout_secs: Some(
-                    30,
-                ),
+            node: NamedDef {
+                name: "shell",
+                decl: Shell {
+                    enqueue: "redis-cli -u $REDIS_URL ZADD myq $ITER_SIGNAL_PRIORITY -",
+                    dequeue: "./scripts/poll-myq.sh",
+                    close: Some(
+                        "redis-cli -u $REDIS_URL DEL myq",
+                    ),
+                    interpreter: Some(
+                        "bash -c",
+                    ),
+                    enqueue_timeout_secs: Some(
+                        30,
+                    ),
+                },
             },
             span: 0..218,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 220..252,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 254..306,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "shell",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
             },
             span: 330..383,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "do the thing",
-            },
-            span: 308..329,
-        },
     ],
-    events: [],
 }

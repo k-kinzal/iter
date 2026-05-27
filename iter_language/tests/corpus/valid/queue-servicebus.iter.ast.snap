@@ -4,262 +4,274 @@ description: queue-servicebus.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: ServiceBus(
-                ServiceBusConfig {
-                    fully_qualified_namespace: Some(
-                        "iter-bus.servicebus.windows.net",
-                    ),
-                    entity_kind: Some(
-                        "subscription",
-                    ),
-                    queue_name: None,
-                    topic_name: Some(
-                        "signals",
-                    ),
-                    subscription_name: Some(
-                        "iter-runner",
-                    ),
-                    transport: Some(
-                        "amqp_websockets",
-                    ),
-                    custom_endpoint_address: Some(
-                        "iter-bus-private.servicebus.windows.net",
-                    ),
-                    web_proxy: Some(
-                        ServiceBusProxy {
-                            url: "http://proxy.corp:3128",
-                            username: Some(
-                                "iter",
-                            ),
-                            password: Some(
-                                EnvVar(
-                                    "PROXY_PASSWORD",
+            node: NamedDef {
+                name: "servicebus",
+                decl: ServiceBus(
+                    ServiceBusConfig {
+                        fully_qualified_namespace: Some(
+                            "iter-bus.servicebus.windows.net",
+                        ),
+                        entity_kind: Some(
+                            "subscription",
+                        ),
+                        queue_name: None,
+                        topic_name: Some(
+                            "signals",
+                        ),
+                        subscription_name: Some(
+                            "iter-runner",
+                        ),
+                        transport: Some(
+                            "amqp_websockets",
+                        ),
+                        custom_endpoint_address: Some(
+                            "iter-bus-private.servicebus.windows.net",
+                        ),
+                        web_proxy: Some(
+                            ServiceBusProxy {
+                                url: "http://proxy.corp:3128",
+                                username: Some(
+                                    "iter",
                                 ),
-                            ),
-                        },
-                    ),
-                    connection_idle_timeout_secs: Some(
-                        60,
-                    ),
-                    identifier: Some(
-                        "iter-runner-1",
-                    ),
-                    authority_host: Some(
-                        "https://login.microsoftonline.com",
-                    ),
-                    auth: Some(
-                        ServiceBusAuth {
-                            kind: AadClientSecret {
-                                tenant_id: "00000000-0000-0000-0000-000000000000",
-                                client_id: "00000000-0000-0000-0000-000000000000",
-                                client_secret: EnvVar(
-                                    "AZURE_CLIENT_SECRET",
+                                password: Some(
+                                    EnvVar(
+                                        "PROXY_PASSWORD",
+                                    ),
                                 ),
                             },
-                        },
-                    ),
-                    sender: Some(
-                        ServiceBusSender {
-                            message_id: Some(
-                                FromMetadata(
-                                    "signal_id",
-                                ),
-                            ),
-                            correlation_id: Some(
-                                FromMetadata(
-                                    "workspace",
-                                ),
-                            ),
-                            content_type: Some(
-                                "application/json",
-                            ),
-                            subject: Some(
-                                "iter-signal",
-                            ),
-                            reply_to: Some(
-                                "iter-replies",
-                            ),
-                            reply_to_session_id: Some(
-                                "iter-session",
-                            ),
-                            time_to_live_secs: Some(
-                                3600,
-                            ),
-                            scheduled_enqueue_time: Some(
-                                "2026-12-31T23:59:59Z",
-                            ),
-                            partition_key_strategy: Some(
-                                FromMetadata(
-                                    "workspace",
-                                ),
-                            ),
-                            session_id_strategy: Some(
-                                FromMetadata(
-                                    "workspace",
-                                ),
-                            ),
-                            application_properties: Some(
-                                [
-                                    (
-                                        "source",
-                                        "iter",
+                        ),
+                        connection_idle_timeout_secs: Some(
+                            60,
+                        ),
+                        identifier: Some(
+                            "iter-runner-1",
+                        ),
+                        authority_host: Some(
+                            "https://login.microsoftonline.com",
+                        ),
+                        auth: Some(
+                            ServiceBusAuth {
+                                kind: AadClientSecret {
+                                    tenant_id: "00000000-0000-0000-0000-000000000000",
+                                    client_id: "00000000-0000-0000-0000-000000000000",
+                                    client_secret: EnvVar(
+                                        "AZURE_CLIENT_SECRET",
                                     ),
-                                ],
-                            ),
-                            batch_size: Some(
-                                50,
-                            ),
-                            batch_max_bytes: Some(
-                                262144,
-                            ),
-                            batch_linger_secs: Some(
-                                1,
-                            ),
-                            retry: Some(
-                                RetryPolicyDecl {
-                                    mode: Some(
-                                        "exponential",
-                                    ),
-                                    max_attempts: Some(
-                                        5,
-                                    ),
-                                    initial_backoff_secs: None,
-                                    max_backoff_secs: None,
-                                    try_timeout_secs: None,
-                                    retryable_codes: None,
                                 },
-                            ),
-                        },
-                    ),
-                    receiver: Some(
-                        ServiceBusReceiver {
-                            receive_mode: Some(
-                                "peek_lock",
-                            ),
-                            prefetch_count: Some(
-                                50,
-                            ),
-                            sub_queue: Some(
-                                "none",
-                            ),
-                            identifier: Some(
-                                "iter-receiver-1",
-                            ),
-                            max_wait_time_secs: Some(
-                                20,
-                            ),
-                            max_messages: Some(
-                                10,
-                            ),
-                            max_auto_lock_renewal_duration_secs: Some(
-                                300,
-                            ),
-                            on_handler_error: Some(
-                                "dead_letter",
-                            ),
-                            dead_letter_reason_template: Some(
-                                "{{error.kind}}",
-                            ),
-                            dead_letter_description_template: Some(
-                                "{{error.message}}",
-                            ),
-                            retry: Some(
-                                RetryPolicyDecl {
-                                    mode: Some(
-                                        "exponential",
+                            },
+                        ),
+                        sender: Some(
+                            ServiceBusSender {
+                                message_id: Some(
+                                    FromMetadata(
+                                        "signal_id",
                                     ),
-                                    max_attempts: Some(
-                                        5,
+                                ),
+                                correlation_id: Some(
+                                    FromMetadata(
+                                        "workspace",
                                     ),
-                                    initial_backoff_secs: None,
-                                    max_backoff_secs: None,
-                                    try_timeout_secs: None,
-                                    retryable_codes: None,
-                                },
-                            ),
-                        },
-                    ),
-                    session: Some(
-                        ServiceBusSession {
-                            mode: Some(
-                                "accept_next",
-                            ),
-                            session_id: None,
-                            session_idle_timeout_secs: Some(
-                                60,
-                            ),
-                        },
-                    ),
-                    retry: Some(
-                        RetryPolicyDecl {
-                            mode: Some(
-                                "exponential",
-                            ),
-                            max_attempts: Some(
-                                5,
-                            ),
-                            initial_backoff_secs: None,
-                            max_backoff_secs: None,
-                            try_timeout_secs: None,
-                            retryable_codes: None,
-                        },
-                    ),
-                    dlq: Some(
-                        DlqPolicyDecl {
-                            kind: Some(
-                                "native",
-                            ),
-                            max_receive_count: None,
-                            reason_template: None,
-                            include_headers: None,
-                            target: None,
-                        },
-                    ),
-                },
-            ),
+                                ),
+                                content_type: Some(
+                                    "application/json",
+                                ),
+                                subject: Some(
+                                    "iter-signal",
+                                ),
+                                reply_to: Some(
+                                    "iter-replies",
+                                ),
+                                reply_to_session_id: Some(
+                                    "iter-session",
+                                ),
+                                time_to_live_secs: Some(
+                                    3600,
+                                ),
+                                scheduled_enqueue_time: Some(
+                                    "2026-12-31T23:59:59Z",
+                                ),
+                                partition_key_strategy: Some(
+                                    FromMetadata(
+                                        "workspace",
+                                    ),
+                                ),
+                                session_id_strategy: Some(
+                                    FromMetadata(
+                                        "workspace",
+                                    ),
+                                ),
+                                application_properties: Some(
+                                    [
+                                        (
+                                            "source",
+                                            "iter",
+                                        ),
+                                    ],
+                                ),
+                                batch_size: Some(
+                                    50,
+                                ),
+                                batch_max_bytes: Some(
+                                    262144,
+                                ),
+                                batch_linger_secs: Some(
+                                    1,
+                                ),
+                                retry: Some(
+                                    RetryPolicyDecl {
+                                        mode: Some(
+                                            "exponential",
+                                        ),
+                                        max_attempts: Some(
+                                            5,
+                                        ),
+                                        initial_backoff_secs: None,
+                                        max_backoff_secs: None,
+                                        try_timeout_secs: None,
+                                        retryable_codes: None,
+                                    },
+                                ),
+                            },
+                        ),
+                        receiver: Some(
+                            ServiceBusReceiver {
+                                receive_mode: Some(
+                                    "peek_lock",
+                                ),
+                                prefetch_count: Some(
+                                    50,
+                                ),
+                                sub_queue: Some(
+                                    "none",
+                                ),
+                                identifier: Some(
+                                    "iter-receiver-1",
+                                ),
+                                max_wait_time_secs: Some(
+                                    20,
+                                ),
+                                max_messages: Some(
+                                    10,
+                                ),
+                                max_auto_lock_renewal_duration_secs: Some(
+                                    300,
+                                ),
+                                on_handler_error: Some(
+                                    "dead_letter",
+                                ),
+                                dead_letter_reason_template: Some(
+                                    "{{error.kind}}",
+                                ),
+                                dead_letter_description_template: Some(
+                                    "{{error.message}}",
+                                ),
+                                retry: Some(
+                                    RetryPolicyDecl {
+                                        mode: Some(
+                                            "exponential",
+                                        ),
+                                        max_attempts: Some(
+                                            5,
+                                        ),
+                                        initial_backoff_secs: None,
+                                        max_backoff_secs: None,
+                                        try_timeout_secs: None,
+                                        retryable_codes: None,
+                                    },
+                                ),
+                            },
+                        ),
+                        session: Some(
+                            ServiceBusSession {
+                                mode: Some(
+                                    "accept_next",
+                                ),
+                                session_id: None,
+                                session_idle_timeout_secs: Some(
+                                    60,
+                                ),
+                            },
+                        ),
+                        retry: Some(
+                            RetryPolicyDecl {
+                                mode: Some(
+                                    "exponential",
+                                ),
+                                max_attempts: Some(
+                                    5,
+                                ),
+                                initial_backoff_secs: None,
+                                max_backoff_secs: None,
+                                try_timeout_secs: None,
+                                retryable_codes: None,
+                            },
+                        ),
+                        dlq: Some(
+                            DlqPolicyDecl {
+                                kind: Some(
+                                    "native",
+                                ),
+                                max_receive_count: None,
+                                reason_template: None,
+                                include_headers: None,
+                                target: None,
+                            },
+                        ),
+                    },
+                ),
+            },
             span: 0..2309,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 2311..2343,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 2345..2397,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "servicebus",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
             },
             span: 2421..2474,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "do the thing",
-            },
-            span: 2399..2420,
-        },
     ],
-    events: [],
 }

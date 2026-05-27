@@ -4,72 +4,84 @@ description: apply-back-asymmetric-filter.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Sandbox {
-                base: "./worktree",
-                excludes: [
-                    ".git",
-                ],
-                includes: [],
-                preserve_mtime: false,
-                apply_back: ApplyBackDecl {
-                    mode: Sync,
+            node: NamedDef {
+                name: "sandbox",
+                decl: Sandbox {
+                    base: "./worktree",
                     excludes: [
-                        "*.md",
                         ".git",
                     ],
-                    includes: [
-                        "README.md",
-                    ],
-                },
-                policy: SandboxPolicyDecl {
-                    network: Off,
-                    allow_read_outside: [],
-                    allow_write_outside: [],
-                    extra_deny_paths: [],
-                    allow_exec: [],
+                    includes: [],
+                    preserve_mtime: false,
+                    apply_back: ApplyBackDecl {
+                        mode: Sync,
+                        excludes: [
+                            "*.md",
+                            ".git",
+                        ],
+                        includes: [
+                            "README.md",
+                        ],
+                    },
+                    policy: SandboxPolicyDecl {
+                        network: Off,
+                        allow_read_outside: [],
+                        allow_write_outside: [],
+                        extra_deny_paths: [],
+                        allow_exec: [],
+                    },
                 },
             },
             span: 14..235,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 237..289,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "sandbox",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: true,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "iterate",
+                    ),
+                ),
+                events: [],
             },
             span: 291..346,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "iterate",
-            },
-            span: 348..364,
-        },
     ],
-    events: [],
 }

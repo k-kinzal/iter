@@ -4,58 +4,70 @@ description: agent-passthrough.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 14..46,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Copilot {
-                mode: Print,
-                command: "/opt/bin/gh",
-                subcommand: Some(
-                    [
-                        "copilot",
-                        "explain",
+            node: NamedDef {
+                name: "copilot",
+                decl: Copilot {
+                    mode: Print,
+                    command: "/opt/bin/gh",
+                    subcommand: Some(
+                        [
+                            "copilot",
+                            "explain",
+                        ],
+                    ),
+                    args: [
+                        "--no-color",
+                        "--quiet",
                     ],
-                ),
-                args: [
-                    "--no-color",
-                    "--quiet",
-                ],
-                env: {},
+                    env: {},
+                },
             },
             span: 48..194,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "copilot",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Pass-through smoke test.",
+                    ),
+                ),
+                events: [],
             },
             span: 196..252,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "Pass-through smoke test.",
-            },
-            span: 254..287,
-        },
     ],
-    events: [],
 }

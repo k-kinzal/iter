@@ -4,68 +4,80 @@ description: queue-pubsub-minimal.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: PubSub(
-                PubSubConfig {
-                    project: "my-gcp-project",
-                    topic: "iter-signals",
-                    subscription: "iter-runner",
-                    endpoint: None,
-                    user_agent: None,
-                    connect_timeout_secs: None,
-                    request_timeout_secs: None,
-                    keepalive: None,
-                    quota_project: None,
-                    scopes: None,
-                    credentials: None,
-                    publisher: None,
-                    subscriber: None,
-                    initial_seek: None,
-                    dlq: None,
-                },
-            ),
+            node: NamedDef {
+                name: "pubsub",
+                decl: PubSub(
+                    PubSubConfig {
+                        project: "my-gcp-project",
+                        topic: "iter-signals",
+                        subscription: "iter-runner",
+                        endpoint: None,
+                        user_agent: None,
+                        connect_timeout_secs: None,
+                        request_timeout_secs: None,
+                        keepalive: None,
+                        quota_project: None,
+                        scopes: None,
+                        credentials: None,
+                        publisher: None,
+                        subscriber: None,
+                        initial_seek: None,
+                        dlq: None,
+                    },
+                ),
+            },
             span: 0..101,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Local {
-                base: ".",
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
             },
             span: 103..135,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 137..189,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "local",
+                queue: Some(
+                    "pubsub",
+                ),
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "do the thing",
+                    ),
+                ),
+                events: [],
             },
             span: 213..266,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "do the thing",
-            },
-            span: 191..212,
-        },
     ],
-    events: [],
 }

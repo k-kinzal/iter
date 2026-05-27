@@ -1,9 +1,36 @@
 //! `runner` declaration AST.
 
+use super::event::EventHandlerDecl;
+use super::prompt::PromptExpr;
+use super::Spanned;
+
 /// `runner { ... }` declaration — project-shaped runtime policy for the
 /// iter loop.
+///
+/// In the new syntax, a runner binds named definitions by reference:
+/// ```text
+/// runner {
+///     agent     = primary
+///     workspace = dev
+///     queue     = main
+///     behavior  = loop
+///     ...
+/// }
+/// ```
+///
+/// In the old (deprecated) flat syntax, these fields are absent and the
+/// semantic analyzer synthesises them from the sole top-level definitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerDecl {
+    /// Optional runner name (for multi-runner files; currently unused at
+    /// runtime but reserved in the AST for forward compatibility).
+    pub name: Option<String>,
+    /// Reference to a named agent definition.
+    pub agent: String,
+    /// Reference to a named workspace definition.
+    pub workspace: String,
+    /// Reference to a named queue definition (optional for loop-only runners).
+    pub queue: Option<String>,
     /// If true, the runner continues after a stage failure; if
     /// false, one bad signal aborts the whole loop. Required — iter does
     /// not pick an error policy on the project's behalf.
@@ -23,6 +50,10 @@ pub struct RunnerDecl {
     /// guard, not as an SLA — `continue_on_error` governs whether the
     /// runner moves on or breaks after a timeout.
     pub iteration_timeout_secs: Option<i64>,
+    /// Prompt selection expression for this runner.
+    pub prompt: PromptExpr,
+    /// Event handlers scoped to this runner's lifecycle.
+    pub events: Vec<Spanned<EventHandlerDecl>>,
 }
 
 /// Runner loop behaviour — what the runner does when no signal is

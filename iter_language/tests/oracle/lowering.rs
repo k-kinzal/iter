@@ -77,6 +77,7 @@ fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
         keyword_span: keyword_span.clone(),
         kind: Some(name),
         kind2: None,
+        alias: None,
         body,
         span,
     }
@@ -108,6 +109,7 @@ fn lower_runner_section(pair: Pair<Rule>) -> RawSection {
         keyword_span,
         kind: None,
         kind2: None,
+        alias: None,
         body,
         span,
     }
@@ -142,6 +144,7 @@ fn lower_kinded_section(pair: Pair<Rule>) -> RawSection {
         keyword_span,
         kind,
         kind2,
+        alias: None,
         body,
         span,
     }
@@ -191,6 +194,7 @@ fn lower_prompt_section(pair: Pair<Rule>) -> RawSection {
     let body = lower_string_literal(body_pair);
     RawSection::Prompt {
         keyword_span,
+        name: None,
         guard,
         body,
         body_span,

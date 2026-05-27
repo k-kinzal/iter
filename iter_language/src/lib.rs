@@ -42,7 +42,7 @@
 //!     prompt "Do the thing"
 //! "#;
 //! let root = parse(source).expect("valid source");
-//! assert!(root.queue.is_some());
+//! assert!(!root.queues.is_empty());
 //! ```
 
 #![deny(missing_docs)]
@@ -61,15 +61,16 @@ pub use ast::{
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDecl, DlqTargetDecl, EventHandlerDecl,
     EventName, ExtractExpr, FilesSource, InlineService, IterationField, KafkaConfig, KafkaConsumer,
     KafkaProducer, KafkaSecurity, KinesisCheckpoint, KinesisConfig, KinesisConsumer,
-    KinesisIdentity, KinesisProducer, KinesisShardListFilter, NamedCompose, NamedQueue,
-    NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptDecl, PromptGuard,
-    PubSubConfig, PubSubCredentialKind, PubSubCredentials, PubSubInitialSeek, PubSubKeepalive,
-    PubSubPublisher, PubSubSubscriber, QueueDecl, QueueRef, RetryPolicyDecl, Root, RunnerBehavior,
-    RunnerDecl, SandboxNetworkDecl, SandboxPolicyDecl, SecretExpr, ServiceBusAuth,
-    ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy, ServiceBusReceiver, ServiceBusSender,
-    ServiceBusSession, ServiceSource, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind,
-    SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, TelemetryDecl, TelemetryProtocol,
-    TemplatedString, TriggerDecl, Value, WatchEventKind, WebhookRoute, WorkspaceDecl,
+    KinesisIdentity, KinesisProducer, KinesisShardListFilter, NamedCompose, NamedDef, NamedPrompt,
+    NamedQueue, NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDecl,
+    PromptExpr, PromptGuard, PromptValue, PubSubConfig, PubSubCredentialKind, PubSubCredentials,
+    PubSubInitialSeek, PubSubKeepalive, PubSubPublisher, PubSubSubscriber, QueueDecl, QueueRef,
+    RetryPolicyDecl, Root, RunnerBehavior, RunnerDecl, SandboxNetworkDecl, SandboxPolicyDecl,
+    SecretExpr, ServiceBusAuth, ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy,
+    ServiceBusReceiver, ServiceBusSender, ServiceBusSession, ServiceSource, Span, Spanned,
+    SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity,
+    SqsProducer, TelemetryDecl, TelemetryProtocol, TemplatedString, TriggerDecl, Value,
+    WatchEventKind, WebhookRoute, WorkspaceDecl,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{

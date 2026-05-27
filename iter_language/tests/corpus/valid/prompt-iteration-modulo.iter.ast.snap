@@ -4,75 +4,86 @@ description: prompt-iteration-modulo.iter
 ---
 Root {
     args: [],
-    queue: Some(
+    queues: [
         Spanned {
-            node: Memory,
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
             span: 0..12,
         },
-    ),
-    workspace: Some(
+    ],
+    workspaces: [
         Spanned {
-            node: Clone {
-                base: ".",
-                remote: None,
-                excludes: [],
-                includes: [],
-                preserve_mtime: true,
-                apply_back: ApplyBackDecl {
-                    mode: Sync,
+            node: NamedDef {
+                name: "clone",
+                decl: Clone {
+                    base: ".",
+                    remote: None,
                     excludes: [],
                     includes: [],
+                    preserve_mtime: true,
+                    apply_back: ApplyBackDecl {
+                        mode: Sync,
+                        excludes: [],
+                        includes: [],
+                    },
                 },
             },
             span: 14..114,
         },
-    ),
-    agent: Some(
+    ],
+    agents: [
         Spanned {
-            node: Claude {
-                mode: Print,
-                command: "claude",
-                args: [],
-                session_id_file: None,
-                env: {},
+            node: NamedDef {
+                name: "claude",
+                decl: Claude {
+                    mode: Print,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
             },
             span: 116..168,
         },
-    ),
-    runner: Some(
+    ],
+    prompts: [],
+    runners: [
         Spanned {
             node: RunnerDecl {
+                name: None,
+                agent: "claude",
+                workspace: "clone",
+                queue: Some(
+                    "memory",
+                ),
                 continue_on_error: true,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                prompt: Match {
+                    arms: [
+                        PromptArm {
+                            guard: IterationCmp {
+                                field: Count,
+                                modulus: Some(
+                                    10,
+                                ),
+                                op: Eq,
+                                rhs: 0,
+                            },
+                            value: Inline(
+                                "every-tenth tick n={{iteration.count}}",
+                            ),
+                        },
+                    ],
+                    default: Inline(
+                        "tick n={{iteration.count}}",
+                    ),
+                },
+                events: [],
             },
             span: 170..225,
         },
-    ),
-    prompts: [
-        Spanned {
-            node: PromptDecl {
-                guard: Some(
-                    IterationCmp {
-                        field: Count,
-                        modulus: Some(
-                            10,
-                        ),
-                        op: Eq,
-                        rhs: 0,
-                    },
-                ),
-                body: "every-tenth tick n={{iteration.count}}",
-            },
-            span: 227..305,
-        },
-        Spanned {
-            node: PromptDecl {
-                guard: None,
-                body: "tick n={{iteration.count}}",
-            },
-            span: 306..341,
-        },
     ],
-    events: [],
 }
