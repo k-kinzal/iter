@@ -1,0 +1,58 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-antigravity.iter
+---
+Root {
+    args: [],
+    queue: Some(
+        Spanned {
+            node: Memory,
+            span: 0..12,
+        },
+    ),
+    workspace: Some(
+        Spanned {
+            node: Local {
+                base: ".",
+            },
+            span: 14..46,
+        },
+    ),
+    agent: Some(
+        Spanned {
+            node: Antigravity {
+                mode: Print,
+                command: "agy",
+                args: [
+                    "--print-timeout",
+                    "600",
+                ],
+                conversation_id: Some(
+                    "my-session",
+                ),
+                env: {},
+            },
+            span: 48..201,
+        },
+    ),
+    runner: Some(
+        Spanned {
+            node: RunnerDecl {
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+            },
+            span: 203..259,
+        },
+    ),
+    prompts: [
+        Spanned {
+            node: PromptDecl {
+                guard: None,
+                body: "Antigravity test.",
+            },
+            span: 261..287,
+        },
+    ],
+    events: [],
+}

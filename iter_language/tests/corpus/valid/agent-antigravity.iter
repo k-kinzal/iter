@@ -1,0 +1,19 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent antigravity {
+  mode            = print
+  command         = "agy"
+  args            = ["--print-timeout", "600"]
+  conversation_id = "my-session"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Antigravity test."

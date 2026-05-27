@@ -19,6 +19,7 @@ agent <kind> {
 | [`claude`](#agent-claude) | Claude Code (`claude`) | ✔ | ✘ |
 | [`codex`](#agent-codex) | OpenAI Codex | ✔ | ✘ |
 | [`gemini`](#agent-gemini) | Google Gemini | ✔ | ✘ |
+| [`antigravity`](#agent-antigravity) | Google Antigravity (`agy`) | ✔ | ✘ |
 | [`copilot`](#agent-copilot) | GitHub Copilot (`gh copilot`) | ✔ | ✔ |
 | [`cursor`](#agent-cursor) | Cursor | ✘ | ✘ |
 | [`cline`](#agent-cline) | Cline | ✘ | ✘ |
@@ -153,6 +154,38 @@ Google Gemini.
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
+
+---
+
+## `agent antigravity`
+
+Google Antigravity CLI (`agy`), successor to Gemini CLI.
+
+### Example
+
+```hcl
+agent antigravity {
+  mode    = print
+  command = "agy"
+  args    = ["--print-timeout", "600"]
+}
+
+agent antigravity {
+  mode            = print
+  command         = "agy"
+  conversation_id = "my-session"
+}
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | :---: | --- | --- |
+| `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
+| `command` | `string` | Required | — | Binary name or absolute path. |
+| `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `conversation_id` | `string` | Optional | — | Conversation identifier for session persistence. When set, iter passes `--conversation <id>` on every invocation so the agent resumes the same session. Omit to start a fresh conversation each iteration. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---

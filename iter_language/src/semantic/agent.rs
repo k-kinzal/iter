@@ -23,7 +23,15 @@ impl Analyzer {
             keyword_span,
             "agent",
             &[
-                "claude", "codex", "gemini", "copilot", "cursor", "cline", "opencode", "generic",
+                "claude",
+                "codex",
+                "gemini",
+                "antigravity",
+                "copilot",
+                "cursor",
+                "cline",
+                "opencode",
+                "generic",
                 "router",
             ],
         )?;
@@ -32,7 +40,7 @@ impl Analyzer {
         }
         let mut fields = self.collect_fields(body);
         let decl = match kind.name.as_str() {
-            "claude" | "codex" | "gemini" | "copilot" => {
+            "claude" | "codex" | "gemini" | "antigravity" | "copilot" => {
                 self.lower_mode_agent(&kind, &mut fields)?
             }
             "cursor" => {
@@ -58,7 +66,7 @@ impl Analyzer {
                         format!("unknown agent kind `{other}`"),
                     )
                     .with_hint(
-                        "valid kinds: claude, codex, gemini, copilot, cursor, cline, opencode, generic, router",
+                        "valid kinds: claude, codex, gemini, antigravity, copilot, cursor, cline, opencode, generic, router",
                     ),
                 );
                 return None;
@@ -123,6 +131,21 @@ impl Analyzer {
                     mode: mode?,
                     command: command?,
                     args,
+                    env,
+                })
+            }
+            "antigravity" => {
+                let conversation_id = self.take_optional_string(fields, "conversation_id");
+                self.reject_unknown_fields(
+                    fields,
+                    &["mode", "command", "args", "conversation_id", "env"],
+                    "agent antigravity",
+                );
+                Some(AgentDecl::Antigravity {
+                    mode: mode?,
+                    command: command?,
+                    args,
+                    conversation_id,
                     env,
                 })
             }
@@ -216,11 +239,7 @@ impl Analyzer {
         AgentDecl::Generic { command, env }
     }
 
-    fn lower_router_agent(
-        &mut self,
-        kind: &RawIdent,
-        body: Option<RawBlock>,
-    ) -> Option<AgentDecl> {
+    fn lower_router_agent(&mut self, kind: &RawIdent, body: Option<RawBlock>) -> Option<AgentDecl> {
         let raw_fields = match body {
             Some(block) => block.fields,
             None => Vec::new(),
@@ -321,8 +340,11 @@ impl Analyzer {
 
         if agents.is_empty() {
             self.errors.push(
-                Diagnostic::error(kind.span.clone(), "agent router requires at least one sub-agent")
-                    .with_hint("add named sub-agent blocks: `primary { kind = claude; ... }`"),
+                Diagnostic::error(
+                    kind.span.clone(),
+                    "agent router requires at least one sub-agent",
+                )
+                .with_hint("add named sub-agent blocks: `primary { kind = claude; ... }`"),
             );
             return None;
         }
@@ -336,7 +358,9 @@ impl Analyzer {
         fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
     ) -> Option<AgentDecl> {
         match kind.name.as_str() {
-            "claude" | "codex" | "gemini" | "copilot" => self.lower_mode_agent(kind, fields),
+            "claude" | "codex" | "gemini" | "antigravity" | "copilot" => {
+                self.lower_mode_agent(kind, fields)
+            }
             "cursor" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(kind, fields, "cursor")?;
@@ -357,7 +381,7 @@ impl Analyzer {
                 self.errors.push(
                     Diagnostic::error(kind.span.clone(), format!("unknown agent kind `{other}`"))
                         .with_hint(
-                            "valid kinds: claude, codex, gemini, copilot, cursor, cline, opencode, generic",
+                            "valid kinds: claude, codex, gemini, antigravity, copilot, cursor, cline, opencode, generic",
                         ),
                 );
                 None

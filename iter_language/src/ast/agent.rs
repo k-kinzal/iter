@@ -65,6 +65,21 @@ pub enum AgentDecl {
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
+    /// Google Antigravity CLI agent (successor to Gemini CLI).
+    Antigravity {
+        /// Invocation mode for the underlying CLI. Required.
+        mode: AgentMode,
+        /// Binary name or absolute path. Required.
+        command: String,
+        /// Extra arguments appended after the iter-managed defaults.
+        args: Vec<String>,
+        /// Optional conversation ID for session persistence across
+        /// iterations. When set, `--conversation <id>` is passed to
+        /// the `agy` binary so it resumes the same session.
+        conversation_id: Option<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
+    },
     /// GitHub Copilot agent.
     Copilot {
         /// Invocation mode for the underlying CLI. Required.

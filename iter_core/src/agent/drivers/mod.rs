@@ -4,6 +4,7 @@
 //! [`crate::agent::Agent`]. All drivers are currently process-based
 //! (no external SDK dependencies) and always compiled.
 
+pub mod antigravity;
 pub mod claude;
 pub mod cline;
 pub mod codex;
