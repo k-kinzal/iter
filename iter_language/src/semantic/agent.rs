@@ -33,6 +33,8 @@ impl Analyzer {
                 "cline",
                 "opencode",
                 "generic",
+                "noop",
+                "fake",
                 "router",
             ],
         )?;
@@ -60,6 +62,11 @@ impl Analyzer {
                 AgentDecl::OpenCode { command, args, env }
             }
             "generic" => self.lower_generic_agent(&kind, &mut fields),
+            "noop" => {
+                self.reject_unknown_fields(&mut fields, &[], "agent noop");
+                AgentDecl::Noop
+            }
+            "fake" => self.lower_fake_agent(&kind, &mut fields),
             other => {
                 self.errors.push(
                     Diagnostic::error(
@@ -67,7 +74,7 @@ impl Analyzer {
                         format!("unknown agent kind `{other}`"),
                     )
                     .with_hint(
-                        "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic, router",
+                        "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic, noop, fake, router",
                     ),
                 );
                 return None;
@@ -253,6 +260,49 @@ impl Analyzer {
         AgentDecl::Generic { command, env }
     }
 
+    fn lower_fake_agent(
+        &mut self,
+        kind: &RawIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
+    ) -> AgentDecl {
+        #[allow(clippy::cast_possible_truncation)]
+        let exit_code = self
+            .take_optional_int(fields, "exit_code")
+            .map_or(0, |n| n as i32);
+        let delay_secs = self.take_optional_u64(fields, "delay_secs");
+        let stdout = self
+            .take_optional_string_list(fields, "stdout")
+            .unwrap_or_default();
+        let stderr = self
+            .take_optional_string_list(fields, "stderr")
+            .unwrap_or_default();
+        let files = self.take_optional_string_kv_block(fields, "files");
+        let last_output = self.take_optional_string(fields, "last_output");
+        let turn_count = self.take_optional_u32(fields, "turn_count");
+        self.reject_unknown_fields(
+            fields,
+            &[
+                "exit_code",
+                "delay_secs",
+                "stdout",
+                "stderr",
+                "files",
+                "last_output",
+                "turn_count",
+            ],
+            &format!("agent {}", kind.name),
+        );
+        AgentDecl::Fake {
+            exit_code,
+            delay_secs,
+            stdout,
+            stderr,
+            files,
+            last_output,
+            turn_count,
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn lower_router_agent(&mut self, kind: &RawIdent, body: Option<RawBlock>) -> Option<AgentDecl> {
         let raw_fields = match body {
@@ -392,11 +442,16 @@ impl Analyzer {
                 Some(AgentDecl::OpenCode { command, args, env })
             }
             "generic" => Some(self.lower_generic_agent(kind, fields)),
+            "noop" => {
+                self.reject_unknown_fields(fields, &[], "agent noop");
+                Some(AgentDecl::Noop)
+            }
+            "fake" => Some(self.lower_fake_agent(kind, fields)),
             other => {
                 self.errors.push(
                     Diagnostic::error(kind.span.clone(), format!("unknown agent kind `{other}`"))
                         .with_hint(
-                            "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic",
+                            "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic, noop, fake",
                         ),
                 );
                 None

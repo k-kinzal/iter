@@ -1,0 +1,19 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-fake-negative-delay.iter
+---
+Error: unexpected character `-`
+   ╭─[agent-fake-negative-delay.iter:2:16]
+   │
+ 2 │   delay_secs = -1
+   │                ┬  
+   │                ╰── unexpected character `-`
+───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[agent-fake-negative-delay.iter:1:1]
+   │
+ 1 │ agent fake {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

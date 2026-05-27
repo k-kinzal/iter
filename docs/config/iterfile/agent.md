@@ -26,8 +26,12 @@ agent <kind> {
 | [`cline`](#agent-cline) | Cline | ✘ | ✘ |
 | [`opencode`](#agent-opencode) | opencode | ✘ | ✘ |
 | [`generic`](#agent-generic) | Arbitrary argv | ✘ | ✘ |
+| [`noop`](#agent-noop) | Built-in (no binary) | ✘ | ✘ |
+| [`fake`](#agent-fake) | Built-in (no binary) | ✘ | ✘ |
 
-Every named kind (all but `generic`) carries a required `command` field plus a pass-through `args` list. iter prepends mode-specific defaults (`--print`, `exec`, etc.) and appends `args` after them.
+Every named kind (all but `generic`, `noop`, and `fake`) carries a required `command` field plus a pass-through `args` list. iter prepends mode-specific defaults (`--print`, `exec`, etc.) and appends `args` after them.
+
+`noop` and `fake` do not require any external binary — they run entirely in-process.
 
 ---
 
@@ -330,6 +334,64 @@ agent generic {
 | --- | --- | :---: | --- | --- |
 | `command` | `list(string)` | Required | — | argv vector. First element is the program; the rest are arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
+
+---
+
+## `agent noop`
+
+Does nothing. Exits immediately with success. No external binary required.
+
+Use cases: verifying workspace setup/teardown in isolation, testing event handler wiring, benchmarking runner overhead, dry-running Iterfile configuration.
+
+### Example
+
+```hcl
+agent noop {}
+```
+
+### Arguments
+
+None. The body must be empty.
+
+---
+
+## `agent fake`
+
+Configurable fake agent for verification testing. Produces deterministic file changes, STDIO output, and exit status through the real pipeline without a real AI agent binary.
+
+The implementation exercises real infrastructure: `StdioSink` log capture, workspace filesystem writes (including `apply_back`), cancellation token handling, and exit status classification.
+
+### Examples
+
+```hcl
+agent fake {
+  exit_code   = 0
+  delay_secs  = 2
+  stdout      = ["processing file A", "processing file B", "done"]
+  stderr      = ["warning: deprecated API"]
+  files {
+    "output/result.txt"  = "refactored content"
+    "output/report.json" = """{"status": "ok", "changes": 3}"""
+  }
+  last_output = "Completed refactoring with 3 changes."
+  turn_count  = 5
+}
+
+# Minimal — all defaults, behaves like noop
+agent fake {}
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | :---: | --- | --- |
+| `exit_code` | `integer` | Optional | `0` | Process exit code. 0 = success, non-zero = failure. |
+| `delay_secs` | `integer` | Optional | `0` | Simulated execution delay in seconds. Respects cancellation. |
+| `stdout` | `list(string)` | Optional | `[]` | Lines written to stdout via the StdioSink. |
+| `stderr` | `list(string)` | Optional | `[]` | Lines written to stderr via the StdioSink. |
+| `files` | `block { "path" = "content" }` | Optional | `{}` | Files to create/overwrite in the workspace. Keys are relative paths. |
+| `last_output` | `string` | Optional | — | Value for `AgentReport.last_output`. |
+| `turn_count` | `integer` | Optional | — | Value for `AgentReport.turn_count`. |
 
 ---
 

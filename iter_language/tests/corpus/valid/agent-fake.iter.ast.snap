@@ -1,0 +1,81 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-fake.iter
+---
+Root {
+    args: [],
+    queues: [
+        Spanned {
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
+            span: 0..12,
+        },
+    ],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
+            },
+            span: 14..46,
+        },
+    ],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "fake",
+                decl: Fake {
+                    exit_code: 0,
+                    delay_secs: Some(
+                        2,
+                    ),
+                    stdout: [
+                        "processing file A",
+                        "done",
+                    ],
+                    stderr: [
+                        "warning: deprecated API",
+                    ],
+                    files: {
+                        "output/report.json": "{\"status\": \"ok\"}",
+                        "output/result.txt": "refactored content",
+                    },
+                    last_output: Some(
+                        "Completed refactoring.",
+                    ),
+                    turn_count: Some(
+                        5,
+                    ),
+                },
+            },
+            span: 48..359,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDecl {
+                name: None,
+                agent: "fake",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Fake test.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 361..417,
+        },
+    ],
+}

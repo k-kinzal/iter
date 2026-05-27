@@ -1,0 +1,59 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-noop.iter
+---
+Root {
+    args: [],
+    queues: [
+        Spanned {
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
+            span: 0..12,
+        },
+    ],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
+            },
+            span: 14..46,
+        },
+    ],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "noop",
+                decl: Noop,
+            },
+            span: 48..61,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDecl {
+                name: None,
+                agent: "noop",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Noop test.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 63..119,
+        },
+    ],
+}

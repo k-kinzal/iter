@@ -272,6 +272,33 @@ fn render_agent(
                 render_str(v, values)?;
             }
         }
+        iter_language::AgentDecl::Noop => {}
+        iter_language::AgentDecl::Fake {
+            stdout,
+            stderr,
+            files,
+            last_output,
+            ..
+        } => {
+            for s in stdout.iter_mut() {
+                render_str(s, values)?;
+            }
+            for s in stderr.iter_mut() {
+                render_str(s, values)?;
+            }
+            let rendered_files: BTreeMap<String, String> = std::mem::take(files)
+                .into_iter()
+                .map(|(mut k, mut v)| {
+                    render_str(&mut k, values)?;
+                    render_str(&mut v, values)?;
+                    Ok((k, v))
+                })
+                .collect::<Result<_, ArgError>>()?;
+            *files = rendered_files;
+            if let Some(lo) = last_output.as_mut() {
+                render_str(lo, values)?;
+            }
+        }
         iter_language::AgentDecl::Router { agents, .. } => {
             for (_name, sub_decl) in agents.iter_mut() {
                 render_agent(sub_decl, values)?;
@@ -625,6 +652,39 @@ prompt \"{{arg.greeting}} \u{4e16}\u{754c}\"
                 assert_eq!(s, "hello \u{4e16}\u{754c}");
             }
             other => panic!("unexpected prompt expr: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_args_renders_fake_agent_files_keys_and_values() {
+        let source = r#"
+arg name = "result"
+workspace local { base = "." }
+agent fake {
+  stdout = ["{{arg.name}}"]
+  files {
+    "output/{{arg.name}}.txt" = "content for {{arg.name}}"
+  }
+  last_output = "done: {{arg.name}}"
+}
+runner { continue_on_error = false behavior = loop }
+prompt "noop"
+"#;
+        let mut root = parse(source).expect("parse");
+        resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
+        match &root.agents.first().unwrap().node.decl {
+            iter_language::AgentDecl::Fake {
+                stdout,
+                files,
+                last_output,
+                ..
+            } => {
+                assert_eq!(stdout, &["result"]);
+                assert_eq!(files.get("output/result.txt"), Some(&"content for result".to_string()));
+                assert!(!files.contains_key("output/{{arg.name}}.txt"));
+                assert_eq!(last_output.as_deref(), Some("done: result"));
+            }
+            other => panic!("unexpected agent: {other:?}"),
         }
     }
 

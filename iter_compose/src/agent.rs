@@ -6,8 +6,9 @@ use std::path::PathBuf;
 use iter_core::agent::{
     AgentError, AgentMode as ImplAgentMode, AntigravityAgent, AntigravitySettings, ClaudeAgent,
     ClaudeSettings, ClineAgent, ClineSettings, CodexAgent, CodexSettings, CopilotAgent,
-    CopilotSettings, CursorAgent, CursorSettings, GeminiAgent, GeminiSettings, GenericAgent,
-    HermesAgent, HermesSettings, OpenCodeAgent, OpenCodeSettings,
+    CopilotSettings, CursorAgent, CursorSettings, FakeAgent, FakeSettings, GeminiAgent,
+    GeminiSettings, GenericAgent, HermesAgent, HermesSettings, NoopAgent, OpenCodeAgent,
+    OpenCodeSettings,
 };
 use iter_core::workspace::sandbox::agent_requirements;
 use iter_core::{Agent, AgentReport, AgentRunContext, SandboxRequirements};
@@ -63,6 +64,10 @@ pub enum AnyAgent {
     OpenCode(OpenCodeAgent),
     /// Generic command-driven agent.
     Generic(GenericAgent),
+    /// Built-in no-op agent (no external binary).
+    Noop(NoopAgent),
+    /// Built-in configurable fake agent (no external binary).
+    Fake(FakeAgent),
     /// Multi-agent router with fallback or rotation strategy.
     Router(AgentRouter),
 }
@@ -82,6 +87,8 @@ impl Agent for AnyAgent {
             Self::Cline(a) => a.run(ctx).await,
             Self::OpenCode(a) => a.run(ctx).await,
             Self::Generic(a) => a.run(ctx).await,
+            Self::Noop(a) => a.run(ctx).await,
+            Self::Fake(a) => a.run(ctx).await,
             Self::Router(a) => a.run(ctx).await,
         }
     }
@@ -106,7 +113,9 @@ impl AnyAgent {
             | Self::Cursor(_)
             | Self::Cline(_)
             | Self::OpenCode(_)
-            | Self::Generic(_) => SandboxRequirements::default(),
+            | Self::Generic(_)
+            | Self::Noop(_)
+            | Self::Fake(_) => SandboxRequirements::default(),
             Self::Router(r) => merge_sandbox_requirements(r.agents()),
         }
     }
@@ -252,6 +261,24 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
                 env: resolve_env(env),
             }))
         }
+        AgentDecl::Noop => AnyAgent::Noop(NoopAgent),
+        AgentDecl::Fake {
+            exit_code,
+            delay_secs,
+            stdout,
+            stderr,
+            files,
+            last_output,
+            turn_count,
+        } => AnyAgent::Fake(FakeAgent::new(FakeSettings {
+            exit_code: *exit_code,
+            delay_secs: delay_secs.unwrap_or(0),
+            stdout: stdout.clone(),
+            stderr: stderr.clone(),
+            files: files.clone(),
+            last_output: last_output.clone(),
+            turn_count: *turn_count,
+        })),
         AgentDecl::Generic { command, env } => {
             if command.is_empty() {
                 return Err(AgentBuildError::GenericEmptyCommand);
@@ -373,7 +400,7 @@ mod tests {
     #[test]
     fn maps_each_agent_decl_variant() {
         type Check = fn(&AnyAgent) -> bool;
-        let cases: [(AgentDecl, Check); 10] = [
+        let cases: [(AgentDecl, Check); 12] = [
             (claude_decl(AstAgentMode::Print), |a| {
                 matches!(a, AnyAgent::Claude(_))
             }),
@@ -422,6 +449,19 @@ mod tests {
                     env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::Generic(_)),
+            ),
+            (AgentDecl::Noop, |a| matches!(a, AnyAgent::Noop(_))),
+            (
+                AgentDecl::Fake {
+                    exit_code: 0,
+                    delay_secs: None,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                    files: BTreeMap::new(),
+                    last_output: None,
+                    turn_count: None,
+                },
+                |a| matches!(a, AnyAgent::Fake(_)),
             ),
         ];
         for (decl, check) in &cases {

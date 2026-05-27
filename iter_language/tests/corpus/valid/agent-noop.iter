@@ -1,0 +1,14 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent noop {}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Noop test."

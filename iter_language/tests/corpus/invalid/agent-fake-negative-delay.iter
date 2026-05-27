@@ -1,0 +1,4 @@
+agent fake {
+  delay_secs = -1
+}
+runner { continue_on_error = false  behavior = wait }

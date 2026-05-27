@@ -1,0 +1,19 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-noop-unknown-field.iter
+---
+Error: unknown field `foo` in agent noop
+   ╭─[agent-noop-unknown-field.iter:2:3]
+   │
+ 2 │   foo = "bar"
+   │   ─┬─  
+   │    ╰─── unknown field `foo` in agent noop
+───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[agent-noop-unknown-field.iter:1:1]
+   │
+ 1 │ agent noop {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

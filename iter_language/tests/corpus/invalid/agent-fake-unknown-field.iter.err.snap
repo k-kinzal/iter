@@ -1,0 +1,21 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-fake-unknown-field.iter
+---
+Error: unknown field `bogus` in agent fake
+   ╭─[agent-fake-unknown-field.iter:3:3]
+   │
+ 3 │   bogus     = "bad"
+   │   ──┬──  
+   │     ╰──── unknown field `bogus` in agent fake
+   │ 
+   │ Help: valid fields: exit_code, delay_secs, stdout, stderr, files, last_output, turn_count
+───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[agent-fake-unknown-field.iter:1:1]
+   │
+ 1 │ agent fake {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

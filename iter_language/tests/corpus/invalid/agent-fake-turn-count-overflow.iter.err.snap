@@ -1,0 +1,19 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-fake-turn-count-overflow.iter
+---
+Error: `turn_count` must be a non-negative integer that fits in 32 bits
+   ╭─[agent-fake-turn-count-overflow.iter:2:16]
+   │
+ 2 │   turn_count = 4294967296
+   │                ─────┬────  
+   │                     ╰────── `turn_count` must be a non-negative integer that fits in 32 bits
+───╯
+
+Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
+   ╭─[agent-fake-turn-count-overflow.iter:1:1]
+   │
+ 1 │ agent fake {
+   │ │ 
+   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
+───╯

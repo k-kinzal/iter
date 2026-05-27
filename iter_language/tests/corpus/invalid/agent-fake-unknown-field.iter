@@ -1,0 +1,5 @@
+agent fake {
+  exit_code = 0
+  bogus     = "bad"
+}
+runner { continue_on_error = false  behavior = wait }

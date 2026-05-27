@@ -136,6 +136,26 @@ pub enum AgentDecl {
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
+    /// Agent that does nothing. Exits immediately with success.
+    Noop,
+    /// Configurable fake agent for verification testing.
+    Fake {
+        /// Process exit code. 0 = success, non-zero = failure.
+        exit_code: i32,
+        /// Simulated execution delay in seconds. 0 = immediate.
+        delay_secs: Option<u64>,
+        /// Lines to write to stdout via the `StdioSink`.
+        stdout: Vec<String>,
+        /// Lines to write to stderr via the `StdioSink`.
+        stderr: Vec<String>,
+        /// Files to create/overwrite in the workspace directory.
+        /// Keys are relative paths, values are file content.
+        files: BTreeMap<String, String>,
+        /// Value for `AgentReport::last_output`.
+        last_output: Option<String>,
+        /// Value for `AgentReport::turn_count`.
+        turn_count: Option<u32>,
+    },
     /// Generic agent invoked through an arbitrary command vector.
     Generic {
         /// Argv-style command. The first element is the program; subsequent

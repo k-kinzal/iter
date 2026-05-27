@@ -453,6 +453,31 @@ impl Analyzer {
         }
     }
 
+    pub(super) fn take_optional_u32(
+        &mut self,
+        fields: &mut BTreeMap<String, RawField>,
+        name: &str,
+    ) -> Option<u32> {
+        let field = fields.remove(name)?;
+        if let RawValue::Integer(n, span) = field.value {
+            if let Ok(v) = u32::try_from(n) {
+                Some(v)
+            } else {
+                self.errors.push(Diagnostic::error(
+                    span,
+                    format!("`{name}` must be a non-negative integer that fits in 32 bits"),
+                ));
+                None
+            }
+        } else {
+            self.errors.push(Diagnostic::error(
+                field.value.span(),
+                format!("`{name}` must be a non-negative integer"),
+            ));
+            None
+        }
+    }
+
     /// Pop an optional `metadata { k = "v" ... }` block. Unlike
     /// [`Self::take_optional_string_string_block`], values preserve their
     /// `{{ ... }}` placeholders verbatim — they are template strings.
@@ -605,6 +630,30 @@ impl Analyzer {
                 other => self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`env.{k}` must be a string"),
+                )),
+            }
+        }
+        out
+    }
+
+    pub(super) fn take_optional_string_kv_block(
+        &mut self,
+        fields: &mut BTreeMap<String, RawField>,
+        name: &str,
+    ) -> BTreeMap<String, String> {
+        let Some(mut inner) = self.take_optional_block(fields, name) else {
+            return BTreeMap::new();
+        };
+        let mut out = BTreeMap::new();
+        let leftover: Vec<(String, RawField)> = std::mem::take(&mut inner).into_iter().collect();
+        for (k, field) in leftover {
+            match field.value {
+                RawValue::String(v, _) => {
+                    out.insert(k, v);
+                }
+                other => self.errors.push(Diagnostic::error(
+                    other.span(),
+                    format!("`{name}.{k}` must be a string"),
                 )),
             }
         }

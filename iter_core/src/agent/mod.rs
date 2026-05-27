@@ -5,8 +5,8 @@
 //! (subprocess management, hook lifecycle, transcript parsing) are
 //! `pub(crate)` internal modules used by the drivers.
 //!
-//! This module provides ten concrete implementations of the
-//! [`Agent`] trait. They fall into two broad groups based on how
+//! This module provides twelve concrete implementations of the
+//! [`Agent`] trait. They fall into three broad groups based on how
 //! the underlying CLI is driven:
 //!
 //! * **Hook-capable** — [`ClaudeAgent`], [`CodexAgent`], [`GeminiAgent`],
@@ -21,6 +21,9 @@
 //! * **Print-only** — [`CursorAgent`], [`ClineAgent`], [`OpenCodeAgent`],
 //!   and [`GenericAgent`]. These tools run to completion on every
 //!   invocation with no hook plumbing.
+//! * **Built-in** — [`NoopAgent`] and [`FakeAgent`]. These require
+//!   no external binary and run entirely in-process, exercising the
+//!   real pipeline for verification testing.
 //!
 //! # No implicit defaults
 //!
@@ -72,9 +75,11 @@ pub use drivers::cline::{ClineAgent, ClineSettings};
 pub use drivers::codex::{CodexAgent, CodexSettings};
 pub use drivers::copilot::{CopilotAgent, CopilotSettings};
 pub use drivers::cursor::{CursorAgent, CursorSettings};
+pub use drivers::fake::{FakeAgent, FakeSettings};
 pub use drivers::gemini::{GeminiAgent, GeminiSettings};
 pub use drivers::generic::GenericAgent;
 pub use drivers::hermes::{HermesAgent, HermesSettings};
+pub use drivers::noop::NoopAgent;
 pub use drivers::opencode::{OpenCodeAgent, OpenCodeSettings};
 pub use error::AgentError;
 pub use inner::{Agent, AgentRunContext, run_with_timeout};

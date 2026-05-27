@@ -1,0 +1,25 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent fake {
+  exit_code   = 0
+  delay_secs  = 2
+  stdout      = ["processing file A", "done"]
+  stderr      = ["warning: deprecated API"]
+  files {
+    "output/result.txt"  = "refactored content"
+    "output/report.json" = "{\"status\": \"ok\"}"
+  }
+  last_output = "Completed refactoring."
+  turn_count  = 5
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Fake test."
