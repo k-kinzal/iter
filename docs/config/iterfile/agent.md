@@ -25,6 +25,7 @@ agent <kind> {
 | [`cursor`](#agent-cursor) | Cursor | ✘ | ✘ |
 | [`cline`](#agent-cline) | Cline | ✘ | ✘ |
 | [`opencode`](#agent-opencode) | opencode | ✘ | ✘ |
+| [`grok`](#agent-grok) | xAI Grok Build (`grok`) | ✘ | ✘ |
 | [`generic`](#agent-generic) | Arbitrary argv | ✘ | ✘ |
 | [`noop`](#agent-noop) | Built-in (no binary) | ✘ | ✘ |
 | [`fake`](#agent-fake) | Built-in (no binary) | ✘ | ✘ |
@@ -309,6 +310,43 @@ opencode.
 | `command` | `string` | Required | — | Binary name or absolute path. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
+
+---
+
+## `agent grok`
+
+xAI Grok Build (`grok`). Headless-first: iter drives the official `grok -p` headless mode (the prompt is the value of `-p`) and auto-approves tool executions with `--always-approve`. There is no `mode` field — Grok's TUI and ACP (`grok agent stdio`) integrations are out of scope for this driver.
+
+iter builds the command as:
+
+```text
+grok -p "<prompt>" --always-approve [-s <session-id>] [args...]
+```
+
+Authentication uses `XAI_API_KEY` (or a prior local login). Set it through the agent `env` block or rely on it being passed through by the sandbox (the `grok` sandbox profile passes `XAI_*` / `GROK_*`).
+
+### Examples
+
+```hcl
+agent grok {
+  command = "grok"
+}
+
+agent grok {
+  command         = "grok"
+  args            = ["--output-format", "json"]
+  session_id_file = ".iter/session.txt"
+}
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | :---: | --- | --- |
+| `command` | `string` | Required | — | Binary name or absolute path. Resolved via `PATH`. |
+| `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed headless flags (`-p`, `--always-approve`, `-s`). |
+| `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `-s <uuid>` so Grok resumes the same headless session. Omit to run each iteration as a fresh session. |
+| `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
 
 ---
 

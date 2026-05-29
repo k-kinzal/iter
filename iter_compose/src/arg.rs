@@ -255,6 +255,9 @@ fn render_agent(
         }
         | iter_language::AgentDecl::OpenCode {
             command, args, env, ..
+        }
+        | iter_language::AgentDecl::Grok {
+            command, args, env, ..
         } => {
             render_str(command, values)?;
             for a in args.iter_mut() {

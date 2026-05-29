@@ -19,7 +19,7 @@ inspect, and manage those compositions.
   (run in place), `clone` (copy to scratch), `sandbox` (clone + kernel-level
   sandbox).
 - **Agent** — the AI process iter spawns each iteration. Kinds: `claude`,
-  `codex`, `gemini`, `copilot`, `cursor`, `cline`, `opencode`, `generic`.
+  `codex`, `gemini`, `copilot`, `cursor`, `cline`, `opencode`, `grok`, `generic`.
 - **Signal / Queue** — a Signal is one unit of work; a Queue carries Signals
   into a Runner. Each iteration consumes exactly one Signal (real, or
   synthesised by `runner.behavior = loop`).

@@ -5,7 +5,7 @@
 //! (subprocess management, hook lifecycle) are
 //! `pub(crate)` internal modules used by the drivers.
 //!
-//! This module provides twelve concrete implementations of the
+//! This module provides thirteen concrete implementations of the
 //! [`Agent`] trait. They fall into three broad groups based on how
 //! the underlying CLI is driven:
 //!
@@ -19,8 +19,10 @@
 //!   project-local Stop-style hook installed under the agent's
 //!   own config directory).
 //! * **Print-only** — [`CursorAgent`], [`ClineAgent`], [`OpenCodeAgent`],
-//!   and [`GenericAgent`]. These tools run to completion on every
-//!   invocation with no hook plumbing.
+//!   [`GrokAgent`], and [`GenericAgent`]. These tools run to completion on
+//!   every invocation with no hook plumbing. [`GrokAgent`] additionally
+//!   persists a session id (Grok Build's `-s/--session-id`) for
+//!   continuous-context explorations.
 //! * **Built-in** — [`NoopAgent`] and [`FakeAgent`]. These require
 //!   no external binary and run entirely in-process, exercising the
 //!   real pipeline for verification testing.
@@ -64,6 +66,7 @@ pub mod mode;
 pub mod result_kind;
 pub(crate) mod process;
 pub mod report;
+pub(crate) mod session;
 
 #[cfg(test)]
 mod testutil;
@@ -77,6 +80,7 @@ pub use drivers::cursor::{CursorAgent, CursorSettings};
 pub use drivers::fake::{FakeAgent, FakeSettings};
 pub use drivers::gemini::{GeminiAgent, GeminiSettings};
 pub use drivers::generic::GenericAgent;
+pub use drivers::grok::{GrokAgent, GrokSettings};
 pub use drivers::hermes::{HermesAgent, HermesSettings};
 pub use drivers::noop::NoopAgent;
 pub use drivers::opencode::{OpenCodeAgent, OpenCodeSettings};

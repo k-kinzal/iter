@@ -1,0 +1,18 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent grok {
+  command         = "grok"
+  args            = ["--output-format", "json"]
+  session_id_file = ".iter/session-id"
+}
+
+runner {
+  continue_on_error = false
+  behavior = wait
+}
+
+prompt "Grok test."

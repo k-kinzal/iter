@@ -136,6 +136,30 @@ pub enum AgentDecl {
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
+    /// xAI Grok Build (`grok`) agent.
+    ///
+    /// Headless-first: iter drives the official `grok -p` headless mode.
+    /// There is no `mode` field because the TUI path is out of scope for
+    /// this driver.
+    Grok {
+        /// Binary name or absolute path. Required.
+        command: String,
+        /// Extra arguments appended after the iter-managed headless flags.
+        args: Vec<String>,
+        /// Optional file path (relative to the workspace cwd, unless
+        /// absolute) where iter persists a stable Grok session id across
+        /// iterations. `None` disables session persistence and each
+        /// iteration runs as a fresh session.
+        ///
+        /// When set, the first invocation writes a fresh v4 UUID and every
+        /// subsequent invocation reads the same file, making iter pass
+        /// `-s <uuid>` so Grok resumes the same headless session. This is
+        /// the on-ramp to the narrowest exploration mode: later turns
+        /// inherit prior agent context as well as workspace state.
+        session_id_file: Option<String>,
+        /// Environment variables passed to the agent child process.
+        env: BTreeMap<String, String>,
+    },
     /// Agent that does nothing. Exits immediately with success.
     Noop,
     /// Configurable fake agent for verification testing.

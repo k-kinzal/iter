@@ -55,9 +55,9 @@ forwards as `X-Copilot-Traceparent` on Copilot API calls. All agent subprocesses
 that have verified OTel behavior also receive correlation resource attributes
 such as `iter.signal.id`, `iter.signal.kind`, `iter.agent.driver`, and
 `iter.workspace.path`, so separate agent traces remain joinable by attributes
-when an agent starts an independent trace. Gemini, Cursor, Cline, OpenCode, and
-generic command drivers are not automatically injected unless their CLI support
-is verified.
+when an agent starts an independent trace. Gemini, Cursor, Cline, OpenCode, Grok,
+and generic command drivers are not automatically injected unless their CLI
+support is verified.
 
 ## Queue Binding
 

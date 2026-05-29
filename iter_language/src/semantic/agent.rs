@@ -32,6 +32,7 @@ impl Analyzer {
                 "cursor",
                 "cline",
                 "opencode",
+                "grok",
                 "generic",
                 "noop",
                 "fake",
@@ -61,6 +62,7 @@ impl Analyzer {
                     self.lower_simple_agent(&kind, &mut fields, "opencode")?;
                 AgentDecl::OpenCode { command, args, env }
             }
+            "grok" => self.lower_grok_agent(&kind, &mut fields)?,
             "generic" => self.lower_generic_agent(&kind, &mut fields),
             "noop" => {
                 self.reject_unknown_fields(&mut fields, &[], "agent noop");
@@ -74,7 +76,7 @@ impl Analyzer {
                         format!("unknown agent kind `{other}`"),
                     )
                     .with_hint(
-                        "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic, noop, fake, router",
+                        "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, grok, generic, noop, fake, router",
                     ),
                 );
                 return None;
@@ -214,6 +216,36 @@ impl Analyzer {
         Some(SimpleAgentParts {
             command: command?,
             args,
+            env,
+        })
+    }
+
+    fn lower_grok_agent(
+        &mut self,
+        kind: &RawIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
+    ) -> Option<AgentDecl> {
+        let command = self.take_required_string_with_hint(
+            fields,
+            "command",
+            &kind.span,
+            "agent grok",
+            COMMAND_HINT,
+        );
+        let args = self
+            .take_optional_string_list(fields, "args")
+            .unwrap_or_default();
+        let session_id_file = self.take_optional_string(fields, "session_id_file");
+        let env = self.take_optional_env_block(fields);
+        self.reject_unknown_fields(
+            fields,
+            &["command", "args", "session_id_file", "env"],
+            "agent grok",
+        );
+        Some(AgentDecl::Grok {
+            command: command?,
+            args,
+            session_id_file,
             env,
         })
     }
@@ -379,7 +411,7 @@ impl Analyzer {
                                 field.name.span.clone(),
                                 format!("router sub-agent `{name}` requires `kind`"),
                             )
-                            .with_hint("add `kind = claude` (or codex, gemini, etc.)"),
+                            .with_hint("add `kind = claude` (or codex, gemini, grok, opencode, etc.)"),
                         );
                         continue;
                     };
@@ -441,6 +473,7 @@ impl Analyzer {
                     self.lower_simple_agent(kind, fields, "opencode")?;
                 Some(AgentDecl::OpenCode { command, args, env })
             }
+            "grok" => self.lower_grok_agent(kind, fields),
             "generic" => Some(self.lower_generic_agent(kind, fields)),
             "noop" => {
                 self.reject_unknown_fields(fields, &[], "agent noop");
@@ -451,7 +484,7 @@ impl Analyzer {
                 self.errors.push(
                     Diagnostic::error(kind.span.clone(), format!("unknown agent kind `{other}`"))
                         .with_hint(
-                            "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, generic, noop, fake",
+                            "valid kinds: claude, codex, gemini, hermes, antigravity, copilot, cursor, cline, opencode, grok, generic, noop, fake",
                         ),
                 );
                 None

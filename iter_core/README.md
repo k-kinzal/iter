@@ -37,7 +37,7 @@ The in-memory, file, and shell queue backends are always available.
 
 All agent drivers compile unconditionally (process-based, no external SDK):
 
-Claude, Codex, Gemini, Copilot, Cursor, Cline, OpenCode, Generic.
+Claude, Codex, Gemini, Copilot, Cursor, Cline, OpenCode, Grok, Generic.
 
 ## Public API
 

@@ -1,0 +1,69 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-grok.iter
+---
+Root {
+    args: [],
+    queues: [
+        Spanned {
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
+            span: 0..12,
+        },
+    ],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                },
+            },
+            span: 14..46,
+        },
+    ],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "grok",
+                decl: Grok {
+                    command: "grok",
+                    args: [
+                        "--output-format",
+                        "json",
+                    ],
+                    session_id_file: Some(
+                        ".iter/session-id",
+                    ),
+                    env: {},
+                },
+            },
+            span: 48..176,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDecl {
+                name: None,
+                agent: "grok",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Grok test.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 178..234,
+        },
+    ],
+}

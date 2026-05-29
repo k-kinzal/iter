@@ -108,6 +108,7 @@ policy.
 | `cursor` | — | — | `command` |
 | `cline` | — | — | `command` |
 | `opencode` | — | — | `command` |
+| `grok` | — | — | `command` (optional `session_id_file`) |
 | `generic` | — | — | `command` (as `list(string)` — argv vector) |
 
 Common optional field: `args` (`list(string)`, default `[]`).

@@ -1,21 +1,27 @@
-//! [`SessionIdFile`] — persistent Claude Code session-id storage.
+//! [`SessionIdFile`] — persistent agent session-id storage.
 //!
-//! Claude Code's `--session-id <uuid>` flag lets iter pin a workspace to
-//! a stable conversation across iterations. This is the narrowest
-//! exploration mode: the workspace, git history, and prior agent context all
-//! bias the next turn toward the same path. The user declares a path in their
-//! Iterfile; iter reads the existing uuid from that path on every run, or
-//! generates a fresh v4 uuid and writes it back on the first run.
+//! Several agent CLIs (Claude Code's `--session-id`, Grok Build's
+//! `-s/--session-id`) accept a caller-chosen session id that pins a
+//! workspace to a stable conversation across iterations. This is the
+//! narrowest exploration mode: the workspace, git history, and prior agent
+//! context all bias the next turn toward the same path. The user declares a
+//! path in their Iterfile; iter reads the existing uuid from that path on
+//! every run, or generates a fresh v4 uuid and writes it back on the first
+//! run.
+//!
+//! The storage logic is agent-agnostic — only the flag the driver passes
+//! the resolved id to (`--session-id`, `-s`, …) differs, and that lives in
+//! each driver's command builder.
 
 use std::path::{Path, PathBuf};
 
 use crate::agent::AgentError;
 
-/// A path that stores a Claude Code session-id uuid across iter
-/// iterations. Relative paths are resolved against the workspace the
-/// spawned `claude` child will see, so a user-visible
-/// `".iter/session-id"` in an Iterfile always points at the same file
-/// regardless of where iter is launched from.
+/// A path that stores an agent session-id uuid across iter iterations.
+/// Relative paths are resolved against the workspace the spawned agent
+/// child will see, so a user-visible `".iter/session-id"` in an Iterfile
+/// always points at the same file regardless of where iter is launched
+/// from.
 #[derive(Debug, Clone)]
 pub(crate) struct SessionIdFile(PathBuf);
 

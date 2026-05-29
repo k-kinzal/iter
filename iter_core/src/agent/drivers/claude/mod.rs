@@ -50,7 +50,6 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 mod hook;
-mod session;
 
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
@@ -58,8 +57,8 @@ use crate::agent::process::{
     PromptDelivery, apply_user_env, detect_token_limit, drive_interactive_with_finalize,
     inject_agent_otel_resource_attrs, inject_trace_context_env, run_command,
 };
+use crate::agent::session::SessionIdFile;
 use hook::HookBundle;
-use session::SessionIdFile;
 
 /// Fully-specified configuration for [`ClaudeAgent`].
 ///

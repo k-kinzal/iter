@@ -7,8 +7,8 @@ use iter_core::agent::{
     AgentError, AgentMode as ImplAgentMode, AntigravityAgent, AntigravitySettings, ClaudeAgent,
     ClaudeSettings, ClineAgent, ClineSettings, CodexAgent, CodexSettings, CopilotAgent,
     CopilotSettings, CursorAgent, CursorSettings, FakeAgent, FakeSettings, GeminiAgent,
-    GeminiSettings, GenericAgent, HermesAgent, HermesSettings, NoopAgent, OpenCodeAgent,
-    OpenCodeSettings,
+    GeminiSettings, GenericAgent, GrokAgent, GrokSettings, HermesAgent, HermesSettings, NoopAgent,
+    OpenCodeAgent, OpenCodeSettings,
 };
 use iter_core::workspace::sandbox::agent_requirements;
 use iter_core::{Agent, AgentReport, AgentRunContext, SandboxRequirements};
@@ -62,6 +62,8 @@ pub enum AnyAgent {
     Cline(ClineAgent),
     /// `opencode` agent.
     OpenCode(OpenCodeAgent),
+    /// xAI Grok Build agent.
+    Grok(GrokAgent),
     /// Generic command-driven agent.
     Generic(GenericAgent),
     /// Built-in no-op agent (no external binary).
@@ -86,6 +88,7 @@ impl Agent for AnyAgent {
             Self::Cursor(a) => a.run(ctx).await,
             Self::Cline(a) => a.run(ctx).await,
             Self::OpenCode(a) => a.run(ctx).await,
+            Self::Grok(a) => a.run(ctx).await,
             Self::Generic(a) => a.run(ctx).await,
             Self::Noop(a) => a.run(ctx).await,
             Self::Fake(a) => a.run(ctx).await,
@@ -105,6 +108,7 @@ impl AnyAgent {
     pub fn sandbox_requirements(&self) -> SandboxRequirements {
         match self {
             Self::Claude(a) => agent_requirements::claude(a),
+            Self::Grok(a) => agent_requirements::grok(a),
             Self::Codex(_)
             | Self::Gemini(_)
             | Self::Hermes(_)
@@ -261,6 +265,17 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
                 env: resolve_env(env),
             }))
         }
+        AgentDecl::Grok {
+            command,
+            args,
+            session_id_file,
+            env,
+        } => AnyAgent::Grok(GrokAgent::new(GrokSettings {
+            command: command.clone(),
+            args: args.clone(),
+            session_id_file: session_id_file.as_ref().map(PathBuf::from),
+            env: resolve_env(env),
+        })),
         AgentDecl::Noop => AnyAgent::Noop(NoopAgent),
         AgentDecl::Fake {
             exit_code,
@@ -400,7 +415,7 @@ mod tests {
     #[test]
     fn maps_each_agent_decl_variant() {
         type Check = fn(&AnyAgent) -> bool;
-        let cases: [(AgentDecl, Check); 12] = [
+        let cases: [(AgentDecl, Check); 13] = [
             (claude_decl(AstAgentMode::Print), |a| {
                 matches!(a, AnyAgent::Claude(_))
             }),
@@ -442,6 +457,15 @@ mod tests {
                     env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::OpenCode(_)),
+            ),
+            (
+                AgentDecl::Grok {
+                    command: "grok".into(),
+                    args: Vec::new(),
+                    session_id_file: None,
+                    env: empty_env(),
+                },
+                |a| matches!(a, AnyAgent::Grok(_)),
             ),
             (
                 AgentDecl::Generic {
@@ -659,6 +683,51 @@ mod tests {
                 assert_eq!(a.args, vec!["--baz".to_string()]);
             }
             other => panic!("expected OpenCode, got {other:?}"),
+        }
+
+        let grok = build_agent(&AgentDecl::Grok {
+            command: "/opt/bin/grok".into(),
+            args: vec!["--output-format".into(), "json".into()],
+            session_id_file: None,
+            env: empty_env(),
+        })
+        .expect("build");
+        match grok {
+            AnyAgent::Grok(a) => {
+                assert_eq!(a.command, "/opt/bin/grok");
+                assert_eq!(a.args, vec!["--output-format".to_string(), "json".into()]);
+            }
+            other => panic!("expected Grok, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn grok_session_id_file_is_forwarded() {
+        let without = build_agent(&AgentDecl::Grok {
+            command: "grok".into(),
+            args: Vec::new(),
+            session_id_file: None,
+            env: empty_env(),
+        })
+        .expect("build");
+        match without {
+            AnyAgent::Grok(a) => assert!(a.session_id_file.is_none()),
+            other => panic!("expected Grok, got {other:?}"),
+        }
+
+        let with = build_agent(&AgentDecl::Grok {
+            command: "grok".into(),
+            args: Vec::new(),
+            session_id_file: Some(".iter/session-id".into()),
+            env: empty_env(),
+        })
+        .expect("build");
+        match with {
+            AnyAgent::Grok(a) => assert_eq!(
+                a.session_id_file.as_deref(),
+                Some(std::path::Path::new(".iter/session-id")),
+            ),
+            other => panic!("expected Grok, got {other:?}"),
         }
     }
 

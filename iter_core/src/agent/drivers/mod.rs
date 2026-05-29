@@ -13,6 +13,7 @@ pub mod cursor;
 pub mod fake;
 pub mod gemini;
 pub mod generic;
+pub mod grok;
 pub mod hermes;
 pub mod noop;
 pub mod opencode;

@@ -15,5 +15,7 @@
 //! the workspace merges against the project's upper-bound policy.
 
 pub mod claude;
+pub mod grok;
 
 pub use claude::claude;
+pub use grok::grok;
