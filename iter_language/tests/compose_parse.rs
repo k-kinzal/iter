@@ -468,7 +468,7 @@ fn compose_block_with_trigger_disable() {
             compose child {
                 build = "./child/compose.iter"
                 triggers = {
-                    noisy = disabled
+                    noisy = null
                 }
             }
         "#,

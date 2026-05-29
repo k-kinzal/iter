@@ -130,6 +130,17 @@ boolean = @{ ("true" | "false") ~ !ident_continue }
 - Word boundary guarded: `trueish` is an ident, not `true` + `ish`.
 - In value positions the grammar prefers `boolean` over `ident`, so `mode = true` parses as `Bool(true)`.
 
+### Null
+
+```pest
+null = @{ "null" ~ !ident_continue }
+```
+
+- The literal `null` denotes the explicit absence of a value.
+- Word boundary guarded: `nullish` is an ident, not `null` + `ish`.
+- In value positions the grammar prefers `null` over `ident`, so `trigger_name = null` parses as `Null`.
+- Used in `compose.iter` trigger overrides to remove an inherited trigger: `triggers = { noisy = null }` disables `noisy`.
+
 ### Lists
 
 ```pest

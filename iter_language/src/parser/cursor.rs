@@ -52,9 +52,10 @@ impl<'a> Parser<'a> {
                 Some(RawIdent { name, span })
             }
             // Treat keywords-as-words by name when used in identifier
-            // position. The lexer keeps `true`/`false` as their own tokens;
-            // here we accept them as valid bareword idents because users may
-            // legitimately write `interactive`, `print`, `normal`, etc.
+            // position. The lexer keeps `true`/`false`/`null` as their own
+            // tokens; here we accept them as valid bareword idents because
+            // users may legitimately write `interactive`, `print`, `normal`,
+            // etc.
             Some(Token::True) => {
                 let span = self.peek_span();
                 self.bump();
@@ -68,6 +69,14 @@ impl<'a> Parser<'a> {
                 self.bump();
                 Some(RawIdent {
                     name: "false".into(),
+                    span,
+                })
+            }
+            Some(Token::Null) => {
+                let span = self.peek_span();
+                self.bump();
+                Some(RawIdent {
+                    name: "null".into(),
                     span,
                 })
             }

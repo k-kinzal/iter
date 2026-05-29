@@ -207,10 +207,10 @@ field_rhs  = { block | ("=" ~ value) }
 // Order matters:
 //   * `call` must precede `ident` because a call starts with an identifier.
 //   * `duration` must precede `integer` because both start with digits.
-//   * `boolean` must precede `ident` because `true`/`false` would otherwise
-//     be consumed as bareword identifiers in value position. (They are
-//     intentionally still accepted as identifiers in ident position — see
-//     `ident` below.)
+//   * `boolean` and `null` must precede `ident` because `true`/`false`/`null`
+//     would otherwise be consumed as bareword identifiers in value position.
+//     (They are intentionally still accepted as identifiers in ident
+//     position — see `ident` below.)
 value = {
       call
     | list
@@ -219,6 +219,7 @@ value = {
     | duration
     | integer
     | boolean
+    | null
     | ident
 }
 
@@ -254,6 +255,10 @@ kw_iteration = @{ "iteration" ~ !ident_continue }
 // Boolean. Word-boundary guarded so `trueish` is an ident, not `true`+`ish`.
 boolean = @{ ("true" | "false") ~ !ident_continue }
 
+// Null literal. Word-boundary guarded so `nullish` is an ident, not
+// `null`+`ish`, matching the hand-written lexer's keyword recognition.
+null = @{ "null" ~ !ident_continue }
+
 // Duration: digits immediately followed by exactly one unit suffix.
 // No word boundary after the suffix is required: the hand-written lexer
 // reads `10ms` as `Duration(10m)` followed by `Ident("s")`, and this rule
@@ -269,13 +274,13 @@ integer = @{ ASCII_DIGIT+ }
 // Identifier. Bareword of ASCII letters, digits, and underscores starting
 // with a letter or underscore.
 //
-// Note: `ident` is NOT reserved against `true`/`false`. In every *value*
-// context the grammar tries `boolean` before `ident`, so `mode = true`
-// parses as `Bool(true)`. But in every *identifier* context (section
-// kind, field name, top-level `on <event>`, guard `metadata.<key>`) the
-// hand-written parser accepts `true`/`false` as bareword identifiers, and
-// this grammar must match that to keep the two implementations
-// differentially equivalent.
+// Note: `ident` is NOT reserved against `true`/`false`/`null`. In every
+// *value* context the grammar tries `boolean`/`null` before `ident`, so
+// `mode = true` parses as `Bool(true)`. But in every *identifier* context
+// (section kind, field name, top-level `on <event>`, guard `metadata.<key>`)
+// the hand-written parser accepts `true`/`false`/`null` as bareword
+// identifiers, and this grammar must match that to keep the two
+// implementations differentially equivalent.
 ident          = @{ ident_start ~ ident_continue* }
 ident_start    = _{ ASCII_ALPHA | "_" }
 ident_continue = _{ ASCII_ALPHANUMERIC | "_" }

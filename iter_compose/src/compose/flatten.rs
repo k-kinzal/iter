@@ -503,7 +503,7 @@ mod tests {
                 compose child {
                     build = "./child/compose.iter"
                     triggers = {
-                        noisy = disabled
+                        noisy = null
                     }
                 }
             "#,

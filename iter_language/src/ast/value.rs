@@ -17,6 +17,8 @@ pub enum Value {
     Integer(i64),
     /// Boolean literal value.
     Bool(bool),
+    /// `null` literal — the explicit absence of a value.
+    Null,
     /// Duration value, normalised to seconds.
     DurationSecs(i64),
     /// Bareword identifier value (e.g. `print`, `interactive`, `normal`).

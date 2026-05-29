@@ -10,6 +10,7 @@ pub(super) fn value_from_raw_pure(raw: RawValue) -> Value {
         RawValue::String(s, _) => Value::String(s),
         RawValue::Integer(n, _) => Value::Integer(n),
         RawValue::Bool(b, _) => Value::Bool(b),
+        RawValue::Null(_) => Value::Null,
         RawValue::Duration(secs, _) => Value::DurationSecs(secs),
         RawValue::Ident(name, _) => Value::Ident(name),
         RawValue::List(items, _) => {

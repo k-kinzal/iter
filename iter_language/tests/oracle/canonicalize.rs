@@ -99,6 +99,7 @@ fn canon_value(v: &mut RawValue) {
         | RawValue::Integer(_, s)
         | RawValue::Duration(_, s)
         | RawValue::Bool(_, s)
+        | RawValue::Null(s)
         | RawValue::Ident(_, s) => *s = 0..0,
         RawValue::List(items, s) => {
             *s = 0..0;

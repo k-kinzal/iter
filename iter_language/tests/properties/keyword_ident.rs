@@ -54,6 +54,34 @@ fn false_with_suffix_is_ident() {
 }
 
 #[test]
+fn null_with_suffix_is_ident() {
+    let (hw, _) = parse_both("workspace local { base = nullish }\n");
+    let body = if let RawSection::Block { body, .. } = &hw.sections[0] {
+        body.as_ref().unwrap()
+    } else {
+        panic!()
+    };
+    match &body.fields[0].value {
+        RawValue::Ident(name, _) => assert_eq!(name, "nullish"),
+        other => panic!("expected ident nullish, got {other:?}"),
+    }
+}
+
+#[test]
+fn exact_null_is_null() {
+    let (hw, _) = parse_both("workspace local { base = null }\n");
+    let body = if let RawSection::Block { body, .. } = &hw.sections[0] {
+        body.as_ref().unwrap()
+    } else {
+        panic!()
+    };
+    match &body.fields[0].value {
+        RawValue::Null(_) => {}
+        other => panic!("expected null, got {other:?}"),
+    }
+}
+
+#[test]
 fn exact_true_is_bool() {
     let (hw, _) = parse_both("workspace local { preserve_mtime = true }\n");
     let body = if let RawSection::Block { body, .. } = &hw.sections[0] {

@@ -6,9 +6,10 @@
 //!   * identifiers are drawn from a bareword alphabet and never equal a
 //!     contextual block-entry keyword (`on`, `shell`) when placed as a
 //!     field name, since the formal grammar rejects such fields,
-//!   * booleans are emitted as `RawValue::Bool`, never as `RawValue::Ident`
-//!     with name `"true"`/`"false"`, to stay on the side of the grammar
-//!     that prefers `boolean` before `ident` in `value`,
+//!   * booleans and `null` are emitted as `RawValue::Bool`/`RawValue::Null`,
+//!     never as `RawValue::Ident` with name `"true"`/`"false"`/`"null"`, to
+//!     stay on the side of the grammar that prefers `boolean`/`null` before
+//!     `ident` in `value`,
 //!   * strings contain only characters the pretty printer can round-trip,
 //!   * `List` values are non-nested above a small bound to keep the search
 //!     space manageable.
@@ -33,7 +34,7 @@ fn ident_name() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,7}".prop_filter("not a reserved word in ident position", |s| {
         !matches!(
             s.as_str(),
-            "true" | "false" | "on" | "shell" | "when" | "metadata"
+            "true" | "false" | "null" | "on" | "shell" | "when" | "metadata"
         )
     })
 }
@@ -81,6 +82,7 @@ fn value_leaf() -> impl Strategy<Value = RawValue> {
         (0i64..1_000_000).prop_map(|n| RawValue::Integer(n, 0..0)),
         (1i64..10_000).prop_map(|n| RawValue::Duration(n, 0..0)),
         any::<bool>().prop_map(|b| RawValue::Bool(b, 0..0)),
+        Just(RawValue::Null(0..0)),
         ident_name().prop_map(|s| RawValue::Ident(s, 0..0)),
     ]
 }

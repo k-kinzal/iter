@@ -120,6 +120,9 @@ pub enum RawValue {
     Duration(i64, Span),
     /// Boolean literal.
     Bool(bool, Span),
+    /// `null` literal — the absence of a value. Used in compose overrides to
+    /// remove a definition (e.g. `trigger_name = null` disables a trigger).
+    Null(Span),
     /// Bareword identifier value.
     Ident(String, Span),
     /// Heterogeneous list of values.
@@ -146,6 +149,7 @@ impl RawValue {
             | RawValue::Integer(_, s)
             | RawValue::Duration(_, s)
             | RawValue::Bool(_, s)
+            | RawValue::Null(s)
             | RawValue::Ident(_, s)
             | RawValue::List(_, s) => s.clone(),
             RawValue::Block(b) => b.span.clone(),

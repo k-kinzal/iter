@@ -214,7 +214,7 @@ impl Analyzer {
                 for tf in b.fields {
                     let child_name = tf.name.name;
                     match tf.value {
-                        RawValue::Ident(ref s, _) if s == "disabled" => {
+                        RawValue::Null(_) => {
                             overrides.insert(child_name, ComposeTriggerOverride::Disabled);
                         }
                         RawValue::Block(tb) => {
@@ -240,7 +240,7 @@ impl Analyzer {
                         other => {
                             self.errors.push(Diagnostic::error(
                                 other.span(),
-                                "trigger override must be `disabled` or a block",
+                                "trigger override must be `null` or a block",
                             ));
                         }
                     }

@@ -145,6 +145,7 @@ fn pp_value(out: &mut String, v: &RawValue, depth: usize) {
             out.push('s');
         }
         RawValue::Bool(b, _) => out.push_str(if *b { "true" } else { "false" }),
+        RawValue::Null(_) => out.push_str("null"),
         RawValue::Ident(name, _) => out.push_str(name),
         RawValue::List(items, _) => {
             out.push('[');

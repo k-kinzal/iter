@@ -48,6 +48,10 @@ impl Parser<'_> {
                 self.bump();
                 Some(RawValue::Bool(false, tok.span))
             }
+            Token::Null => {
+                self.bump();
+                Some(RawValue::Null(tok.span))
+            }
             Token::LBracket => self.parse_list(),
             Token::LBrace => Some(RawValue::Block(self.parse_block())),
             Token::Ident(name) => {

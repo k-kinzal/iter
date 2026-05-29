@@ -351,6 +351,7 @@ impl<'a> Lexer<'a> {
         let token = match text {
             "true" => Token::True,
             "false" => Token::False,
+            "null" => Token::Null,
             _ => Token::Ident(text.to_string()),
         };
         self.tokens.push(SpannedToken {
@@ -440,6 +441,21 @@ mod tests {
         assert_eq!(
             lex_kinds("queue memory"),
             vec![Token::Ident("queue".into()), Token::Ident("memory".into())]
+        );
+    }
+
+    #[test]
+    fn literal_keywords() {
+        // `true`/`false`/`null` lex as dedicated tokens, while a word that
+        // merely starts with one of them stays an identifier.
+        assert_eq!(
+            lex_kinds("true false null nullish"),
+            vec![
+                Token::True,
+                Token::False,
+                Token::Null,
+                Token::Ident("nullish".into()),
+            ]
         );
     }
 

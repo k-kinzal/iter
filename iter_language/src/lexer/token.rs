@@ -39,6 +39,7 @@ pub(crate) enum Token {
     Duration(i64), // normalised to seconds
     True,
     False,
+    Null,
 
     // Identifiers / keywords
     Ident(String),
@@ -71,6 +72,7 @@ impl Token {
             Token::Duration(_) => "duration literal".into(),
             Token::True => "`true`".into(),
             Token::False => "`false`".into(),
+            Token::Null => "`null`".into(),
             Token::Ident(name) => format!("identifier `{name}`"),
         }
     }

@@ -633,6 +633,7 @@ fn lower_value(pair: Pair<Rule>) -> RawValue {
         Rule::duration => RawValue::Duration(lower_duration(&inner), span),
         Rule::integer => RawValue::Integer(lower_integer(&inner), span),
         Rule::boolean => RawValue::Bool(inner.as_str() == "true", span),
+        Rule::null => RawValue::Null(span),
         Rule::ident => RawValue::Ident(inner.as_str().to_string(), span),
         other => panic!("unexpected value child: {other:?}"),
     }
