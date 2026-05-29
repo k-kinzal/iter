@@ -8,7 +8,9 @@
 mod reader;
 mod sink;
 mod stream;
+mod writer;
 
 pub use reader::{NdjsonReadError, NdjsonReader};
 pub use sink::{NoopSink, OutputSink};
 pub use stream::{LogEntry, LogStream};
+pub(crate) use writer::{NdjsonWriter, WriterErrorSlot, WriterMsg, writer_dead_error};

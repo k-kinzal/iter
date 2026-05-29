@@ -5,9 +5,7 @@ use std::io;
 use chrono::Utc;
 use tokio::sync::mpsc;
 
-use crate::log::{LogEntry, LogStream};
-
-use super::sink::{WriterErrorSlot, WriterMsg, writer_dead_error};
+use crate::log::{LogEntry, LogStream, WriterErrorSlot, WriterMsg, writer_dead_error};
 
 /// Cheap, cloneable handle on the [`ProcessLogSink`](super::sink::ProcessLogSink)
 /// writer-task channel.

@@ -2,19 +2,15 @@
 //! records to `log.ndjson`.
 
 use std::io;
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::Path;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::Utc;
-use tokio::fs::File as TokioFile;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, oneshot};
 
-use crate::log::{LogEntry, LogStream, OutputSink};
+use crate::log::{LogEntry, LogStream, NdjsonWriter, OutputSink, WriterMsg, writer_dead_error};
 use crate::process::paths::names::LOG_NDJSON;
 
 use super::sender::LogSender;
@@ -24,23 +20,17 @@ pub const DEFAULT_LOG_BUFFER: usize = 1024;
 
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// One message in the writer-task channel.
-pub(super) enum WriterMsg {
-    Entry(LogEntry),
-    Flush(oneshot::Sender<io::Result<()>>),
-}
-
-/// Shared error slot between sink, sender, and writer task.
-pub(super) type WriterErrorSlot = Arc<std::sync::Mutex<Option<String>>>;
-
 /// Sink that appends `{ts, stream, line}` NDJSON records to a single
 /// `log.ndjson` file via a dedicated writer task. Implements
 /// [`OutputSink`].
+///
+/// Generic NDJSON serialization is delegated to [`NdjsonWriter`]; this
+/// type owns only the process-side stdio framing — per-stream partial
+/// buffers and CRLF/line splitting.
 pub struct ProcessLogSink {
-    sender: mpsc::Sender<WriterMsg>,
+    writer: NdjsonWriter,
     pending_stdout: Mutex<Vec<u8>>,
     pending_stderr: Mutex<Vec<u8>>,
-    writer_error: WriterErrorSlot,
 }
 
 impl std::fmt::Debug for ProcessLogSink {
@@ -57,15 +47,11 @@ impl ProcessLogSink {
     /// Returns the underlying [`io::Error`] when the file open fails.
     pub async fn open_in(log_dir: &Path) -> io::Result<Self> {
         let path = log_dir.join(LOG_NDJSON);
-        let file = open_log_file(path).await?;
-        let (tx, rx) = mpsc::channel::<WriterMsg>(DEFAULT_LOG_BUFFER);
-        let writer_error: WriterErrorSlot = Arc::new(std::sync::Mutex::new(None));
-        tokio::spawn(run_writer(file, rx, writer_error.clone()));
+        let writer = NdjsonWriter::open(path, DEFAULT_LOG_BUFFER).await?;
         Ok(Self {
-            sender: tx,
+            writer,
             pending_stdout: Mutex::new(Vec::new()),
             pending_stderr: Mutex::new(Vec::new()),
-            writer_error,
         })
     }
 
@@ -74,16 +60,19 @@ impl ProcessLogSink {
     #[must_use]
     pub(crate) fn sender_handle(&self) -> LogSender {
         LogSender {
-            sender: self.sender.clone(),
-            writer_error: self.writer_error.clone(),
+            sender: self.writer.sender().clone(),
+            writer_error: self.writer.error_slot().clone(),
         }
     }
 
     async fn enqueue(&self, entry: LogEntry) -> io::Result<()> {
-        self.sender
+        self.writer
+            .sender()
             .send(WriterMsg::Entry(entry))
             .await
-            .map_err(|_| writer_dead_error(&self.writer_error, "log.ndjson writer task stopped"))
+            .map_err(|_| {
+                writer_dead_error(self.writer.error_slot(), "log.ndjson writer task stopped")
+            })
     }
 
     async fn write_chunk(&self, stream: LogStream, bytes: &[u8]) -> io::Result<()> {
@@ -149,14 +138,17 @@ impl ProcessLogSink {
     /// touching per-stream pending buffers.
     async fn flush_writer_only(&self) -> io::Result<()> {
         let (ack_tx, ack_rx) = oneshot::channel();
-        self.sender
+        self.writer
+            .sender()
             .send(WriterMsg::Flush(ack_tx))
             .await
-            .map_err(|_| writer_dead_error(&self.writer_error, "log.ndjson writer task stopped"))?;
+            .map_err(|_| {
+                writer_dead_error(self.writer.error_slot(), "log.ndjson writer task stopped")
+            })?;
         match tokio::time::timeout(FLUSH_TIMEOUT, ack_rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(_)) => Err(writer_dead_error(
-                &self.writer_error,
+                self.writer.error_slot(),
                 "log.ndjson writer task disappeared during flush",
             )),
             Err(_) => Err(io::Error::new(
@@ -185,91 +177,6 @@ impl OutputSink for ProcessLogSink {
     async fn flush_stream(&self, stream: LogStream) -> io::Result<()> {
         self.flush_partial_stream(stream).await
     }
-}
-
-// --- writer task internals ---
-
-async fn run_writer(
-    mut file: TokioFile,
-    mut rx: mpsc::Receiver<WriterMsg>,
-    error_slot: WriterErrorSlot,
-) {
-    while let Some(msg) = rx.recv().await {
-        match msg {
-            WriterMsg::Entry(entry) => {
-                let mut line = match serde_json::to_vec(&entry) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "log.ndjson entry dropped: JSON serialise failed"
-                        );
-                        continue;
-                    }
-                };
-                line.push(b'\n');
-                if let Err(e) = file.write_all(&line).await {
-                    record_writer_error(
-                        &error_slot,
-                        &e,
-                        "log.ndjson writer task aborting on write_all",
-                    );
-                    return;
-                }
-            }
-            WriterMsg::Flush(ack) => {
-                let res = file.flush().await;
-                drop(ack.send(res));
-            }
-        }
-    }
-    if let Err(e) = file.flush().await {
-        record_writer_error(
-            &error_slot,
-            &e,
-            "log.ndjson writer task final flush failed at shutdown",
-        );
-    }
-}
-
-fn record_writer_error(slot: &WriterErrorSlot, err: &io::Error, context: &str) {
-    let description = format!("{err}");
-    if let Ok(mut guard) = slot.lock() {
-        if guard.is_none() {
-            *guard = Some(description.clone());
-        }
-    }
-    tracing::error!(
-        target: "iter::log",
-        error = %err,
-        kind = ?err.kind(),
-        "{context}"
-    );
-}
-
-pub(super) fn writer_dead_error(slot: &WriterErrorSlot, fallback: &str) -> io::Error {
-    let recorded = slot.lock().ok().and_then(|g| g.clone());
-    match recorded {
-        Some(orig) => io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            format!("{fallback}: writer task aborted: {orig}"),
-        ),
-        None => io::Error::new(io::ErrorKind::BrokenPipe, fallback.to_string()),
-    }
-}
-
-async fn open_log_file(path: PathBuf) -> io::Result<TokioFile> {
-    let std_file = tokio::task::spawn_blocking(move || {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .mode(0o600)
-            .open(&path)
-    })
-    .await
-    .map_err(|e| io::Error::other(format!("spawn_blocking: {e}")))??;
-    Ok(TokioFile::from_std(std_file))
 }
 
 #[cfg(test)]
@@ -423,32 +330,6 @@ mod tests {
             "stderr partial should merge with subsequent write into one record"
         );
         assert_eq!(stderr_entries[0].line, "stderr-still-active continued");
-    }
-
-    #[tokio::test]
-    async fn writer_dead_error_surfaces_recorded_writer_io_error() {
-        let slot: WriterErrorSlot = Arc::new(std::sync::Mutex::new(None));
-        let original = io::Error::new(io::ErrorKind::StorageFull, "ENOSPC: disk full");
-        record_writer_error(&slot, &original, "log.ndjson writer aborting (test)");
-        let surfaced = writer_dead_error(&slot, "log.ndjson writer task stopped");
-        assert_eq!(surfaced.kind(), io::ErrorKind::BrokenPipe);
-        let msg = surfaced.to_string();
-        assert!(
-            msg.contains("ENOSPC"),
-            "expected original cause in surfaced message, got: {msg}"
-        );
-        assert!(
-            msg.contains("disk full"),
-            "expected original detail in surfaced message, got: {msg}"
-        );
-    }
-
-    #[tokio::test]
-    async fn writer_dead_error_falls_back_when_slot_empty() {
-        let slot: WriterErrorSlot = Arc::new(std::sync::Mutex::new(None));
-        let surfaced = writer_dead_error(&slot, "log.ndjson writer task stopped");
-        assert_eq!(surfaced.kind(), io::ErrorKind::BrokenPipe);
-        assert_eq!(surfaced.to_string(), "log.ndjson writer task stopped");
     }
 
     #[tokio::test]
