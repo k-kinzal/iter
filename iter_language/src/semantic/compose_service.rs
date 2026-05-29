@@ -85,8 +85,6 @@ impl Analyzer {
         let mut workspace_section: Option<Spanned<crate::ast::WorkspaceDecl>> = None;
         let mut agent_section: Option<Spanned<crate::ast::AgentDecl>> = None;
         let mut runner_section: Option<Spanned<RunnerDecl>> = None;
-        let mut prompts: Vec<Spanned<crate::ast::PromptDecl>> = Vec::new();
-        let mut events: Vec<Spanned<crate::ast::EventHandlerDecl>> = Vec::new();
         let mut leftover_fields: Vec<RawField> = Vec::new();
 
         for field in block.fields {
@@ -148,7 +146,6 @@ impl Analyzer {
                 &mut runner_section,
             );
         }
-        let _ = (&mut prompts, &mut events);
 
         if let Some((path, _)) = build_path {
             Some(ServiceSource::Build {
@@ -162,8 +159,6 @@ impl Analyzer {
                 workspace: workspace_section,
                 agent: agent_section,
                 runner: runner_section,
-                prompts,
-                events,
             })))
         }
     }
@@ -220,23 +215,8 @@ impl Analyzer {
                 }
             }
             "runner" => {
-                if let Some(decl) = self.lower_runner_old(None, sub_body, &sub_keyword_span) {
-                    *runner_section = Some(Spanned::new(
-                        RunnerDecl {
-                            name: None,
-                            agent: String::new(),
-                            workspace: String::new(),
-                            queue: None,
-                            continue_on_error: decl.continue_on_error,
-                            behavior: decl.behavior,
-                            iteration_timeout_secs: decl.iteration_timeout_secs,
-                            prompt: crate::ast::PromptExpr::Single(
-                                crate::ast::PromptValue::Inline(String::new()),
-                            ),
-                            events: Vec::new(),
-                        },
-                        sub_keyword_span,
-                    ));
+                if let Some(decl) = self.lower_runner_inline(sub_body, &sub_keyword_span) {
+                    *runner_section = Some(Spanned::new(decl, sub_keyword_span));
                 }
             }
             other => {

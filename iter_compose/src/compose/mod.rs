@@ -82,6 +82,7 @@ service worker {
     runner {
         continue_on_error = false
         behavior = wait
+        prompt = "noop"
     }
 }
 "#,
@@ -90,6 +91,38 @@ service worker {
         let root = load_compose(&path).expect("load");
         assert_eq!(root.queues.len(), 1);
         assert_eq!(root.services.len(), 1);
+    }
+
+    #[test]
+    fn inline_service_with_prompt_and_event_builds() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let path = tmp.path().join("compose.iter");
+        std::fs::write(
+            &path,
+            r#"queue main file { path = "./.iter/queue" }
+
+service worker {
+    queue = main
+    workspace_local { base = "." }
+    agent_claude {
+        mode = print
+        command = "claude"
+    }
+    runner {
+        continue_on_error = false
+        behavior = loop
+        prompt = "explore the workspace"
+        on agent_finished { shell "echo done" }
+    }
+}
+"#,
+        )
+        .expect("write");
+        let root = load_compose(&path).expect("load");
+        let canonical = std::fs::canonicalize(&path).expect("canonicalize");
+        let plan = build(&root, &canonical).expect("inline service plan should build");
+        assert_eq!(plan.service_count(), 1);
+        assert_eq!(plan.service_names().next(), Some("worker"));
     }
 
     #[test]

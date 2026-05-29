@@ -173,6 +173,135 @@ impl Analyzer {
         })
     }
 
+    /// Lower a compose inline-service `runner { ... }` block.
+    ///
+    /// Unlike the Iterfile [`lower_runner_new`](Self::lower_runner_new),
+    /// agent and workspace are **not** referenced here — an inline service
+    /// declares them as sibling `agent_*` / `workspace_*` sub-blocks, and
+    /// the compose service builder supplies those declarations directly. This
+    /// lowerer therefore captures only the runner's own concerns: runtime
+    /// policy, the prompt expression, and nested `on <event>` handlers,
+    /// leaving the agent/workspace/queue reference fields empty.
+    ///
+    /// This is what routes prompt and event data through `RunnerDecl` for
+    /// inline services, matching the new Iterfile design where the runner
+    /// binds prompt and lifecycle events rather than carrying them as
+    /// independent top-level sections.
+    pub(super) fn lower_runner_inline(
+        &mut self,
+        body: Option<RawBlock>,
+        keyword_span: &Span,
+    ) -> Option<RunnerDecl> {
+        let Some(block) = body else {
+            self.errors.push(Diagnostic::error(
+                keyword_span.clone(),
+                "runner requires a body",
+            ));
+            return None;
+        };
+
+        let mut events: Vec<Spanned<EventHandlerDecl>> = Vec::new();
+
+        for route in &block.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "nested `on \"...\"` routes are not valid in a runner block",
+            ));
+        }
+        for action in &block.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "`shell` actions are not valid directly in a runner block; use `on <event> { shell \"...\" }`",
+            ));
+        }
+        for arm in &block.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid directly in a runner block; use `prompt { guard => \"...\" }`",
+            ));
+        }
+
+        // Lower nested `on <event> { ... }` event handlers from the block.
+        for handler in block.event_handlers {
+            if let Some(decl) = self.lower_event(&handler.event, &handler.body, handler.span) {
+                events.push(decl);
+            }
+        }
+
+        let mut fields = self.collect_fields_from_vec(block.fields);
+
+        let continue_on_error = self.take_required_bool_explicit(
+            &mut fields,
+            "continue_on_error",
+            keyword_span,
+            "runner",
+            CONTINUE_ON_ERROR_HINT,
+        );
+        let behavior = self.take_required_runner_behavior(&mut fields, keyword_span);
+        let iteration_timeout_secs = self.take_iteration_timeout_secs(&mut fields);
+        let prompt = self.take_prompt_expr(&mut fields, keyword_span);
+        // Inline services have no named-prompt scope (`compose.iter` has no
+        // `prompt as <name>` construct), so a bareword prompt reference can
+        // never resolve. Reject it here with a clear diagnostic rather than
+        // letting it silently lower to an empty prompt downstream.
+        self.reject_prompt_refs_inline(&prompt, keyword_span);
+
+        self.reject_unknown_fields(
+            &mut fields,
+            &[
+                "continue_on_error",
+                "behavior",
+                "iteration_timeout_secs",
+                "prompt",
+            ],
+            "runner",
+        );
+
+        Some(RunnerDecl {
+            name: None,
+            agent: String::new(),
+            workspace: String::new(),
+            queue: None,
+            continue_on_error: continue_on_error?,
+            behavior: behavior?,
+            iteration_timeout_secs,
+            prompt,
+            events,
+        })
+    }
+
+    /// Reject `PromptValue::Ref` arms in an inline-service prompt expression.
+    ///
+    /// Named prompt references are an Iterfile-only feature: they resolve
+    /// against the file's `prompt as <name>` definitions, which do not exist
+    /// in a `compose.iter` inline service. Without this guard a bareword
+    /// `prompt = name` would lower to a dangling `Ref` and silently resolve
+    /// to an empty prompt at build time.
+    fn reject_prompt_refs_inline(&mut self, expr: &PromptExpr, keyword_span: &Span) {
+        let mut check = |value: &PromptValue| {
+            if let PromptValue::Ref(name) = value {
+                self.errors.push(
+                    Diagnostic::error(
+                        keyword_span.clone(),
+                        format!(
+                            "named prompt reference `{name}` is not valid in an inline service runner"
+                        ),
+                    )
+                    .with_hint("inline services have no named prompts; write the prompt inline as `prompt = \"...\"`"),
+                );
+            }
+        };
+        match expr {
+            PromptExpr::Single(value) => check(value),
+            PromptExpr::Match { arms, default } => {
+                for arm in arms {
+                    check(&arm.value);
+                }
+                check(default);
+            }
+        }
+    }
+
     /// Extract a required identifier field (bareword reference).
     fn take_required_ident(
         &mut self,

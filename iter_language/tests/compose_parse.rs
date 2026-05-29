@@ -8,9 +8,9 @@
 //! compose root).
 
 use iter_language::{
-    ComposeRoot, ComposeTriggerOverride, NamedCompose, NamedQueue, NamedService, NamedTrigger,
-    QueueDecl, QueueRef, ServiceSource, TelemetryProtocol, TriggerDecl, WatchEventKind,
-    parse_compose,
+    ComposeRoot, ComposeTriggerOverride, EventName, NamedCompose, NamedQueue, NamedService,
+    NamedTrigger, PromptExpr, PromptValue, QueueDecl, QueueRef, ServiceSource, TelemetryProtocol,
+    TriggerDecl, WatchEventKind, parse_compose,
 };
 
 fn parse(src: &str) -> ComposeRoot {
@@ -172,6 +172,118 @@ fn dangling_queue_reference_rejected() {
     );
     assert!(
         errs.iter().any(|m| m.contains("`ghost` is not declared")),
+        "got: {errs:#?}"
+    );
+}
+
+#[test]
+fn inline_service_runner_carries_prompt_and_events() {
+    let root = parse(
+        r#"
+            queue main file { path = "./.iter/queue" }
+            service worker {
+                queue = main
+                workspace_local { base = "." }
+                agent_claude { mode = print command = "claude" }
+                runner {
+                    continue_on_error = false
+                    behavior = loop
+                    prompt = "explore the workspace"
+                    on agent_finished { shell "echo done" }
+                }
+            }
+        "#,
+    );
+    let ServiceSource::Inline(inline) = &root.services[0].node.source else {
+        panic!("expected inline source");
+    };
+    let runner = inline.runner.as_ref().expect("inline runner present");
+    assert!(
+        matches!(&runner.node.prompt, PromptExpr::Single(PromptValue::Inline(s)) if s == "explore the workspace"),
+        "prompt must flow through the runner: {:?}",
+        runner.node.prompt,
+    );
+    assert_eq!(
+        runner.node.events.len(),
+        1,
+        "event handler must flow through the runner",
+    );
+    assert_eq!(runner.node.events[0].node.event, EventName::AgentFinished);
+}
+
+#[test]
+fn inline_service_runner_supports_prompt_match() {
+    let root = parse(
+        r#"
+            queue main file { path = "./.iter/queue" }
+            service worker {
+                queue = main
+                workspace_local { base = "." }
+                agent_claude { mode = print command = "claude" }
+                runner {
+                    continue_on_error = false
+                    behavior = loop
+                    prompt {
+                        iteration.count % 25 == 0 => "review changes"
+                        _                         => "refactor the module"
+                    }
+                }
+            }
+        "#,
+    );
+    let ServiceSource::Inline(inline) = &root.services[0].node.source else {
+        panic!("expected inline source");
+    };
+    let runner = inline.runner.as_ref().expect("inline runner present");
+    let PromptExpr::Match { arms, default } = &runner.node.prompt else {
+        panic!("expected prompt match expression, got {:?}", runner.node.prompt);
+    };
+    assert_eq!(arms.len(), 1, "one guarded arm expected");
+    assert!(matches!(default, PromptValue::Inline(s) if s == "refactor the module"));
+}
+
+#[test]
+fn inline_service_runner_rejects_prompt_ref() {
+    let errs = parse_err(
+        r#"
+            queue main file { path = "./.iter/queue" }
+            service worker {
+                queue = main
+                workspace_local { base = "." }
+                agent_claude { mode = print command = "claude" }
+                runner {
+                    continue_on_error = false
+                    behavior = loop
+                    prompt = recovery
+                }
+            }
+        "#,
+    );
+    assert!(
+        errs.iter().any(|m| m
+            .contains("named prompt reference `recovery` is not valid in an inline service runner")),
+        "got: {errs:#?}"
+    );
+}
+
+#[test]
+fn inline_service_runner_requires_prompt() {
+    let errs = parse_err(
+        r#"
+            queue main file { path = "./.iter/queue" }
+            service worker {
+                queue = main
+                workspace_local { base = "." }
+                agent_claude { mode = print command = "claude" }
+                runner {
+                    continue_on_error = false
+                    behavior = loop
+                }
+            }
+        "#,
+    );
+    assert!(
+        errs.iter().any(|m| m.contains("runner requires `prompt`")),
         "got: {errs:#?}"
     );
 }

@@ -133,13 +133,19 @@ fn build_service_from_inline(
         }
     })?;
 
+    // Prompt and event data flow through the runner declaration. Inline
+    // service prompts are always inline literals — the semantic analyzer
+    // rejects named prompt references in inline runners — so the named-prompt
+    // resolution set is empty here.
+    let prompts = assembly::build_prompt_decls_from_expr_pub(&runner_decl.prompt, &[]);
+
     let builder = assembly::assemble_runner_builder(
         Some(queue),
         workspace_decl,
         agent_decl,
         runner_decl,
-        &inline.prompts,
-        &inline.events,
+        &prompts,
+        &runner_decl.events,
         once,
     )
     .map_err(|source| ComposeError::Assembly {

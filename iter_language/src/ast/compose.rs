@@ -14,8 +14,10 @@
 //!   field grammar is identical to the Iterfile [`QueueDecl`](super::QueueDecl).
 //! - `service <name> { ... }` — named service. The body either points at an
 //!   external Iterfile via `build = "./Iterfile"` or inlines the same
-//!   sections an Iterfile would carry (`workspace`, `agent`, `runner`,
-//!   `prompt`, top-level `on`).
+//!   sections an Iterfile would carry (`workspace`, `agent`, `runner`). As
+//!   in the new Iterfile design, the prompt expression and `on <event>`
+//!   lifecycle handlers live inside the inline `runner` block rather than
+//!   as independent sections.
 //! - `trigger <name> <kind> { ... }` — named trigger. Body uses the same
 //!   per-kind grammar as the Iterfile [`TriggerDecl`](super::TriggerDecl)
 //!   plus a required `target = <queue-name>` (omittable when there is a
@@ -27,15 +29,15 @@
 //! - `telemetry { ... }` — optional project-wide OpenTelemetry export
 //!   settings for the composed topology.
 //!
-//! `runner` and `prompt` and top-level `on` only appear nested inside an
-//! inline service body — they are not first-class compose sections.
+//! `runner` only appears nested inside an inline service body — it is not a
+//! first-class compose section. The runner's prompt and `on <event>`
+//! handlers are nested inside that runner block.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::{
-    AgentDecl, EventHandlerDecl, PromptDecl, QueueDecl, RunnerDecl, Spanned, TelemetryDecl,
-    TriggerDecl, WorkspaceDecl,
+    AgentDecl, QueueDecl, RunnerDecl, Spanned, TelemetryDecl, TriggerDecl, WorkspaceDecl,
 };
 
 /// Validated root of a `compose.iter` source file.
@@ -104,12 +106,11 @@ pub struct InlineService {
     pub workspace: Option<Spanned<WorkspaceDecl>>,
     /// Inline agent declaration.
     pub agent: Option<Spanned<AgentDecl>>,
-    /// Inline runner declaration.
+    /// Inline runner declaration. In the new design this carries the
+    /// service's prompt expression (`prompt = ...`) and lifecycle event
+    /// handlers (`on <event> { ... }`) directly, binding them to the
+    /// runner rather than holding them as independent top-level sections.
     pub runner: Option<Spanned<RunnerDecl>>,
-    /// Inline prompt declarations in source order.
-    pub prompts: Vec<Spanned<PromptDecl>>,
-    /// Inline event handler declarations.
-    pub events: Vec<Spanned<EventHandlerDecl>>,
 }
 
 /// One named entry in the compose file's `trigger` section.
