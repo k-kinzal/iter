@@ -9,7 +9,7 @@ Error: router sub-agent `primary` requires `kind`
    │   ───┬───  
    │      ╰───── router sub-agent `primary` requires `kind`
    │ 
-   │ Help: add `kind = claude` (or codex, gemini, etc.)
+   │ Help: add `kind = claude` (or codex, gemini, grok, opencode, etc.)
 ───╯
 
 Error: agent router requires at least one sub-agent
