@@ -168,7 +168,7 @@ hooks can read through the `iteration.*` placeholder root, and that
   on to the next turn is governed by `continue_on_error`, but the
   counter itself keeps climbing — a failed turn is still a turn that
   happened.
-- **`iteration.previous_outcome`** carries `"none"`, `"success"`, or
+- **`iteration.previous_result`** carries `"none"`, `"success"`, or
   `"errored"` from the prior turn. `"success"` when the full iteration
   pipeline (setup → agent → teardown) completed without a stage error.
   `"errored"` when a runner stage failed — workspace setup error,

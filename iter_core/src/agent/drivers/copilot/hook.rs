@@ -143,7 +143,7 @@ impl HookBundle {
             }
         });
         let config_bytes = serde_json::to_vec_pretty(&config_payload)
-            .map_err(|e| AgentError::HookSetup(format!("serialize copilot-loop.json: {e}")))?;
+            .map_err(|e| AgentError::Launch(format!("serialize copilot-loop.json: {e}")))?;
         fs::write(&config_path, config_bytes)
             .await
             .map_err(map_hook_io("write synthesized copilot-loop.json"))?;

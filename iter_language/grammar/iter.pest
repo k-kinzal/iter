@@ -131,9 +131,9 @@ guard_meta  = { kw_metadata ~ "." ~ ident ~ guard_op ~ string }
 guard_op    = { "==" | "!=" }
 
 // `iteration.<field> [% N] <op> <integer | string>`. The hand-written
-// parser distinguishes numeric and outcome forms by the RHS literal kind;
+// parser distinguishes numeric and result forms by the RHS literal kind;
 // the pest grammar accepts both shapes and lets the semantic layer enforce
-// "string RHS only on `previous_outcome ==`/`!=`" so the two
+// "string RHS only on `previous_result ==`/`!=`" so the two
 // implementations stay differentially equivalent on syntactically valid
 // input.
 //

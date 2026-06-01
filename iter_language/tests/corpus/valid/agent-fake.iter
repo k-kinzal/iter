@@ -13,8 +13,6 @@ agent fake {
     "output/result.txt"  = "refactored content"
     "output/report.json" = "{\"status\": \"ok\"}"
   }
-  last_output = "Completed refactoring."
-  turn_count  = 5
 }
 
 runner {

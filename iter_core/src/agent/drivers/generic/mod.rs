@@ -6,11 +6,11 @@
 
 use std::path::Path;
 
-use crate::{Agent, AgentReport, AgentRunContext, Prompt};
+use crate::{Agent, AgentRun, AgentRunContext, Prompt};
 use tokio::process::Command;
 
 use crate::agent::AgentError;
-use crate::agent::process::{PromptDelivery, run_command};
+use crate::agent::process::{PromptDelivery, detect_token_limit, spawn_capture};
 
 /// Runs any configured CLI command as an [`Agent`].
 ///
@@ -36,8 +36,8 @@ use crate::agent::process::{PromptDelivery, run_command};
 ///     CancellationToken::new(),
 ///     SignalId::new(),
 /// );
-/// let report = agent.run(ctx).await?;
-/// assert!(report.exit_status.is_success());
+/// // `Ok` means the command ran a turn; a non-zero exit is `Err`.
+/// let _run = agent.run(ctx).await?;
 /// # Ok(()) }
 /// ```
 ///
@@ -82,7 +82,10 @@ impl GenericAgent {
     }
 
     fn build_command(&self, path: &Path, prompt: &Prompt) -> Result<Command, AgentError> {
-        let (program, rest) = self.command.split_first().ok_or(AgentError::EmptyCommand)?;
+        let (program, rest) = self
+            .command
+            .split_first()
+            .ok_or_else(|| AgentError::Launch("agent command is empty".to_owned()))?;
         let mut cmd = Command::new(program);
         cmd.current_dir(path);
         for arg in rest {
@@ -99,48 +102,52 @@ impl GenericAgent {
 }
 
 impl Agent for GenericAgent {
-    type Error = AgentError;
-
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let command = self.build_command(ctx.workspace_path, ctx.prompt)?;
         let delivery = if self.stdin_prompt {
             PromptDelivery::Stdin(ctx.prompt.as_str())
         } else {
             PromptDelivery::Inline
         };
-        run_command(command, delivery, ctx.cancel, ctx.stdio_sink).await
+        // The generic escape hatch has no machine-readable contract: a clean
+        // exit is a run, a non-zero exit is a failure. Token-limit text in
+        // the output is still surfaced so the router can fall back.
+        let output = spawn_capture(command, delivery, ctx.cancel, ctx.stdio_sink).await?;
+        if let Some(err) = output.exit.into_failure() {
+            if let Some(detail) =
+                detect_token_limit(&output.stdout_str()).or_else(|| detect_token_limit(&output.stderr_str()))
+            {
+                return Err(AgentError::TokenLimit(detail));
+            }
+            return Err(err);
+        }
+        Ok(AgentRun::empty())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExitStatus;
-    use crate::agent::testutil::ctx;
+    use crate::agent::testutil::{ctx, ctx_capturing};
 
     #[tokio::test]
     async fn captures_stdout_on_success() {
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "echo hello".into()]);
         let prompt = Prompt::from("ignored");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        let out = report.last_output.expect("last_output");
-        assert!(out.contains("hello"), "got {out:?}");
-        assert!(report.turn_count.is_none());
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert!(sink.stdout().await.contains("hello"));
     }
 
     #[tokio::test]
     async fn non_zero_exit_reported_as_failure() {
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "exit 7".into()]);
         let prompt = Prompt::from("ignored");
-        let report = agent
+        let err = agent
             .run(ctx(Path::new("."), &prompt))
             .await
-            .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Failure(7));
+            .expect_err("nonzero exit is an error");
+        assert!(matches!(err, AgentError::Failed { code: Some(7), .. }), "got {err:?}");
     }
 
     #[tokio::test]
@@ -148,42 +155,15 @@ mod tests {
         // `cat` with no args copies stdin to stdout; assert we see the prompt.
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "cat".into()]);
         let prompt = Prompt::from("from-stdin");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert!(
-            report
-                .last_output
-                .expect("last_output")
-                .contains("from-stdin")
-        );
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert!(sink.stdout().await.contains("from-stdin"));
     }
 
     #[tokio::test]
     async fn inline_prompt_is_appended_as_arg() {
-        // `sh -c 'printf %s "$0"' -- <prompt>`
-        let agent = GenericAgent::new(vec![
-            "sh".into(),
-            "-c".into(),
-            "printf %s \"$0\"".into(),
-            "placeholder".into(),
-        ])
-        .with_stdin_prompt(false);
-        // The `placeholder` arg is the 4th element of `command`; the runtime
-        // will also append the prompt. We assert the prompt *appears* in
-        // stdout, since `$0` is `placeholder` — the assertion is that the
-        // arg was appended without error. Swap to env-based echo to observe
-        // the appended arg directly.
-        let prompt = Prompt::from("appended");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        // The appended prompt is the *5th* arg; $0 is still "placeholder".
-        // Use a follow-up agent that explicitly echoes `$1`.
-        assert_eq!(report.exit_status, ExitStatus::Success);
-
+        // `sh -c 'printf %s "$1"' placeholder <prompt>` — the runtime appends
+        // the prompt as the next positional, observable as `$1`.
         let agent = GenericAgent::new(vec![
             "sh".into(),
             "-c".into(),
@@ -192,11 +172,9 @@ mod tests {
         ])
         .with_stdin_prompt(false);
         let prompt = Prompt::from("appended-arg");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.last_output.expect("last_output"), "appended-arg");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert_eq!(sink.stdout().await, "appended-arg");
     }
 
     #[tokio::test]
@@ -208,11 +186,9 @@ mod tests {
         ])
         .with_env("ITER_TEST_VAR", "env-value");
         let prompt = Prompt::from("ignored");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.last_output.expect("last_output"), "env-value");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert_eq!(sink.stdout().await, "env-value");
     }
 
     #[tokio::test]
@@ -223,7 +199,7 @@ mod tests {
             .run(ctx(Path::new("."), &prompt))
             .await
             .expect_err("must fail");
-        assert!(matches!(err, AgentError::EmptyCommand));
+        assert!(matches!(err, AgentError::Launch(_)));
     }
 
     #[tokio::test]
@@ -238,25 +214,23 @@ mod tests {
             ("DSL_VAR_B".into(), "beta".into()),
         ];
         let prompt = Prompt::from("ignored");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.last_output.expect("last_output"), "alpha beta");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert_eq!(sink.stdout().await, "alpha beta");
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn signal_termination_is_reported() {
         // Child kills itself with SIGKILL (signal 9). On Unix, the parent
-        // should see `ExitStatus::Signal(9)`.
+        // should see `AgentError::TerminatedBySignal(9)`.
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "kill -KILL $$".into()]);
         let prompt = Prompt::from("ignored");
-        let report = agent
+        let err = agent
             .run(ctx(Path::new("."), &prompt))
             .await
-            .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Signal(9));
+            .expect_err("signal is an error");
+        assert!(matches!(err, AgentError::TerminatedBySignal(9)), "got {err:?}");
     }
 
     #[tokio::test]
@@ -264,8 +238,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "pwd".into()]);
         let prompt = Prompt::from("ignored");
-        let report = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
-        let out = report.last_output.expect("last_output");
+        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        let out = sink.stdout().await;
         // Resolve the canonical path to avoid symlink mismatches on macOS.
         let canonical = tmp.path().canonicalize().expect("canonicalize");
         assert!(

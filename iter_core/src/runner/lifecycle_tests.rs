@@ -25,7 +25,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::agent::{AgentReport, AgentRunContext};
+use crate::agent::{AgentRun, AgentRunContext};
 use crate::prompt::PromptTemplate;
 use crate::queue::{InMemoryQueue, Priority};
 use crate::signal::{Metadata, Signal};
@@ -142,9 +142,8 @@ impl Workspace for TransientWorkspace {
 struct StubAgent;
 
 impl Agent for StubAgent {
-    type Error = crate::agent::AgentError;
-    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
-        Ok(AgentReport::success())
+    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
+        Ok(AgentRun::empty())
     }
 }
 
@@ -155,8 +154,7 @@ impl Agent for StubAgent {
 struct FailingAgent;
 
 impl Agent for FailingAgent {
-    type Error = crate::agent::AgentError;
-    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Err(crate::agent::AgentError::Cancelled)
     }
 }
@@ -196,8 +194,7 @@ struct SluggishCleanupAgent {
 }
 
 impl Agent for SluggishCleanupAgent {
-    type Error = crate::agent::AgentError;
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         ctx.cancel.cancelled().await;
         // Stay alive much longer than DRAIN_GRACE so that any test
         // that bounded its overall wait at < DRAIN_GRACE could only
@@ -208,10 +205,9 @@ impl Agent for SluggishCleanupAgent {
 }
 
 impl Agent for SleepyAgent {
-    type Error = crate::agent::AgentError;
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         tokio::select! {
-            () = tokio::time::sleep(self.delay) => Ok(AgentReport::success()),
+            () = tokio::time::sleep(self.delay) => Ok(AgentRun::empty()),
             () = ctx.cancel.cancelled() => {
                 self.cancel_observed.store(true, Ordering::SeqCst);
                 Err(crate::agent::AgentError::Cancelled)
@@ -554,7 +550,7 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
     // With `continue_on_error = true`, a teardown failure must record
     // a failure on the iteration accumulator before bumping the
     // counter — so the *next* iteration's prompt/template sees
-    // `iteration.previous_outcome == "errored"` and
+    // `iteration.previous_result == "errored"` and
     // `consecutive_failures >= 1`. Regression for the open-coded
     // teardown branch that previously fell through to
     // `record_success`, which mis-marked the failed turn as a win
@@ -797,7 +793,7 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
     // With `continue_on_error = true`, a timed-out iteration becomes
     // a recorded failure and the loop moves on. We use `once = true`
     // so we get a single iteration and observe its result via the
-    // emitted `AgentFinished` event (`result_kind = Errored`).
+    // emitted `AgentFinished` event (`result label = "cancelled"`).
     let queue = Arc::new(InMemoryQueue::new());
     queue
         .queue(Signal::new(Metadata::new()), Priority::default())

@@ -116,7 +116,7 @@ impl HookBundle {
         let hook_cmd = hook_script
             .to_str()
             .ok_or_else(|| {
-                AgentError::HookSetup(format!(
+                AgentError::Launch(format!(
                     "hook script path is not valid UTF-8: {}",
                     hook_script.display()
                 ))
@@ -138,7 +138,7 @@ impl HookBundle {
             }
         });
         let hooks_bytes = serde_json::to_vec_pretty(&hooks_payload)
-            .map_err(|e| AgentError::HookSetup(format!("serialize codex hooks.json: {e}")))?;
+            .map_err(|e| AgentError::Launch(format!("serialize codex hooks.json: {e}")))?;
         fs::write(&hooks_path, hooks_bytes)
             .await
             .map_err(map_hook_io("write synthesized codex hooks.json"))?;

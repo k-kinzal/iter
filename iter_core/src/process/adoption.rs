@@ -120,7 +120,7 @@ async fn mark_failed_best_effort(status_file: &Arc<ProcessStatusFile>) {
         // The transition is precondition-checked, so a record that already
         // moved past `Initializing` (e.g. the `AlreadyAdopted` case where a
         // concurrent adopter flipped to `Running`) lands here as
-        // `IllegalTransition`. That is the expected no-op outcome — only
+        // `IllegalTransition`. That is the expected no-op result — only
         // log it so the typed primary error reaches the caller unmasked.
         warn!(
             error = %transition_err,

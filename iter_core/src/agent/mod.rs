@@ -13,8 +13,8 @@
 //!   [`HermesAgent`] (hook integration pending), [`AntigravityAgent`],
 //!   and [`CopilotAgent`] each run in either
 //!   [`AgentMode::Print`]
-//!   (non-interactive one-shot invocation that captures stdout into
-//!   [`AgentReport::last_output`]) or
+//!   (non-interactive one-shot invocation whose machine-readable output is
+//!   parsed by the per-CLI Command) or
 //!   [`AgentMode::Interactive`] (live TUI session driven by a
 //!   project-local Stop-style hook installed under the agent's
 //!   own config directory).
@@ -51,21 +51,21 @@
 //!     CancellationToken::new(),
 //!     SignalId::new(),
 //! );
-//! let report = agent.run(ctx).await?;
-//! assert!(report.exit_status.is_success());
+//! // `Ok` means the agent ran a turn; a non-zero / failed run is `Err`.
+//! let _run = agent.run(ctx).await?;
 //! # Ok(()) }
 //! ```
 
 pub mod drivers;
 
 pub mod command_path;
+pub(crate) mod cli_json;
 pub mod error;
 mod hook_lifecycle;
 pub mod inner;
 pub mod mode;
-pub mod result_kind;
 pub(crate) mod process;
-pub mod report;
+pub mod run;
 pub(crate) mod session;
 
 #[cfg(test)]
@@ -87,5 +87,4 @@ pub use drivers::opencode::{OpenCodeAgent, OpenCodeSettings};
 pub use error::AgentError;
 pub use inner::{Agent, AgentRunContext, run_with_timeout};
 pub use mode::AgentMode;
-pub use result_kind::AgentResultKind;
-pub use report::{AgentReport, ExitStatus};
+pub use run::AgentRun;

@@ -8,7 +8,7 @@
 //! [`RenderContext`] composes [`SignalContext`] with an
 //! [`IterationContext`](crate::IterationContext) so prompts and shell
 //! handlers attached to per-signal events can additionally render
-//! `{{iteration.count}}`, `{{iteration.previous_outcome}}`, and so on.
+//! `{{iteration.count}}`, `{{iteration.previous_result}}`, and so on.
 //! [`LifecycleRenderContext`] is the signal-less twin used for runner-level
 //! events (`runner_starting`, `runner_finished`, `runner_error` without a
 //! signal in flight) — `{{iteration.*}}` is reachable but `{{signal.*}}`
@@ -196,7 +196,7 @@ mod tests {
         assert!(json.get("metadata").is_some());
         // New `iteration` root sits alongside.
         assert_eq!(json["iteration"]["count"], 3);
-        assert_eq!(json["iteration"]["previous_outcome"], "none");
+        assert_eq!(json["iteration"]["previous_result"], "none");
     }
 
     #[test]

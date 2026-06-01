@@ -16,7 +16,7 @@ runner {
   behavior = wait
 }
 
-prompt when iteration.previous_outcome == "none" "first iteration"
-prompt when iteration.previous_outcome == "errored" "recover from previous error"
-prompt when iteration.previous_outcome != "success" "non-success path"
+prompt when iteration.previous_result == "none" "first iteration"
+prompt when iteration.previous_result == "errored" "recover from previous error"
+prompt when iteration.previous_result != "success" "non-success path"
 prompt "regular run after success"

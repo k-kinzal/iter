@@ -1,4 +1,0 @@
-agent fake {
-  turn_count = -5
-}
-runner { continue_on_error = false  behavior = wait }

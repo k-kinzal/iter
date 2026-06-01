@@ -25,7 +25,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, field};
 
 use crate::agent::Agent;
-use crate::agent::AgentResultKind;
 use crate::prompt::{Prompt, PromptSelector};
 use crate::queue::Queue;
 use crate::signal::{Signal, SignalId};
@@ -105,10 +104,7 @@ where
     /// applying the configured `delay` between successive synthesised
     /// iterations. The first iteration runs without delay so a one-shot
     /// `behavior = loop` invocation starts immediately.
-    pub async fn run(self, cancel: CancellationToken) -> Result<RunnerSummary, RunnerExitError>
-    where
-        A::Error: Into<crate::agent::AgentError>,
-    {
+    pub async fn run(self, cancel: CancellationToken) -> Result<RunnerSummary, RunnerExitError> {
         let Runner {
             queue,
             workspaces: workspace_factory,
@@ -337,6 +333,17 @@ enum FailureDecision {
     Bubble,
 }
 
+/// Decide what to do after a processing failure.
+///
+/// Since a non-zero / signalled agent run is now an `Err` (an
+/// [`AgentError`](crate::agent::AgentError), not an `Ok` carrying a failed
+/// exit), this policy governs those runs too: the failing iteration has
+/// already been through best-effort workspace teardown (artifacts may
+/// exist) and recorded as `previous_result = "errored"`. A non-zero exit is
+/// a **non-retryable** failure in the sense that the runner does not re-run
+/// the *same* signal — `continue_on_error` only decides whether the loop
+/// proceeds to the next signal (`Retry`) or bubbles the error out
+/// (`Bubble`); `once` short-circuits to a single iteration.
 fn decide_after_processing_failure(cfg: &RunnerConfig) -> FailureDecision {
     if !cfg.continue_on_error {
         return FailureDecision::Bubble;
@@ -527,7 +534,6 @@ async fn drive_workspace<W, A>(
 where
     W: Workspace + 'static,
     A: Agent + 'static,
-    A::Error: Into<crate::agent::AgentError>,
 {
     let signal_id = signal.id();
     let mut workspace = (workspace_factory)();
@@ -603,27 +609,23 @@ where
         .instrument(agent_span.clone())
         .await;
 
-    let result_kind = match &agent_result {
-        Ok(rep) => AgentResultKind::from_report(rep),
-        Err(e) => AgentResultKind::from_error(e),
+    // The agent result is now a plain `Result`: `Ok` means the agent ran a
+    // turn (exit 0), `Err` carries the failure class. The lifecycle label and
+    // the optional exit code are derived directly from it — there is no
+    // separate `result_kind` projection type anymore.
+    let (result_label, exit_code): (&'static str, Option<i32>) = match &agent_result {
+        Ok(_) => ("success", Some(0)),
+        Err(err) => (err.label(), err.exit_code()),
     };
-    let exit_code = agent_result
-        .as_ref()
-        .ok()
-        .and_then(|rep| match rep.exit_status {
-            crate::agent::ExitStatus::Success => Some(0),
-            crate::agent::ExitStatus::Failure(c) => Some(c),
-            crate::agent::ExitStatus::Signal(_) | crate::agent::ExitStatus::Unknown => None,
-        });
-    agent_span.record("iter.agent.result", agent_result_label(result_kind));
+    agent_span.record("iter.agent.result", result_label);
     if let Some(exit_code) = exit_code {
         agent_span.record("iter.agent.exit_code", exit_code);
     }
-    if result_kind != AgentResultKind::Success {
+    if agent_result.is_err() {
         iter_tracing::record_span_error(
             &agent_span,
             "agent_run",
-            &agent_result_message(result_kind, exit_code),
+            &agent_result_message(result_label, exit_code),
         );
     }
     let agent_for_event = agent_result
@@ -636,7 +638,7 @@ where
             signal,
             &workspace_path,
             agent_for_event,
-            result_kind,
+            result_label,
             exit_code,
             snap,
         )
@@ -710,25 +712,10 @@ where
     Ok(AgentRecord { exit_code })
 }
 
-fn agent_result_label(kind: AgentResultKind) -> &'static str {
-    match kind {
-        AgentResultKind::Success => "success",
-        AgentResultKind::Failure => "failure",
-        AgentResultKind::TerminatedBySignal => "terminated_by_signal",
-        AgentResultKind::UnknownExit => "unknown_exit",
-        AgentResultKind::Cancelled => "cancelled",
-        AgentResultKind::Errored => "errored",
-        AgentResultKind::TokenLimit => "token_limit",
-    }
-}
-
-fn agent_result_message(kind: AgentResultKind, exit_code: Option<i32>) -> String {
+fn agent_result_message(label: &str, exit_code: Option<i32>) -> String {
     match exit_code {
-        Some(code) => format!(
-            "agent result {} with exit code {code}",
-            agent_result_label(kind)
-        ),
-        None => format!("agent result {}", agent_result_label(kind)),
+        Some(code) => format!("agent result {label} with exit code {code}"),
+        None => format!("agent result {label}"),
     }
 }
 
@@ -748,7 +735,6 @@ async fn process_signal<W, A>(
 where
     W: Workspace + 'static,
     A: Agent + 'static,
-    A::Error: Into<crate::agent::AgentError>,
 {
     let now = Utc::now();
     iter_state.begin_iteration(now);
@@ -822,7 +808,6 @@ where
     Q: Queue + 'static,
     W: Workspace + 'static,
     A: Agent + 'static,
-    A::Error: Into<crate::agent::AgentError>,
 {
     loop {
         if cancel.is_cancelled() {

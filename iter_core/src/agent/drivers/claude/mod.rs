@@ -45,20 +45,43 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use crate::{Agent, AgentReport, AgentRunContext, Prompt};
+use crate::{Agent, AgentRun, AgentRunContext, Prompt};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+mod command;
 mod hook;
 
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
-    PromptDelivery, apply_user_env, detect_token_limit, drive_interactive_with_finalize,
-    inject_agent_otel_resource_attrs, inject_trace_context_env, run_command,
+    PromptDelivery, apply_user_env, drive_interactive_with_finalize,
+    inject_agent_otel_resource_attrs, inject_trace_context_env, spawn_capture,
 };
 use crate::agent::session::SessionIdFile;
+use command::{ClaudeCodeCommand, ClaudeCodeError};
 use hook::HookBundle;
+
+impl From<ClaudeCodeError> for AgentError {
+    /// Adapter projection: collapse Claude Code's CLI-shaped error hierarchy
+    /// onto iter's minimal domain error. Only [`ClaudeCodeError::TokenLimit`]
+    /// is router-relevant and preserved as [`AgentError::TokenLimit`]; the
+    /// rest become the generic failure / signal variants.
+    fn from(err: ClaudeCodeError) -> Self {
+        match err {
+            ClaudeCodeError::TokenLimit(detail) => Self::TokenLimit(detail),
+            ClaudeCodeError::Signal(sig) => Self::TerminatedBySignal(sig),
+            ClaudeCodeError::Reported { subtype, exit_code } => Self::Failed {
+                code: exit_code,
+                message: format!("claude reported error result `{subtype}`"),
+            },
+            ClaudeCodeError::NoResult { exit_code } => Self::Failed {
+                code: exit_code,
+                message: "claude produced no terminal result".to_owned(),
+            },
+        }
+    }
+}
 
 /// Fully-specified configuration for [`ClaudeAgent`].
 ///
@@ -197,20 +220,6 @@ impl ClaudeAgent {
         PathBuf::from(format!("/private/tmp/claude-{uid}"))
     }
 
-    fn build_print_command(&self, path: &Path, session_id: Option<&str>) -> Command {
-        let mut cmd = Command::new(&self.command);
-        cmd.current_dir(path);
-        cmd.arg("--print");
-        cmd.arg("--permission-mode").arg("bypassPermissions");
-        if let Some(sid) = session_id {
-            cmd.arg("--session-id").arg(sid);
-        }
-        for arg in &self.args {
-            cmd.arg(arg);
-        }
-        cmd
-    }
-
     /// Build the interactive-mode command. Passes the prompt as the first
     /// positional argument so `claude` seeds its initial user turn with it
     /// before dropping into the TUI. Extra args come afterward so users
@@ -244,9 +253,7 @@ impl ClaudeAgent {
 }
 
 impl Agent for ClaudeAgent {
-    type Error = AgentError;
-
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
             prompt,
@@ -272,7 +279,12 @@ impl Agent for ClaudeAgent {
         };
         match self.mode {
             AgentMode::Print => {
-                let mut command = self.build_print_command(workspace_path, session_id.as_deref());
+                let mut command = ClaudeCodeCommand {
+                    program: &self.command,
+                    args: &self.args,
+                    session_id: session_id.as_deref(),
+                }
+                .build(workspace_path);
                 apply_user_env(&mut command, &self.env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
@@ -284,23 +296,19 @@ impl Agent for ClaudeAgent {
                 if inject_trace_context_env(&mut command) {
                     command.env("CLAUDE_CODE_ENABLE_TELEMETRY", "1");
                 }
-                let report = run_command(
+                let output = spawn_capture(
                     command,
                     PromptDelivery::Stdin(prompt.as_str()),
                     cancel,
                     stdio_sink,
                 )
                 .await?;
-                if !report.exit_status.is_success() {
-                    if let Some(detail) = report
-                        .last_output
-                        .as_deref()
-                        .and_then(detect_token_limit)
-                    {
-                        return Err(AgentError::TokenLimit(detail));
-                    }
-                }
-                Ok(report)
+                // Adapter: project the Command's CLI-shaped result/error onto
+                // iter's domain. `?` runs the `From<ClaudeCodeError>` above.
+                let result = command::interpret(&output)?;
+                Ok(AgentRun {
+                    session_id: result.session_id,
+                })
             }
             AgentMode::Interactive => {
                 self.run_interactive(
@@ -337,7 +345,7 @@ impl ClaudeAgent {
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
         service_name: &str,
-    ) -> Result<AgentReport, AgentError> {
+    ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, service_name).await?;
 
         let mut command = self.build_interactive_command(path, prompt, session_id);
@@ -349,15 +357,20 @@ impl ClaudeAgent {
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
 
-        drive_interactive_with_finalize(command, cancel, bundle.finalize()).await
+        // Interactive mode has no machine-readable output: the only signal is
+        // the child's exit. A clean exit is a run; anything else is a failure.
+        let exit = drive_interactive_with_finalize(command, cancel, bundle.finalize()).await?;
+        if let Some(err) = exit.into_failure() {
+            return Err(err);
+        }
+        Ok(AgentRun::empty())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExitStatus;
-    use crate::agent::testutil::{ctx, fake_binary_script};
+    use crate::agent::testutil::{ctx, ctx_capturing, fake_binary_script};
     use serde_json::json;
     use tempfile::TempDir;
     use tokio::fs;
@@ -372,69 +385,68 @@ mod tests {
         }
     }
 
+    /// Fake `claude` print binary: echoes each argv arg and its stdin to
+    /// *stderr* (so a [`CaptureSink`] can observe them), then prints a valid
+    /// terminal `result` JSON object to stdout so the Command parses an `Ok`.
+    const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
+cat 1>&2
+printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sess-x"}'"#;
+
     #[tokio::test]
     async fn print_mode_passes_through_flag_and_stdin() {
-        // Fake "claude" binary: records its argv in stdout, then cats stdin.
-        let (_guard, bin) = fake_binary_script(
-            "printf 'args:'; for a in \"$@\"; do printf ' %s' \"$a\"; done; printf '\\n'; cat",
-        );
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
         let prompt = Prompt::from("hello-claude");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        let out = report.last_output.expect("last_output");
-        assert!(out.contains("args: --print"), "got {out:?}");
-        assert!(out.contains("hello-claude"), "got {out:?}");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let run = agent.run(ctx).await.expect("run ok");
+        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        let echoed = sink.stderr().await;
+        assert!(echoed.lines().any(|l| l == "--print"), "got {echoed:?}");
+        assert!(echoed.contains("hello-claude"), "got {echoed:?}");
     }
 
     #[tokio::test]
-    async fn print_mode_emits_bypass_permissions_flag() {
-        let (_guard, bin) = fake_binary_script("for a in \"$@\"; do printf ' %s' \"$a\"; done");
+    async fn print_mode_emits_output_format_json_and_bypass_permissions() {
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
         let prompt = Prompt::from("x");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        let out = report.last_output.expect("last_output");
-        assert!(
-            out.contains("--permission-mode bypassPermissions"),
-            "print mode must emit --permission-mode bypassPermissions, got {out:?}",
-        );
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        let echoed = sink.stderr().await;
+        let args: Vec<&str> = echoed.lines().collect();
+        assert!(args.contains(&"--output-format"), "got {args:?}");
+        assert!(args.contains(&"json"), "got {args:?}");
+        assert!(args.contains(&"--permission-mode"), "got {args:?}");
+        assert!(args.contains(&"bypassPermissions"), "got {args:?}");
     }
 
     #[tokio::test]
     async fn print_mode_env_is_forwarded_to_child() {
-        let (_guard, bin) = fake_binary_script("printf '%s' \"$ITER_TEST_ENV_VAR\"");
+        let script = "printf 'ENV=%s\\n' \"$ITER_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"s\"}'";
+        let (_guard, bin) = fake_binary_script(script);
         let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("ITER_TEST_ENV_VAR".into(), "env-value".into())];
         let agent = ClaudeAgent::new(s);
         let prompt = Prompt::from("x");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.last_output.expect("last_output"), "env-value",);
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert!(sink.stderr().await.contains("ENV=env-value"));
     }
 
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded_after_print_flag() {
-        let (_guard, bin) = fake_binary_script("for a in \"$@\"; do printf ' %s' \"$a\"; done");
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
         s.args = vec!["--model".into(), "opus".into()];
         let agent = ClaudeAgent::new(s);
         let prompt = Prompt::from("x");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        let out = report.last_output.expect("last_output");
-        assert!(out.contains("--print"), "got {out:?}");
-        assert!(out.contains("--model"), "got {out:?}");
-        assert!(out.contains("opus"), "got {out:?}");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        let echoed = sink.stderr().await;
+        let args: Vec<&str> = echoed.lines().collect();
+        assert!(args.contains(&"--print"), "got {args:?}");
+        assert!(args.contains(&"--model"), "got {args:?}");
+        assert!(args.contains(&"opus"), "got {args:?}");
     }
 
     /// Fake `claude` binary for interactive mode.
@@ -474,19 +486,10 @@ exit 0
         let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
 
         let prompt = Prompt::from("go");
-        let report = agent
-            .run(ctx(tmp.path(), &prompt))
-            .await
-            .expect("interactive run ok");
-
-        // Interactive mode no longer captures last_output or turn_count
-        // from the hook — those are not the hook's responsibility.
-        assert!(
-            report.exit_status == ExitStatus::Success
-                || matches!(report.exit_status, ExitStatus::Signal(_)),
-            "expected success or signal (from SIGKILL), got {:?}",
-            report.exit_status,
-        );
+        // The fake either exits 0 (`Ok`) or is SIGKILLed by the hook
+        // (`Err(TerminatedBySignal)`); the run result is racy and not what
+        // this test asserts. What matters is that the bundle was finalized.
+        let _ignored = agent.run(ctx(tmp.path(), &prompt)).await;
 
         let restored: serde_json::Value =
             serde_json::from_slice(&fs::read(&settings_path).await.expect("read")).expect("json");
@@ -535,11 +538,13 @@ exit 0
         let prompt = Prompt::from("x");
         let result = agent.run(ctx(tmp.path(), &prompt)).await;
 
-        // The child failing is surfaced as Failure(7), not an error,
-        // because from iter's perspective a nonzero exit is a valid
-        // report outcome. But the hook bundle MUST still be cleaned up.
-        let report = result.expect("run returns Ok even on nonzero exit");
-        assert_eq!(report.exit_status, ExitStatus::Failure(7));
+        // A non-zero exit is now an `Err(Failed { code: Some(7) })` — the
+        // agent ran no clean turn. The hook bundle MUST still be cleaned up.
+        let err = result.expect_err("nonzero exit is an error");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(7), .. }),
+            "got {err:?}",
+        );
         assert!(
             !tmp.path().join(".claude/.iter-bundle").exists(),
             ".iter-bundle must be cleaned up even when child fails",
@@ -550,53 +555,49 @@ exit 0
     // session_id_file: continuous-context persistence across iterations.
     // -----------------------------------------------------------------
 
-    /// Fake "claude" binary that echoes its argv (one arg per line) so
-    /// tests can grep for `--session-id` and the uuid that follows.
-    const FAKE_ARGV_SCRIPT: &str = r#"for a in "$@"; do printf '%s\n' "$a"; done"#;
-
     #[tokio::test]
     async fn print_mode_without_session_id_file_emits_no_session_flag() {
-        let (_guard, bin) = fake_binary_script(FAKE_ARGV_SCRIPT);
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
         let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
         let prompt = Prompt::from("x");
-        let report = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
-        let out = report.last_output.expect("last_output");
+        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        agent.run(ctx).await.expect("run ok");
         assert!(
-            !out.contains("--session-id"),
-            "unset session_id_file must not emit --session-id, got {out:?}",
+            !sink.stderr().await.lines().any(|l| l == "--session-id"),
+            "unset session_id_file must not emit --session-id",
         );
+    }
+
+    /// Extract the uuid emitted after `--session-id` in the captured argv.
+    fn session_id_from_argv(echoed: &str) -> Option<String> {
+        let mut lines = echoed.lines();
+        while let Some(line) = lines.next() {
+            if line == "--session-id" {
+                return lines.next().map(str::to_string);
+            }
+        }
+        None
     }
 
     #[tokio::test]
     async fn print_mode_generates_and_writes_session_id_on_first_run() {
-        let (_guard, bin) = fake_binary_script(FAKE_ARGV_SCRIPT);
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
         let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
         s.session_id_file = Some(PathBuf::from(".iter/session-id"));
         let agent = ClaudeAgent::new(s);
 
         let prompt = Prompt::from("x");
-        let report = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
-        let out = report.last_output.expect("last_output");
+        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        agent.run(ctx).await.expect("run ok");
 
-        // Extract the uuid that followed `--session-id` in argv.
-        let mut lines = out.lines();
-        let mut emitted_uuid: Option<String> = None;
-        while let Some(line) = lines.next() {
-            if line == "--session-id" {
-                emitted_uuid = lines.next().map(str::to_string);
-                break;
-            }
-        }
-        let emitted_uuid = emitted_uuid.expect("--session-id <uuid> must appear in argv");
-        // A v4 UUID parses via the uuid crate.
+        let emitted_uuid =
+            session_id_from_argv(&sink.stderr().await).expect("--session-id <uuid> in argv");
         let parsed =
             uuid::Uuid::parse_str(&emitted_uuid).expect("emitted session id must parse as uuid");
         assert_eq!(parsed.get_version_num(), 4, "must be a v4 uuid");
 
-        // File must exist under the workspace (not process cwd) and hold
-        // the same uuid.
         let file = tmp.path().join(".iter").join("session-id");
         let persisted = fs::read_to_string(&file).await.expect("read session id");
         assert_eq!(persisted.trim(), emitted_uuid);
@@ -604,9 +605,7 @@ exit 0
 
     #[tokio::test]
     async fn print_mode_reuses_existing_session_id_file() {
-        let (_guard, bin) = fake_binary_script(FAKE_ARGV_SCRIPT);
         let tmp = TempDir::new().expect("tmp");
-        // Pre-seed a fixed uuid so we can assert exact reuse.
         let fixed = "11111111-2222-4333-8444-555555555555";
         fs::create_dir_all(tmp.path().join(".iter"))
             .await
@@ -615,23 +614,20 @@ exit 0
             .await
             .expect("seed session id");
 
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = settings("placeholder", AgentMode::Print);
         s.session_id_file = Some(PathBuf::from(".iter/session-id"));
-        let agent = ClaudeAgent::new(s);
 
-        // Run twice; both runs must see the same uuid and the file must
-        // be unchanged.
         let prompt = Prompt::from("x");
         for _ in 0..2 {
-            let report = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
-            let out = report.last_output.expect("last_output");
-            assert!(
-                out.contains("--session-id"),
-                "must emit --session-id, got {out:?}",
-            );
-            assert!(
-                out.contains(fixed),
-                "must reuse seeded uuid {fixed}, got {out:?}",
+            let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
+            s.command = bin.to_string_lossy().into_owned();
+            let agent = ClaudeAgent::new(s.clone());
+            let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+            agent.run(ctx).await.expect("run ok");
+            assert_eq!(
+                session_id_from_argv(&sink.stderr().await).as_deref(),
+                Some(fixed),
+                "must reuse seeded uuid",
             );
         }
         let persisted = fs::read_to_string(tmp.path().join(".iter/session-id"))

@@ -34,16 +34,16 @@ runner's iteration state. Grammar:
 guard      ::= term ( ( "&&" | "||" ) term )*
 term       ::= "metadata"  "." <key>   ( "==" | "!=" ) <string>
              | "iteration" "." <field> ( "%" <int> )? <cmp> <int>
-             | "iteration" "." "previous_outcome"     ( "==" | "!=" ) <outcome>
+             | "iteration" "." "previous_result"     ( "==" | "!=" ) <result>
              | "(" guard ")"
 cmp        ::= "==" | "!=" | "<" | "<=" | ">" | ">="
-outcome    ::= "\"none\"" | "\"success\"" | "\"errored\""
+result    ::= "\"none\"" | "\"success\"" | "\"errored\""
 ```
 
 `&&` and `||` associate left-to-right; use parentheses to group.
 Metadata predicates only support equality/inequality against a string
 literal. Iteration predicates compare numeric fields against an integer
-(optionally reduced `% N` first), with `previous_outcome` as a special
+(optionally reduced `% N` first), with `previous_result` as a special
 string-valued field that only takes `==` / `!=`.
 
 ### `iteration.<field>` reference
@@ -54,9 +54,9 @@ string-valued field that only takes `==` / `!=`.
 | `previous_exit_code` | integer or absent | Process exit code from the prior turn. Any comparison evaluates to `false` on the first iteration since there is no prior turn to compare against. |
 | `consecutive_failures` | integer | Runner stage failure streak. Increments when a runner stage fails: workspace setup error, prompt render error, agent process spawn / I/O error, iteration timeout, or workspace teardown error. Resets to 0 on the next successful iteration. Agent-internal behaviour (e.g. the agent producing unhelpful output) does not affect this counter. |
 | `consecutive_successes` | integer | Runner stage success streak. Increments when the full iteration pipeline (setup → agent → teardown) completes without a stage error. Resets to 0 on the next stage failure. |
-| `previous_outcome` | `"none" \| "success" \| "errored"` | Runner-level result of the prior turn. `"success"` when the full iteration pipeline completed without a stage error. `"errored"` when a runner stage failed (same conditions as `consecutive_failures`). `"none"` only on the first iteration. |
+| `previous_result` | `"none" \| "success" \| "errored"` | Runner-level result of the prior turn. `"success"` when the full iteration pipeline completed without a stage error. `"errored"` when a runner stage failed (same conditions as `consecutive_failures`). `"none"` only on the first iteration. |
 
-`% 0` is rejected at parse time. `previous_outcome` is the only field
+`% 0` is rejected at parse time. `previous_result` is the only field
 that accepts a string RHS, and it does not support `%`.
 
 ### Examples

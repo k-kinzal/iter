@@ -23,7 +23,7 @@
 //! * [`project_hooks_dir`] — resolves the per-project, per-service hooks
 //!   sidecar directory under `~/.iter/projects/`.
 //! * [`map_hook_io`] — funnel [`std::io::Error`] into
-//!   [`AgentError::HookSetup`] with a short static label.
+//!   [`AgentError::Launch`] with a short static label.
 //! * [`make_executable`] — `chmod +x` for freshly written hook scripts.
 //! * [`remove_if_exists`] — remove a file and ignore "not found".
 
@@ -53,17 +53,17 @@ use super::AgentError;
 ///
 /// # Errors
 ///
-/// Returns [`AgentError::HookSetup`] if the home directory cannot be
+/// Returns [`AgentError::Launch`] if the home directory cannot be
 /// resolved or the workspace path cannot be canonicalized.
 pub(crate) fn project_hooks_dir(
     workspace_path: &Path,
     service: &str,
 ) -> Result<PathBuf, AgentError> {
     let home = home_dir().ok_or_else(|| {
-        AgentError::HookSetup("could not resolve home directory".into())
+        AgentError::Launch("could not resolve home directory".into())
     })?;
     let canonical = workspace_path.canonicalize().map_err(|e| {
-        AgentError::HookSetup(format!(
+        AgentError::Launch(format!(
             "canonicalize workspace path {}: {e}",
             workspace_path.display()
         ))
@@ -208,10 +208,10 @@ impl BackupSlot {
     }
 }
 
-/// Wrap a [`std::io::Error`] into [`AgentError::HookSetup`] with a short
+/// Wrap a [`std::io::Error`] into [`AgentError::Launch`] with a short
 /// static label describing the operation that failed.
 pub(crate) fn map_hook_io(op: &'static str) -> impl FnOnce(std::io::Error) -> AgentError {
-    move |e| AgentError::HookSetup(format!("{op}: {e}"))
+    move |e| AgentError::Launch(format!("{op}: {e}"))
 }
 
 /// `chmod +x` equivalent. Unix-only because the four hook protocols
@@ -233,7 +233,7 @@ pub(crate) async fn make_executable(path: &Path) -> Result<(), AgentError> {
 
 #[cfg(not(unix))]
 pub(crate) async fn make_executable(_path: &Path) -> Result<(), AgentError> {
-    Err(AgentError::HookSetup(
+    Err(AgentError::Launch(
         "hook-driven interactive mode is only supported on unix-like systems".into(),
     ))
 }
@@ -248,7 +248,7 @@ pub(crate) fn shell_single_quote(s: &str) -> String {
 }
 
 /// Remove a file, treating "not found" as success. Any other I/O error
-/// is wrapped into [`AgentError::HookSetup`] with `op` as the label.
+/// is wrapped into [`AgentError::Launch`] with `op` as the label.
 pub(crate) async fn remove_if_exists(path: &Path, op: &'static str) -> Result<(), AgentError> {
     match fs::remove_file(path).await {
         Ok(()) => Ok(()),
@@ -282,7 +282,7 @@ pub(crate) async fn extract_user_hooks(
     };
 
     let config: serde_json::Value = serde_json::from_slice(&config_bytes)
-        .map_err(|e| AgentError::HookSetup(format!("parse agent config: {e}")))?;
+        .map_err(|e| AgentError::Launch(format!("parse agent config: {e}")))?;
 
     let commands = collect_hook_commands(&config, hook_event);
     if commands.is_empty() {

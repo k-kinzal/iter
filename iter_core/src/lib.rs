@@ -37,7 +37,7 @@ pub mod telemetry;
 pub mod template;
 pub mod workspace;
 
-pub use agent::{Agent, AgentReport, AgentRunContext, ExitStatus};
+pub use agent::{Agent, AgentRun, AgentRunContext};
 pub use config::{Config, ConfigError, LogLevel};
 pub use error::{Error, Result};
 pub use prompt::{

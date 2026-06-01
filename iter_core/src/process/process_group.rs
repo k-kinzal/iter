@@ -122,7 +122,7 @@ impl Drop for ProcessGroup {
         #[cfg(unix)]
         {
             // Best-effort SIGKILL. We cannot await a grace period from
-            // `Drop`, and a leaked tree is a worse outcome than a
+            // `Drop`, and a leaked tree is a worse result than a
             // forced kill, so jump straight to SIGKILL.
             send_killpg(pgid, libc::SIGKILL);
             debug!(

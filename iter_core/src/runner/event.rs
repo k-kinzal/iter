@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::agent::AgentReport;
+use crate::agent::AgentRun;
 use crate::prompt::Prompt;
 use crate::runner::config::RunnerTerminationReason;
 use crate::signal::{Signal, SignalId};
@@ -57,8 +57,9 @@ pub enum Event {
         signal: Signal,
         /// Workspace path supplied to the agent.
         path: PathBuf,
-        /// Result of the agent run, with the error stringified.
-        report: Result<AgentReport, String>,
+        /// Result of the agent run, with the error stringified. `Ok` means
+        /// the agent ran a turn; `Err(message)` is the projected failure.
+        result: Result<AgentRun, String>,
     },
     /// The runner is about to tear down the workspace.
     WorkspaceTeardownStarting {

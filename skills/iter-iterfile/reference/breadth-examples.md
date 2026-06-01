@@ -201,7 +201,7 @@ How to proceed:
 - Make it pass.
 - Commit with a descriptive message.
 
-Iteration {{iteration.count}} / previous_outcome={{iteration.previous_outcome}}
+Iteration {{iteration.count}} / previous_result={{iteration.previous_result}}
 """
 ```
 

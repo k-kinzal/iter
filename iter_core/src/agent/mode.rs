@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 /// * [`AgentMode::Print`] — runs the CLI non-interactively in its
 ///   one-shot mode (`claude --print`, `codex exec`, `gemini -p`,
 ///   `gh copilot suggest`, etc.). The prompt is delivered inline or on
-///   stdin and stdout is captured into
-///   [`AgentReport::last_output`](crate::AgentReport). No tty
-///   required; works in CI and detached instances.
+///   stdin and the CLI's machine-readable output is parsed by the per-CLI
+///   Command into an [`AgentRun`](crate::AgentRun). No tty required; works
+///   in CI and detached instances.
 ///
 /// There is no `Default` impl. Print vs Interactive is a project-shaped
 /// decision: iter has no honest default because some workflows need the

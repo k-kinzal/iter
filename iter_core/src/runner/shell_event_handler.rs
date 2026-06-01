@@ -238,7 +238,7 @@ mod tests {
         let signal = Signal::new(Metadata::new());
 
         let handler = ShellEventHandler::new(
-            "echo n={{iteration.count}} prev={{iteration.previous_outcome}} > iter.txt",
+            "echo n={{iteration.count}} prev={{iteration.previous_result}} > iter.txt",
         )
         .expect("compile");
         let iteration = IterationContext::for_count(7);
@@ -260,7 +260,7 @@ mod tests {
         );
         assert!(
             contents.contains("prev=none"),
-            "iteration.previous_outcome missing: {contents:?}"
+            "iteration.previous_result missing: {contents:?}"
         );
     }
 

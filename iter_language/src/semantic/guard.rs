@@ -5,9 +5,9 @@
 //! * `iteration.<field>` numeric comparisons accept only the four numeric
 //!   fields (`count`, `previous_exit_code`, `consecutive_failures`,
 //!   `consecutive_successes`). Any other field — including
-//!   `previous_outcome` — is rejected with a tailored hint.
+//!   `previous_result` — is rejected with a tailored hint.
 //! * `iteration.<field> % N <op> rhs` is rejected when `N == 0`.
-//! * `iteration.previous_outcome ==/!= "..."` accepts only the literal
+//! * `iteration.previous_result ==/!= "..."` accepts only the literal
 //!   values `"none" | "success" | "errored"`.
 //!
 //! Errors collected here surface through the analyzer's diagnostic vector,
@@ -20,7 +20,7 @@ use crate::ast::{CmpOp, IterationField, PromptGuard};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawCmpOp, RawGuard};
 
-const ITERATION_NUMERIC_FIELDS_HINT: &str = "valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_outcome ==/!= \"none|success|errored\"` for the outcome string.";
+const ITERATION_NUMERIC_FIELDS_HINT: &str = "valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_result ==/!= \"none|success|errored\"` for the result string.";
 
 const ITERATION_RESULT_VALUES: &[&str] = &["none", "success", "errored"];
 
@@ -42,14 +42,14 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
                 "previous_exit_code" => IterationField::PreviousExitCode,
                 "consecutive_failures" => IterationField::ConsecutiveFailures,
                 "consecutive_successes" => IterationField::ConsecutiveSuccesses,
-                "previous_outcome" => {
+                "previous_result" => {
                     errors.push(
                         Diagnostic::error(
                             field_span,
-                            "`iteration.previous_outcome` is a string, not a number — numeric comparison is not supported",
+                            "`iteration.previous_result` is a string, not a number — numeric comparison is not supported",
                         )
                         .with_hint(
-                            "use `iteration.previous_outcome == \"success\"` (or `!= \"...\"`); only `==`/`!=` against `\"none\" | \"success\" | \"errored\"` is accepted",
+                            "use `iteration.previous_result == \"success\"` (or `!= \"...\"`); only `==`/`!=` against `\"none\" | \"success\" | \"errored\"` is accepted",
                         ),
                     );
                     // Fall back to a numeric field so the AST shape is
@@ -129,12 +129,12 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
 
 /// Validate the field/value pair behind `iteration.<field> ==/!= "..."`.
 ///
-/// The field check fires whenever the LHS isn't `previous_outcome`. The
-/// value check is *gated* on the field being `previous_outcome`: if the
-/// field is wrong, the literal "is `ten` a valid outcome?" question is
+/// The field check fires whenever the LHS isn't `previous_result`. The
+/// value check is *gated* on the field being `previous_result`: if the
+/// field is wrong, the literal "is `ten` a valid result?" question is
 /// moot — the user's real mistake is the field name, and surfacing a
-/// second "unknown outcome" diagnostic in addition is confusing noise.
-/// We only check the value once we know the LHS is the outcome field.
+/// second "unknown result" diagnostic in addition is confusing noise.
+/// We only check the value once we know the LHS is the result field.
 fn check_result_string_rhs(
     field: &str,
     field_span: crate::ast::Span,
@@ -142,16 +142,16 @@ fn check_result_string_rhs(
     value_span: crate::ast::Span,
     errors: &mut Vec<Diagnostic>,
 ) {
-    if field != "previous_outcome" {
+    if field != "previous_result" {
         errors.push(
             Diagnostic::error(
                 field_span,
                 format!(
-                    "string right-hand side is only valid for `iteration.previous_outcome`, but the left-hand side is `iteration.{field}`"
+                    "string right-hand side is only valid for `iteration.previous_result`, but the left-hand side is `iteration.{field}`"
                 ),
             )
             .with_hint(
-                "numeric `iteration.*` fields require an integer RHS; only `previous_outcome` accepts a string",
+                "numeric `iteration.*` fields require an integer RHS; only `previous_result` accepts a string",
             ),
         );
         return;
@@ -161,11 +161,11 @@ fn check_result_string_rhs(
             Diagnostic::error(
                 value_span,
                 format!(
-                    "unknown iteration outcome `{value}` — accepted values are `none`, `success`, `errored`"
+                    "unknown iteration result `{value}` — accepted values are `none`, `success`, `errored`"
                 ),
             )
             .with_hint(
-                "`previous_outcome` is `\"none\"` on the first iteration, `\"success\"` after a clean turn, and `\"errored\"` after a stage error or non-zero agent exit",
+                "`previous_result` is `\"none\"` on the first iteration, `\"success\"` after a clean turn, and `\"errored\"` after a stage error or non-zero agent exit",
             ),
         );
     }

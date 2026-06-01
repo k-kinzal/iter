@@ -6,7 +6,7 @@
 //! the result of the previous turn, and the current win/lose streak.
 //! [`IterationContext`] is the immutable view rendered against
 //! [`Template`](crate::template::Template) — it's what the user actually
-//! sees as `{{iteration.count}}`, `{{iteration.previous_outcome}}`, and so
+//! sees as `{{iteration.count}}`, `{{iteration.previous_result}}`, and so
 //! on.
 //!
 //! The `iteration.*` root deliberately exposes fixed fields only — there is
@@ -176,7 +176,7 @@ impl IterationState {
 ///
 /// * `count` — 1-indexed iteration number.
 /// * `started_at` / `runner_started_at` — RFC 3339 timestamps.
-/// * `previous_outcome` — `"none" | "success" | "errored"` (serialized name).
+/// * `previous_result` — `"none" | "success" | "errored"`.
 /// * `previous_exit_code` — process exit code or `null`. Templates that
 ///   reference it without a previous turn surface a strict-mode error.
 /// * `previous_signal_id` — UUID v7 of the previous signal or `null`.
@@ -195,10 +195,14 @@ pub struct IterationContext {
     #[serde(serialize_with = "serialize_rfc3339")]
     pub runner_started_at: DateTime<Utc>,
     /// Result category of the previous iteration; `None` on the first.
-    #[serde(rename = "previous_outcome")]
+    /// Rendered in templates/guards as `iteration.previous_result`.
     pub previous_result: PreviousResult,
-    /// Process exit code captured on the previous iteration, when one
-    /// was available.
+    /// Process exit code recorded for the previous iteration. Under the
+    /// `Ok = ran a turn` model this is the normalized success value `Some(0)`
+    /// after a clean turn; on a failed turn it carries the code the agent
+    /// `Err` reported (`AgentError::Failed { code }`), or `None` for failures
+    /// without a process exit code (signal termination, launch failure,
+    /// cancellation, timeout, token limit).
     pub previous_exit_code: Option<i32>,
     /// Signal identifier of the previous iteration, when one was
     /// available.
@@ -336,7 +340,7 @@ mod tests {
     fn previous_result_serializes_as_snake_case() {
         let snap = IterationContext::for_count(1);
         let json = serde_json::to_value(&snap).expect("serialize");
-        assert_eq!(json["previous_outcome"], "none");
+        assert_eq!(json["previous_result"], "none");
     }
 
     #[test]

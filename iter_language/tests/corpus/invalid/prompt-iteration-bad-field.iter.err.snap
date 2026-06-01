@@ -9,7 +9,7 @@ Error: unknown iteration field `bogus`
     │                       ──┬──  
     │                         ╰──── unknown iteration field `bogus`
     │ 
-    │ Help: valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_outcome ==/!= "none|success|errored"` for the outcome string.
+    │ Help: valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_result ==/!= "none|success|errored"` for the result string.
 ────╯
 
 Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding

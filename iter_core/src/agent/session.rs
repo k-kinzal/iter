@@ -57,7 +57,7 @@ impl SessionIdFile {
                 // Empty file — fall through and regenerate.
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(AgentError::Io(err)),
+            Err(err) => return Err(err.into()),
         }
 
         let new_id = uuid::Uuid::new_v4().to_string();

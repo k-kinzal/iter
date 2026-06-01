@@ -44,15 +44,9 @@ Root {
                         "output/report.json": "{\"status\": \"ok\"}",
                         "output/result.txt": "refactored content",
                     },
-                    last_output: Some(
-                        "Completed refactoring.",
-                    ),
-                    turn_count: Some(
-                        5,
-                    ),
                 },
             },
-            span: 48..359,
+            span: 48..300,
         },
     ],
     prompts: [],
@@ -75,7 +69,7 @@ Root {
                 ),
                 events: [],
             },
-            span: 361..417,
+            span: 302..358,
         },
     ],
 }

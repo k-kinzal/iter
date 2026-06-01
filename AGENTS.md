@@ -1,6 +1,6 @@
 # AGENTS
 
-NOTE: DO NOT ASK USER
+NOTE: DO NOT ASK USER ANYTHING OUTSIDE OF PLAN MODE.
 
 ## Motivation
 
@@ -31,11 +31,7 @@ The parable of the Circle of Sin, from *Haibane Renmei*:
 
 The circle will not yield from within. An agent's own biases — the context it accumulates, the factors it weights — bend every next step back into the same radius. Widening requires something from outside. iter does not resolve this philosophically; it sets a stepping stone where that can happen.
 
-## Architecture
-
-iter is a CLI tool. The engine lives in Core; the surface syntax lives in a separate Language.
-
-    CLI ──── Core ──── Language
+## Core Modeling
 
 Core is built from three concepts:
 
@@ -46,21 +42,6 @@ Core is built from three concepts:
 - **Trigger** — a source of Signals. A Trigger watches something outside the Runner — a schedule, a file change, a webhook — and turns it into Signals on a Queue.
 
 An Runner alone holds exploration inside its own radius. When that radius is too narrow, Triggers bring in what the Runner cannot reach from within, widening the circle through Signals on its Queue.
-
-## Project Tradeoff Sliders
-
-- Scope     ●————————→ HIGH — Full intended scope is delivered; corners are not cut.
-- Quality   ●————————→ HIGH — Correctness, test coverage, and strict static analysis come first.
-- Time      ←————————● LOW — No deadline pressure.
-- Cost      ←————————● LOW — Resource constraints are not a concern.
-
-Quality takes precedence when in doubt. Less shipped with confidence beats more shipped with uncertainty.
-
-It is a given that the code works. Beyond that, it must be designed with separation of concerns and the single responsibility principle, as well as appropriate module management and layering. Please note that this is not about simply breaking things into small pieces. Aim for a level of granularity based on concepts and behaviors.
-
-## Protected Files
-
-`.sloc-guard.toml` is a protected configuration file. Do not modify it.
 
 ## Related Projects
 

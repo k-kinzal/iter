@@ -108,9 +108,9 @@ handoff instruction adds it back via a different channel.
 
 ### Iteration state in the prompt body
 
-> `Iteration {{iteration.count}} / previous_outcome={{iteration.previous_outcome}}`
+> `Iteration {{iteration.count}} / previous_result={{iteration.previous_result}}`
 
-Embedding iteration count or outcome in the unconditional prompt gives the
+Embedding iteration count or result in the unconditional prompt gives the
 agent a sense of sequential history. Use `iteration.*` in `when` guards
 for conditional behaviour (direction changes, failure recovery) rather than
 in the prompt body.
@@ -159,7 +159,7 @@ The current codebase has problems. Identify the issues and fix them.
 ```
 
 Note: `consecutive_failures` and `consecutive_successes` track
-**runner stage** outcomes (workspace setup errors, process spawn
+**runner stage** results (workspace setup errors, process spawn
 failures, iteration timeouts), not agent-level results. They are
 useful in `on runner_error` shell hooks for operational alerting, but
 not in prompts — the agent cannot fix infrastructure failures by

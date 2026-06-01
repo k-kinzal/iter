@@ -205,10 +205,10 @@ mod tests {
     }
 
     #[test]
-    fn renders_iteration_previous_outcome() {
+    fn renders_iteration_previous_result() {
         let signal = signal_with(Metadata::new());
         let iter = IterationContext::for_count(1);
-        let template = PromptTemplate::new("prev {{iteration.previous_outcome}}").expect("compile");
+        let template = PromptTemplate::new("prev {{iteration.previous_result}}").expect("compile");
         assert_eq!(
             template.render(&signal, &iter).unwrap().as_str(),
             "prev none"

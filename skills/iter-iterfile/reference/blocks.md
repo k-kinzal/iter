@@ -163,15 +163,15 @@ Guard grammar:
 guard      ::= term ( ( "&&" | "||" ) term )*
 term       ::= "metadata"  "." <key>   ( "==" | "!=" ) <string>
              | "iteration" "." <field> ( "%" <int> )? <cmp> <int>
-             | "iteration" "." "previous_outcome" ( "==" | "!=" ) <outcome>
+             | "iteration" "." "previous_result" ( "==" | "!=" ) <result>
              | "(" guard ")"
 cmp        ::= "==" | "!=" | "<" | "<=" | ">" | ">="
-outcome    ::= "\"none\"" | "\"success\"" | "\"errored\""
+result    ::= "\"none\"" | "\"success\"" | "\"errored\""
 ```
 
 `iteration.*` fields: `count` (1-indexed), `previous_exit_code`,
-`previous_outcome` (`"none" | "success" | "errored"`),
-`consecutive_failures`, `consecutive_successes`. The outcome and streak
+`previous_result` (`"none" | "success" | "errored"`),
+`consecutive_failures`, `consecutive_successes`. The result and streak
 fields track **runner stage** results (workspace setup, prompt render,
 agent process spawn/I/O, iteration timeout, workspace teardown) — they
 do not reflect agent-internal behaviour.

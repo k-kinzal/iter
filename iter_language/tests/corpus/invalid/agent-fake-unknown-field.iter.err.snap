@@ -9,7 +9,7 @@ Error: unknown field `bogus` in agent fake
    │   ──┬──  
    │     ╰──── unknown field `bogus` in agent fake
    │ 
-   │ Help: valid fields: exit_code, delay_secs, stdout, stderr, files, last_output, turn_count
+   │ Help: valid fields: exit_code, delay_secs, stdout, stderr, files
 ───╯
 
 Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding

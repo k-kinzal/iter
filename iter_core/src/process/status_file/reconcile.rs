@@ -53,11 +53,11 @@ pub(super) fn reconcile_inner(
 
         // ── Initializing ────────────────────────────────────────────────
         //
-        // All three lifecycle outcomes (`NotFound`, `Corrupt`, `Found`)
+        // All three lifecycle results (`NotFound`, `Corrupt`, `Found`)
         // converge on the same decision: stay `Initializing` while in
         // grace, flip to `Failed` once grace elapses. We deliberately do
         // not call `process_is_alive_*` even on `Found` — its result does
-        // not change the outcome, and probing a possibly-dead pid is
+        // not change the result, and probing a possibly-dead pid is
         // wasted syscall traffic. Only environmental errors fall through
         // to a tracing warning with no on-disk change.
         Ok(ProcessStatus::Initializing) => match pid_file::read(dirfd) {

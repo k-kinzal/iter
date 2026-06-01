@@ -11,7 +11,7 @@ use iter_core::agent::{
     OpenCodeAgent, OpenCodeSettings,
 };
 use iter_core::workspace::sandbox::agent_requirements;
-use iter_core::{Agent, AgentReport, AgentRunContext, SandboxRequirements};
+use iter_core::{Agent, AgentRun, AgentRunContext, SandboxRequirements};
 use iter_language::{AgentDecl, AgentMode as AstAgentMode};
 use thiserror::Error;
 
@@ -75,9 +75,7 @@ pub enum AnyAgent {
 }
 
 impl Agent for AnyAgent {
-    type Error = AgentError;
-
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         match self {
             Self::Claude(a) => a.run(ctx).await,
             Self::Codex(a) => a.run(ctx).await,
@@ -283,16 +281,12 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             stdout,
             stderr,
             files,
-            last_output,
-            turn_count,
         } => AnyAgent::Fake(FakeAgent::new(FakeSettings {
             exit_code: *exit_code,
             delay_secs: delay_secs.unwrap_or(0),
             stdout: stdout.clone(),
             stderr: stderr.clone(),
             files: files.clone(),
-            last_output: last_output.clone(),
-            turn_count: *turn_count,
         })),
         AgentDecl::Generic { command, env } => {
             if command.is_empty() {
@@ -482,8 +476,6 @@ mod tests {
                     stdout: Vec::new(),
                     stderr: Vec::new(),
                     files: BTreeMap::new(),
-                    last_output: None,
-                    turn_count: None,
                 },
                 |a| matches!(a, AnyAgent::Fake(_)),
             ),

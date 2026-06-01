@@ -19,7 +19,7 @@ runner {
     continue_on_error = false
 
     prompt {
-        iteration.previous_outcome == "errored" => recovery
+        iteration.previous_result == "errored" => recovery
         iteration.count % 25 == 0               => "review changes"
         _                                       => "refactor the module"
     }

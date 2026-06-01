@@ -123,7 +123,7 @@ prompt when metadata.env == "prod" && metadata.task != "skip" "Run production-sa
 ```
 
 Available `iteration.*` fields: `count` (1-indexed), `previous_exit_code`,
-`previous_outcome` (`"none" | "success" | "errored"`),
+`previous_result` (`"none" | "success" | "errored"`),
 `consecutive_failures`, `consecutive_successes`. Operators: `==`, `!=`,
 `<`, `<=`, `>`, `>=`, optional `% N`. `&&` and `||` group with
 parentheses.

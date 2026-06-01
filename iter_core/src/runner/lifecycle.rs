@@ -36,7 +36,6 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::AgentResultKind;
 use crate::signal::{Metadata, SignalId};
 
 /// A single event in the Runner's system-facing lifecycle stream.
@@ -97,8 +96,12 @@ pub enum RunnerLifecycle {
     AgentFinished {
         /// Identifier of the signal currently being handled.
         signal_id: SignalId,
-        /// Coarse-grained result category.
-        result_kind: AgentResultKind,
+        /// Short result label derived from the agent `Result`: `"success"`
+        /// on a clean turn, otherwise the failure class
+        /// ([`AgentError::label`](crate::agent::AgentError::label) — e.g.
+        /// `"failure"`, `"token_limit"`, `"cancelled"`,
+        /// `"terminated_by_signal"`).
+        result: String,
         /// Process exit code, when one is available.
         exit: Option<i32>,
     },
@@ -207,7 +210,6 @@ impl RedactedMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentResultKind;
     use crate::signal::metadata::{MetadataKey, MetadataValue};
 
     fn signal_id() -> SignalId {
@@ -242,7 +244,7 @@ mod tests {
             RunnerLifecycle::AgentStarting { signal_id: id },
             RunnerLifecycle::AgentFinished {
                 signal_id: id,
-                result_kind: AgentResultKind::Success,
+                result: "success".to_owned(),
                 exit: Some(0),
             },
             RunnerLifecycle::WorkspaceTearDown { signal_id: id },
@@ -336,11 +338,11 @@ mod tests {
         drop(Event::AgentFinished {
             signal: crate::signal::Signal::synthesized(),
             path: PathBuf::from("/tmp"),
-            report: Ok(crate::agent::AgentReport::success()),
+            result: Ok(crate::agent::AgentRun::empty()),
         });
         drop(RunnerLifecycle::AgentFinished {
             signal_id: id,
-            result_kind: AgentResultKind::Success,
+            result: "success".to_owned(),
             exit: Some(0),
         });
     }

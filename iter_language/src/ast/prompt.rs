@@ -73,7 +73,7 @@ pub enum PromptGuard {
     /// `iteration.<field> [% N] <op> <integer>` numeric comparison. The
     /// optional modulus reduces the LHS modulo `N` before applying the
     /// operator. Only the numeric fields of the iteration root reach
-    /// this variant — `previous_outcome` is rejected at semantic time
+    /// this variant — `previous_result` is rejected at semantic time
     /// and surfaces as [`Self::IterationResultEq`] /
     /// [`Self::IterationResultNeq`] instead.
     IterationCmp {
@@ -88,13 +88,13 @@ pub enum PromptGuard {
         /// Right-hand-side integer literal.
         rhs: i64,
     },
-    /// `iteration.previous_outcome == "<value>"`. The semantic layer
+    /// `iteration.previous_result == "<value>"`. The semantic layer
     /// permits the literal `"none" | "success" | "errored"` only.
     IterationResultEq {
         /// Literal result string compared against.
         value: String,
     },
-    /// `iteration.previous_outcome != "<value>"`.
+    /// `iteration.previous_result != "<value>"`.
     IterationResultNeq {
         /// Literal result string compared against.
         value: String,

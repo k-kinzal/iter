@@ -411,8 +411,6 @@ agent fake {
     "output/result.txt"  = "refactored content"
     "output/report.json" = """{"status": "ok", "changes": 3}"""
   }
-  last_output = "Completed refactoring with 3 changes."
-  turn_count  = 5
 }
 
 # Minimal — all defaults, behaves like noop
@@ -428,8 +426,6 @@ agent fake {}
 | `stdout` | `list(string)` | Optional | `[]` | Lines written to stdout via the StdioSink. |
 | `stderr` | `list(string)` | Optional | `[]` | Lines written to stderr via the StdioSink. |
 | `files` | `block { "path" = "content" }` | Optional | `{}` | Files to create/overwrite in the workspace. Keys are relative paths. |
-| `last_output` | `string` | Optional | — | Value for `AgentReport.last_output`. |
-| `turn_count` | `integer` | Optional | — | Value for `AgentReport.turn_count`. |
 
 ---
 

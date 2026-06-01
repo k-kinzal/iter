@@ -133,7 +133,7 @@ runner {
   behavior = wait
 }
 
-prompt when iteration.previous_outcome == "none" "first run"
+prompt when iteration.previous_result == "none" "first run"
 prompt "regular run n={{iteration.count}}"
 "#;
     let root = parse(source).expect("source parses");

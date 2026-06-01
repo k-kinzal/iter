@@ -59,7 +59,6 @@ pub use error::{
 };
 pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
-pub use crate::agent::AgentResultKind;
 pub use crate::runner::{DynRunnerObserver, RedactedMetadata, RunnerLifecycle, RunnerObserver};
 pub use log::{
     DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,

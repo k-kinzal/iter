@@ -229,7 +229,7 @@ pub enum RawGuard {
     },
     /// `iteration.<field> [% N] <op> <integer>` numeric comparison. The
     /// optional modulus is captured as part of the same predicate so the
-    /// semantic layer can validate `% 0` and `previous_outcome %` in one
+    /// semantic layer can validate `% 0` and `previous_result %` in one
     /// place.
     IterationCmp {
         /// Field name as it appeared in source (validated by the
@@ -254,15 +254,15 @@ pub enum RawGuard {
         span: Span,
     },
     /// `iteration.<field> == "<value>"`. The parser captures the LHS
-    /// field name verbatim — only `previous_outcome` is meaningful here,
+    /// field name verbatim — only `previous_result` is meaningful here,
     /// but enforcing that is a *semantic* concern so the differential
     /// pest oracle (which only sees the syntactic shape) and the
     /// hand-written parser agree on accept/reject. The semantic layer
     /// rejects any other field with a "string RHS only valid for
-    /// `previous_outcome`" diagnostic, then validates the value against
+    /// `previous_result`" diagnostic, then validates the value against
     /// the closed `"none" | "success" | "errored"` set.
     IterationResultEq {
-        /// LHS field name as written (e.g. `"previous_outcome"`,
+        /// LHS field name as written (e.g. `"previous_result"`,
         /// `"count"`).
         field: String,
         /// Span of the LHS field identifier.

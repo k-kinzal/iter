@@ -10,7 +10,7 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use crate::agent::error::AgentError;
-use crate::agent::report::{AgentReport, ExitStatus};
+use crate::agent::run::AgentRun;
 use crate::{Agent, AgentRunContext};
 
 /// Configuration for a [`FakeAgent`].
@@ -26,10 +26,6 @@ pub struct FakeSettings {
     pub stderr: Vec<String>,
     /// Files to create/overwrite in the workspace directory.
     pub files: BTreeMap<String, String>,
-    /// Value for `AgentReport::last_output`.
-    pub last_output: Option<String>,
-    /// Value for `AgentReport::turn_count`.
-    pub turn_count: Option<u32>,
 }
 
 /// Configurable fake agent for verification testing.
@@ -48,10 +44,6 @@ pub struct FakeAgent {
     pub stderr: Vec<String>,
     /// Files to create/overwrite in the workspace directory.
     pub files: BTreeMap<String, String>,
-    /// Value for `AgentReport::last_output`.
-    pub last_output: Option<String>,
-    /// Value for `AgentReport::turn_count`.
-    pub turn_count: Option<u32>,
 }
 
 impl FakeAgent {
@@ -64,16 +56,12 @@ impl FakeAgent {
             stdout: settings.stdout,
             stderr: settings.stderr,
             files: settings.files,
-            last_output: settings.last_output,
-            turn_count: settings.turn_count,
         }
     }
 }
 
 impl Agent for FakeAgent {
-    type Error = AgentError;
-
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         if ctx.cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
@@ -82,9 +70,8 @@ impl Agent for FakeAgent {
             let rel = Path::new(path);
             if rel.is_absolute() || rel.components().any(|c| c == std::path::Component::ParentDir)
             {
-                return Err(AgentError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("fake agent file path must be relative without `..`: {path}"),
+                return Err(AgentError::Launch(format!(
+                    "fake agent file path must be relative without `..`: {path}"
                 )));
             }
             let full_path = ctx.workspace_path.join(rel);
@@ -113,17 +100,14 @@ impl Agent for FakeAgent {
             }
         }
 
-        let exit_status = if self.exit_code == 0 {
-            ExitStatus::Success
+        if self.exit_code == 0 {
+            Ok(AgentRun::empty())
         } else {
-            ExitStatus::Failure(self.exit_code)
-        };
-
-        Ok(AgentReport {
-            exit_status,
-            last_output: self.last_output.clone(),
-            turn_count: self.turn_count,
-        })
+            Err(AgentError::Failed {
+                code: Some(self.exit_code),
+                message: format!("fake agent exited with code {}", self.exit_code),
+            })
+        }
     }
 }
 
@@ -142,8 +126,6 @@ mod tests {
             stdout: Vec::new(),
             stderr: Vec::new(),
             files: BTreeMap::new(),
-            last_output: None,
-            turn_count: None,
         }
     }
 
@@ -151,13 +133,11 @@ mod tests {
     async fn empty_config_behaves_like_noop() {
         let agent = FakeAgent::new(default_settings());
         let prompt = Prompt::from("ignored");
-        let report = agent
+        let run = agent
             .run(ctx(Path::new("."), &prompt))
             .await
             .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        assert!(report.last_output.is_none());
-        assert!(report.turn_count.is_none());
+        assert_eq!(run.session_id, None);
     }
 
     #[tokio::test]
@@ -192,11 +172,10 @@ mod tests {
             ..default_settings()
         });
         let prompt = Prompt::from("ignored");
-        let report = agent
+        agent
             .run(ctx(Path::new("."), &prompt))
             .await
             .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Success);
     }
 
     #[tokio::test]
@@ -206,27 +185,11 @@ mod tests {
             ..default_settings()
         });
         let prompt = Prompt::from("ignored");
-        let report = agent
+        let err = agent
             .run(ctx(Path::new("."), &prompt))
             .await
-            .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Failure(1));
-    }
-
-    #[tokio::test]
-    async fn last_output_and_turn_count_propagate() {
-        let agent = FakeAgent::new(FakeSettings {
-            last_output: Some("done".to_string()),
-            turn_count: Some(5),
-            ..default_settings()
-        });
-        let prompt = Prompt::from("ignored");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.last_output.as_deref(), Some("done"));
-        assert_eq!(report.turn_count, Some(5));
+            .expect_err("nonzero exit is an error");
+        assert!(matches!(err, AgentError::Failed { code: Some(1), .. }), "got {err:?}");
     }
 
     #[tokio::test]
@@ -266,7 +229,7 @@ mod tests {
             .run(ctx(tmp.path(), &prompt))
             .await
             .expect_err("must fail");
-        assert!(matches!(err, AgentError::Io(_)));
+        assert!(matches!(err, AgentError::Launch(_)));
     }
 
     #[tokio::test]
@@ -283,7 +246,7 @@ mod tests {
             .run(ctx(tmp.path(), &prompt))
             .await
             .expect_err("must fail");
-        assert!(matches!(err, AgentError::Io(_)));
+        assert!(matches!(err, AgentError::Launch(_)));
     }
 
     #[tokio::test]

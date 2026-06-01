@@ -68,15 +68,16 @@ pub struct RunnerConfig {
     /// Per-iteration timeout. When `Some(d)`, an iteration whose agent
     /// run lasts longer than `d` triggers an iter-scoped cancellation;
     /// the agent observes the cancel and terminates its process tree via
-    /// [`ProcessGroup`], and the [`RunnerLifecycle::AgentFinished`] event
-    /// reports [`AgentResultKind::Cancelled`]. `None` (the default)
-    /// leaves iterations unbounded.
+    /// [`ProcessGroup`], the agent run resolves to
+    /// [`AgentError::Cancelled`], and the
+    /// [`RunnerLifecycle::AgentFinished`] event reports the `"cancelled"`
+    /// result label. `None` (the default) leaves iterations unbounded.
     ///
     /// Absent in older NDJSON payloads: deserializes as `None`.
     ///
     /// [`ProcessGroup`]: crate::process::ProcessGroup
     /// [`RunnerLifecycle::AgentFinished`]: crate::runner::RunnerLifecycle::AgentFinished
-    /// [`AgentResultKind::Cancelled`]: crate::agent::AgentResultKind::Cancelled
+    /// [`AgentError::Cancelled`]: crate::agent::AgentError::Cancelled
     #[serde(default)] // backward compat with payloads that predate this field
     pub iteration_timeout: Option<Duration>,
 }

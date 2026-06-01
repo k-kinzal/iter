@@ -97,7 +97,7 @@ mod tests {
         assert!(is_valid_template_ref("signal.id"));
         assert!(is_valid_template_ref("event.repository.full_name"));
         assert!(is_valid_template_ref("iteration.count"));
-        assert!(is_valid_template_ref("iteration.previous_outcome"));
+        assert!(is_valid_template_ref("iteration.previous_result"));
         assert!(is_valid_template_ref("today"));
         assert!(!is_valid_template_ref(""));
         assert!(!is_valid_template_ref("arg"));

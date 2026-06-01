@@ -1,6 +1,6 @@
 ---
 source: iter_language/tests/conformance.rs
-description: prompt-iteration-outcome.iter
+description: prompt-iteration-result.iter
 ---
 Root {
     args: [],

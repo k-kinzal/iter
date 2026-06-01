@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::AgentReport;
+use crate::agent::{AgentError, AgentRun};
 use crate::log::{NoopSink, OutputSink};
 use crate::prompt::Prompt;
 use crate::signal::{SignalId, SignalKind};
@@ -130,7 +130,21 @@ impl<'a> AgentRunContext<'a> {
     }
 }
 
-/// An AI agent that consumes a [`Prompt`] and produces an [`AgentReport`].
+/// An AI agent that consumes a [`Prompt`] and produces an [`AgentRun`].
+///
+/// This is the **Agent level** of the three-layer agent stack (Command →
+/// Driver/Adapter → Agent). An implementor is an Adapter: it drives a
+/// per-CLI Command and projects that Command's rich, CLI-shaped result/error
+/// down to iter's domain [`AgentRun`] / [`AgentError`].
+///
+/// An `Ok(AgentRun)` means **the agent ran a turn**. A non-zero exit, a
+/// signal, an in-band failure event, or a launch failure are all `Err` —
+/// the caller never has to inspect a field inside `Ok` to learn the run
+/// failed, and no raw CLI exit code leaks past the Adapter.
+///
+/// There is no `type Error` associated type: every driver uses
+/// [`AgentError`]. The error vocabulary is fixed by iter's domain, not by
+/// the driver.
 ///
 /// # Cancellation
 ///
@@ -138,14 +152,11 @@ impl<'a> AgentRunContext<'a> {
 /// down (for example via `iter stop` → `SIGTERM`). Implementations
 /// **must** treat an already-cancelled or mid-run cancellation as an
 /// explicit request to stop the underlying process as quickly as possible
-/// — typically by killing the child process and returning an error. The
-/// runner itself does not wrap `run` in a `select!`, because cooperative
-/// cancellation is the only way to give the agent a chance to flush its
-/// output tail before exiting.
+/// — typically by killing the child process and returning
+/// [`AgentError::Cancelled`]. The runner itself does not wrap `run` in a
+/// `select!`, because cooperative cancellation is the only way to give the
+/// agent a chance to flush its output tail before exiting.
 pub trait Agent: Send + Sync {
-    /// Agent-specific error type.
-    type Error: std::error::Error + Send + Sync + 'static;
-
     /// Run the agent for one iteration with the given context.
     ///
     /// The context is moved into the call by value because it bundles a
@@ -154,7 +165,7 @@ pub trait Agent: Send + Sync {
     fn run(
         &self,
         ctx: AgentRunContext<'_>,
-    ) -> impl Future<Output = Result<AgentReport, Self::Error>> + Send;
+    ) -> impl Future<Output = Result<AgentRun, AgentError>> + Send;
 }
 
 /// Upper bound on how long the drain window waits for the agent future
@@ -184,10 +195,9 @@ const ITERATION_TIMEOUT_DRAIN_GRACE: Duration =
 pub async fn run_with_timeout<A>(
     agent: &A,
     ctx: AgentRunContext<'_>,
-) -> Result<AgentReport, super::AgentError>
+) -> Result<AgentRun, AgentError>
 where
     A: Agent,
-    A::Error: Into<super::AgentError>,
 {
     let timeout = ctx.iteration_timeout;
     let parent_cancel = ctx.cancel.clone();
@@ -201,7 +211,7 @@ where
             let mut agent_fut = std::pin::pin!(agent.run(agent_ctx));
             tokio::select! {
                 biased;
-                res = agent_fut.as_mut() => res.map_err(Into::into),
+                res = agent_fut.as_mut() => res,
                 () = tokio::time::sleep(limit) => {
                     iter_cancel.cancel();
                     tokio::select! {
@@ -210,10 +220,10 @@ where
                         () = parent_cancel.cancelled() => {}
                         () = tokio::time::sleep(ITERATION_TIMEOUT_DRAIN_GRACE) => {}
                     }
-                    Err(super::AgentError::IterationTimeout(limit))
+                    Err(AgentError::IterationTimeout(limit))
                 }
             }
         }
-        None => agent.run(agent_ctx).await.map_err(Into::into),
+        None => agent.run(agent_ctx).await,
     }
 }

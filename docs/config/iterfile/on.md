@@ -52,14 +52,14 @@ Runs the command string through the user's shell (`/bin/sh -c <command>` on POSI
 | --- | --- | --- |
 | `signal.*` | `{{signal.id}}` | Properties of the Signal being processed. Not available in `runner_starting` / `runner_finished` (no signal in scope). |
 | `metadata.*` | `{{metadata.task}}` | User-attached key/value pairs on the Signal. Same scope as `signal.*`. |
-| `iteration.*` | `{{iteration.count}}` | Runner iteration state — available in **every** event including `runner_starting` (initial state, `count == 0`, `previous_outcome == "none"`) and `runner_finished` (terminal state). See [`iterfile/prompt.md`](prompt.md#iterationfield-reference) for the field set. |
+| `iteration.*` | `{{iteration.count}}` | Runner iteration state — available in **every** event including `runner_starting` (initial state, `count == 0`, `previous_result == "none"`) and `runner_finished` (terminal state). See [`iterfile/prompt.md`](prompt.md#iterationfield-reference) for the field set. |
 | `workspace.*` | `{{workspace.path}}` | Workspace paths (available from `workspace_setup_finished` onwards). |
 | `agent.*` | `{{agent.exit_code}}` | Agent result info (available from `agent_finished` onwards). |
 | `error.*` | `{{error.message}}` | Only defined inside `on runner_error`. |
 
 Placeholders that resolve to unset values expand to the empty string; iter does not throw.
 
-`iteration.previous_outcome` reflects the prior iteration's
+`iteration.previous_result` reflects the prior iteration's
 runner-level classification: `"none"` on the first turn (and at
 `runner_starting`), `"success"` when the full iteration pipeline
 (setup → agent → teardown) completed without a stage error, and

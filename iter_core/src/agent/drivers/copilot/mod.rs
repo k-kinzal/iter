@@ -5,12 +5,14 @@
 //! * [`AgentMode::Print`] — the default. Spawns:
 //!
 //!   ```text
-//!   gh copilot suggest [extra-args...] <prompt>
+//!   copilot -p <prompt> --allow-all-tools --output-format json [extra-args...]
 //!   ```
 //!
-//!   This matches the `gh copilot suggest 'how do I ...'` pattern
-//!   documented for `gh-copilot`. The prompt is passed as the final
-//!   positional argument.
+//!   `-p` is Copilot's one-shot print flag; `--output-format json` makes the
+//!   terminal record machine-readable; `--allow-all-tools` stops the CLI
+//!   blocking on per-tool confirmation. The argv shape lives at the Command
+//!   level (`command.rs`); this driver only projects its result/error onto
+//!   iter's domain.
 //!
 //! * [`AgentMode::Interactive`] — launches the configured Copilot CLI
 //!   binary as a live TUI with a project-local `agentStop` hook
@@ -81,19 +83,59 @@
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{Agent, AgentReport, AgentRunContext, Prompt};
+use crate::{Agent, AgentRun, AgentRunContext, Prompt};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
+mod command;
 mod hook;
 
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
     PromptDelivery, apply_user_env, drive_interactive_with_finalize,
-    inject_agent_otel_resource_attrs, inject_copilot_trace_parent_env, run_command,
+    inject_agent_otel_resource_attrs, inject_copilot_trace_parent_env, spawn_capture,
 };
+use command::{CopilotCommand, CopilotError};
 use hook::HookBundle;
+
+impl From<CopilotError> for AgentError {
+    /// Adapter projection: collapse Copilot's CLI-shaped error hierarchy onto
+    /// iter's minimal domain error. The router only branches on
+    /// [`AgentError::TokenLimit`], so the three exhaustion classes
+    /// (quota 402, rate 429, and any detected context/token limit) collapse
+    /// there; auth, network, other reported errors, and the no-result case
+    /// become [`AgentError::Failed`]; a terminating signal becomes
+    /// [`AgentError::TerminatedBySignal`].
+    fn from(err: CopilotError) -> Self {
+        match err {
+            CopilotError::QuotaExhausted { error_type, status } => Self::TokenLimit(format!(
+                "copilot quota exhausted (status {status:?}): {error_type}"
+            )),
+            CopilotError::RateLimited { error_type, status } => Self::TokenLimit(format!(
+                "copilot rate limited (status {status:?}): {error_type}"
+            )),
+            CopilotError::TokenLimit(detail) => Self::TokenLimit(detail),
+            CopilotError::Auth { error_type, status } => Self::Failed {
+                code: status.map(i32::from),
+                message: format!("copilot authentication failed (status {status:?}): {error_type}"),
+            },
+            CopilotError::Network { error_type, status } => Self::Failed {
+                code: status.map(i32::from),
+                message: format!("copilot network error (status {status:?}): {error_type}"),
+            },
+            CopilotError::Reported { error_type, status } => Self::Failed {
+                code: status.map(i32::from),
+                message: format!("copilot reported error `{error_type}` (status {status:?})"),
+            },
+            CopilotError::Signal(sig) => Self::TerminatedBySignal(sig),
+            CopilotError::NoResult { exit_code } => Self::Failed {
+                code: exit_code,
+                message: "copilot produced no terminal result".to_owned(),
+            },
+        }
+    }
+}
 
 /// Canonical one-shot subcommand for `gh` — agent-operational knowledge
 /// iter holds so users don't need to look up the Copilot CLI's shape.
@@ -161,11 +203,11 @@ impl CopilotAgent {
         }
     }
 
-    /// Shared argv builder. The same shape is used for both run modes —
-    /// binary + subcommand + args + prompt — because Copilot's
-    /// interactive and one-shot invocations both take a positional prompt
-    /// as the final argument. Run-mode-specific plumbing (hook install,
-    /// stdio inheritance) is layered on in the caller.
+    /// Interactive-mode argv builder: binary + subcommand + args + positional
+    /// prompt. The interactive TUI takes the prompt as its final positional
+    /// argument; print mode instead uses the [`CopilotCommand`] builder, which
+    /// owns the `-p … --output-format json` shape. Run-mode-specific plumbing
+    /// (hook install, stdio inheritance) is layered on in the caller.
     fn build_command(&self, path: &Path, prompt: &Prompt) -> Command {
         let mut cmd = Command::new(&self.command);
         cmd.current_dir(path);
@@ -190,9 +232,7 @@ impl CopilotAgent {
 }
 
 impl Agent for CopilotAgent {
-    type Error = AgentError;
-
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, Self::Error> {
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
             prompt,
@@ -205,7 +245,12 @@ impl Agent for CopilotAgent {
         } = ctx;
         match self.mode {
             AgentMode::Print => {
-                let mut command = self.build_command(workspace_path, prompt);
+                let mut command = CopilotCommand {
+                    program: &self.command,
+                    args: &self.args,
+                    prompt: prompt.as_str(),
+                }
+                .build(workspace_path);
                 apply_user_env(&mut command, &self.env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
@@ -215,7 +260,15 @@ impl Agent for CopilotAgent {
                     "copilot",
                 );
                 inject_copilot_trace_parent_env(&mut command);
-                run_command(command, PromptDelivery::Inline, cancel, stdio_sink).await
+                // The prompt is embedded in argv via `-p`, so no stdin data.
+                let output =
+                    spawn_capture(command, PromptDelivery::Inline, cancel, stdio_sink).await?;
+                // Adapter: project the Command's CLI-shaped result/error onto
+                // iter's domain. `?` runs the `From<CopilotError>` above.
+                let result = command::interpret(&output)?;
+                Ok(AgentRun {
+                    session_id: result.session_id,
+                })
             }
             AgentMode::Interactive => {
                 self.run_interactive(
@@ -251,7 +304,7 @@ impl CopilotAgent {
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
         service_name: &str,
-    ) -> Result<AgentReport, AgentError> {
+    ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, service_name).await?;
 
         let mut command = self.build_command(path, prompt);
@@ -264,15 +317,20 @@ impl CopilotAgent {
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
 
-        drive_interactive_with_finalize(command, cancel, bundle.finalize()).await
+        // Interactive mode has no machine-readable output: the only signal is
+        // the child's exit. A clean exit is a run; anything else is a failure.
+        let exit = drive_interactive_with_finalize(command, cancel, bundle.finalize()).await?;
+        if let Some(err) = exit.into_failure() {
+            return Err(err);
+        }
+        Ok(AgentRun::empty())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ExitStatus;
-    use crate::agent::testutil::{ctx, fake_binary_script};
+    use crate::agent::testutil::{ctx, ctx_capturing, fake_binary_script};
     use serde_json::json;
     use tempfile::TempDir;
     use tokio::fs;
@@ -287,49 +345,96 @@ mod tests {
         }
     }
 
+    /// Fake `copilot` print binary: echoes each argv arg to *stderr* (so a
+    /// [`CaptureSink`](crate::agent::testutil::CaptureSink) can observe them),
+    /// then prints a valid terminal `result` JSON object to stdout so the
+    /// Command parses an `Ok`.
+    const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
+printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiumRequests":1}}'"#;
+
     #[tokio::test]
-    async fn emits_copilot_suggest_subcommand() {
-        let (_guard, bin) = fake_binary_script("for a in \"$@\"; do printf ' %s' \"$a\"; done");
+    async fn print_mode_emits_print_json_and_allow_all_tools_flags() {
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
         let prompt = Prompt::from("hello-copilot");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Success);
-        let out = report.last_output.expect("last_output");
-        assert!(out.contains("copilot"), "got {out:?}");
-        assert!(out.contains("suggest"), "got {out:?}");
-        assert!(out.contains("hello-copilot"), "got {out:?}");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let run = agent.run(ctx).await.expect("run ok");
+        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        let echoed = sink.stderr().await;
+        let args: Vec<&str> = echoed.lines().collect();
+        assert!(args.contains(&"-p"), "got {args:?}");
+        assert!(args.contains(&"hello-copilot"), "got {args:?}");
+        assert!(args.contains(&"--allow-all-tools"), "got {args:?}");
+        assert!(args.contains(&"--output-format"), "got {args:?}");
+        assert!(args.contains(&"json"), "got {args:?}");
     }
 
     #[tokio::test]
-    async fn subcommand_can_be_overridden() {
-        let (_guard, bin) = fake_binary_script("for a in \"$@\"; do printf ' %s' \"$a\"; done");
+    async fn print_mode_extra_args_are_forwarded() {
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
-        s.subcommand = Some(Vec::new());
+        s.args = vec!["--model".into(), "gpt-5".into()];
         let agent = CopilotAgent::new(s);
         let prompt = Prompt::from("x");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        let out = report.last_output.expect("last_output");
-        assert!(!out.contains("copilot"), "got {out:?}");
-        assert!(out.contains(" x"), "got {out:?}");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        let echoed = sink.stderr().await;
+        let args: Vec<&str> = echoed.lines().collect();
+        assert!(args.contains(&"--model"), "got {args:?}");
+        assert!(args.contains(&"gpt-5"), "got {args:?}");
+    }
+
+    #[tokio::test]
+    async fn print_mode_quota_error_maps_to_token_limit() {
+        let script = r#"printf '%s' '{"type":"session.error","errorType":"quota_exceeded","statusCode":402}'
+exit 1"#;
+        let (_guard, bin) = fake_binary_script(script);
+        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let prompt = Prompt::from("x");
+        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
+        let err = agent.run(ctx).await.expect_err("quota is an error");
+        assert!(matches!(err, AgentError::TokenLimit(_)), "got {err:?}");
+    }
+
+    #[tokio::test]
+    async fn print_mode_auth_error_maps_to_failed() {
+        let script = r#"printf '%s' '{"type":"session.error","errorType":"unauthorized","statusCode":401}'
+exit 1"#;
+        let (_guard, bin) = fake_binary_script(script);
+        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let prompt = Prompt::from("x");
+        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
+        let err = agent.run(ctx).await.expect_err("auth is an error");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(401), .. }),
+            "got {err:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn print_mode_no_result_maps_to_failed() {
+        let (_guard, bin) = fake_binary_script("printf 'garbage'\nexit 1");
+        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let prompt = Prompt::from("x");
+        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
+        let err = agent.run(ctx).await.expect_err("no result is an error");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), .. }),
+            "got {err:?}",
+        );
     }
 
     #[tokio::test]
     async fn print_mode_injects_signal_resource_attributes() {
-        let (_guard, bin) = fake_binary_script("printf '%s' \"$OTEL_RESOURCE_ATTRIBUTES\"");
+        let script = "printf '%s\\n' \"$OTEL_RESOURCE_ATTRIBUTES\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}'";
+        let (_guard, bin) = fake_binary_script(script);
         let tmp = TempDir::new().expect("tmp");
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
-        s.subcommand = Some(Vec::new());
-        let agent = CopilotAgent::new(s);
+        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
         let prompt = Prompt::from("x");
 
-        let report = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
-        let out = report.last_output.expect("last_output");
+        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        let out = sink.stderr().await;
 
         assert!(out.contains("iter.signal.id="), "got {out:?}");
         assert!(out.contains("iter.signal.kind=work"), "got {out:?}");
@@ -341,6 +446,19 @@ mod tests {
             )),
             "got {out:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn print_mode_env_is_forwarded_to_child() {
+        let script = "printf 'ENV=%s\\n' \"$COPILOT_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}'";
+        let (_guard, bin) = fake_binary_script(script);
+        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        s.env = vec![("COPILOT_TEST_ENV_VAR".into(), "env-value".into())];
+        let agent = CopilotAgent::new(s);
+        let prompt = Prompt::from("x");
+        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        agent.run(ctx).await.expect("run ok");
+        assert!(sink.stderr().await.contains("ENV=env-value"));
     }
 
     /// Fake Copilot binary for interactive mode. Invokes the installed
@@ -379,17 +497,10 @@ exit 0
         let agent = CopilotAgent::new(s);
 
         let prompt = Prompt::from("go");
-        let report = agent
-            .run(ctx(tmp.path(), &prompt))
-            .await
-            .expect("interactive run ok");
-
-        assert!(
-            report.exit_status == ExitStatus::Success
-                || matches!(report.exit_status, ExitStatus::Signal(_)),
-            "expected success or signal, got {:?}",
-            report.exit_status,
-        );
+        // The fake either exits 0 (`Ok`) or is SIGKILLed by the hook
+        // (`Err(TerminatedBySignal)`); the run result is racy and not what
+        // this test asserts. What matters is that the bundle was finalized.
+        let _ignored = agent.run(ctx(tmp.path(), &prompt)).await;
 
         let restored_config: serde_json::Value =
             serde_json::from_slice(&fs::read(&config_path).await.expect("read")).expect("json");
@@ -404,16 +515,26 @@ exit 0
     }
 
     #[tokio::test]
-    async fn print_mode_env_is_forwarded_to_child() {
-        let (_guard, bin) = fake_binary_script("printf '%s' \"$COPILOT_TEST_ENV_VAR\"");
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
-        s.env = vec![("COPILOT_TEST_ENV_VAR".into(), "env-value".into())];
+    async fn interactive_mode_finalizes_even_when_child_fails() {
+        // Fake copilot that exits nonzero without touching the hook.
+        let (_guard, bin) = fake_binary_script("exit 7");
+        let tmp = TempDir::new().expect("tmp");
+        let mut s = settings(bin.to_string_lossy(), AgentMode::Interactive);
+        s.subcommand = Some(Vec::new());
         let agent = CopilotAgent::new(s);
         let prompt = Prompt::from("x");
-        let report = agent
-            .run(ctx(Path::new("."), &prompt))
-            .await
-            .expect("run ok");
-        assert_eq!(report.last_output.expect("last_output"), "env-value",);
+        let result = agent.run(ctx(tmp.path(), &prompt)).await;
+
+        // A non-zero exit is an `Err(Failed { code: Some(7) })`; the hook
+        // bundle MUST still be cleaned up.
+        let err = result.expect_err("nonzero exit is an error");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(7), .. }),
+            "got {err:?}",
+        );
+        assert!(
+            !tmp.path().join(".github/hooks/.iter-bundle").exists(),
+            ".iter-bundle must be cleaned up even when child fails",
+        );
     }
 }

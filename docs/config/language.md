@@ -277,8 +277,8 @@ Supported forms:
 | `metadata.<key> != "value"` | Metadata inequality. |
 | `iteration.<field> <cmp> <int>` | Numeric comparison against a runner iteration field. |
 | `iteration.<field> % <int> <cmp> <int>` | Same, but reduce the LHS modulo `<int>` first. |
-| `iteration.previous_outcome == "<outcome>"` | String equality against `"none"`, `"success"`, or `"errored"`. |
-| `iteration.previous_outcome != "<outcome>"` | Inequality form of the above. |
+| `iteration.previous_result == "<result>"` | String equality against `"none"`, `"success"`, or `"errored"`. |
+| `iteration.previous_result != "<result>"` | Inequality form of the above. |
 | `<expr> && <expr>` | Logical AND. |
 | `<expr> \|\| <expr>` | Logical OR. |
 | `( <expr> )` | Grouping. |
@@ -292,7 +292,7 @@ for the full table.
 Constraints:
 
 - Metadata predicates only support `==` / `!=` against a string literal.
-- Numeric `iteration.*` fields require an integer RHS. `previous_outcome`
+- Numeric `iteration.*` fields require an integer RHS. `previous_result`
   is the only field that takes a string RHS, and only with `==` / `!=`.
 - `% 0` is rejected at parse time. Modulus is only valid on numeric
   `iteration.*` fields, applied at most once on the LHS.

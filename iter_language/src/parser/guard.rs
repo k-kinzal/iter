@@ -104,7 +104,7 @@ impl Parser<'_> {
         let field_span = field.span.clone();
 
         // Optional `% N` reduction. Only legal on the LHS of a numeric
-        // comparison; `previous_outcome %` is rejected at semantic time so
+        // comparison; `previous_result %` is rejected at semantic time so
         // the parser captures the raw form here.
         let (modulus, modulus_span) = if matches!(self.peek(), Some(Token::Percent)) {
             self.bump();
@@ -200,10 +200,10 @@ impl Parser<'_> {
             self.errors.push(
                 Diagnostic::error(
                     rhs_span,
-                    "string right-hand side is only valid for `iteration.previous_outcome == \"...\"` / `!= \"...\"`".to_string(),
+                    "string right-hand side is only valid for `iteration.previous_result == \"...\"` / `!= \"...\"`".to_string(),
                 )
                 .with_hint(
-                    "`previous_outcome` only supports `==` / `!=` and cannot be reduced with `%`",
+                    "`previous_result` only supports `==` / `!=` and cannot be reduced with `%`",
                 ),
             );
             return None;

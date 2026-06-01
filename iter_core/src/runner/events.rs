@@ -7,7 +7,7 @@ use super::config::RunnerTerminationReason;
 use super::event::Event;
 use super::event_emitter::EventEmitter;
 use super::iteration::IterationContext;
-use crate::agent::{AgentResultKind, AgentReport};
+use crate::agent::AgentRun;
 use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::runner::observer::DynRunnerObserver;
 use crate::prompt::Prompt;
@@ -138,20 +138,20 @@ impl RunnerEvents {
         &mut self,
         signal: &Signal,
         path: &Path,
-        report: Result<AgentReport, String>,
-        result_kind: AgentResultKind,
+        result: Result<AgentRun, String>,
+        result_label: &str,
         exit: Option<i32>,
         snap: &IterationContext,
     ) {
         let lifecycle = RunnerLifecycle::AgentFinished {
             signal_id: signal.id(),
-            result_kind,
+            result: result_label.to_owned(),
             exit,
         };
         let event = Event::AgentFinished {
             signal: signal.clone(),
             path: path.to_path_buf(),
-            report,
+            result,
         };
         self.emit(event, Some(&lifecycle), snap).await;
     }

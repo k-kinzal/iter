@@ -175,10 +175,6 @@ pub enum AgentDecl {
         /// Files to create/overwrite in the workspace directory.
         /// Keys are relative paths, values are file content.
         files: BTreeMap<String, String>,
-        /// Value for `AgentReport::last_output`.
-        last_output: Option<String>,
-        /// Value for `AgentReport::turn_count`.
-        turn_count: Option<u32>,
     },
     /// Generic agent invoked through an arbitrary command vector.
     Generic {

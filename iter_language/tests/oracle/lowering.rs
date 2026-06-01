@@ -385,12 +385,12 @@ fn lower_guard_iter(pair: Pair<Rule>) -> RawGuard {
             },
             // Pest's grammar lets a string RHS combine with any operator;
             // the hand-written parser rejects everything except `==`/`!=`
-            // for outcome strings. Mirror that here so the differential
+            // for result strings. Mirror that here so the differential
             // harness reaches identical CSTs on the inputs both
             // implementations accept and identical "unrepresentable" panics
             // would surface a real bug if we ever desynced.
             other => panic!(
-                "string RHS only valid for `iteration.previous_outcome ==/!=`, got op {other:?}"
+                "string RHS only valid for `iteration.previous_result ==/!=`, got op {other:?}"
             ),
         },
     }

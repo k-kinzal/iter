@@ -18,7 +18,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use iter_core::agent::{AgentError, AgentReport};
+use iter_core::agent::{AgentError, AgentRun};
 use iter_core::{Agent, AgentRunContext};
 
 use crate::AnyAgent;
@@ -70,8 +70,7 @@ impl AgentRouter {
     pub fn run<'a>(
         &'a self,
         ctx: AgentRunContext<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentReport, AgentError>> + Send + 'a>>
-    {
+    ) -> Pin<Box<dyn Future<Output = Result<AgentRun, AgentError>> + Send + 'a>> {
         Box::pin(async move {
             match self.strategy {
                 RoutingStrategy::Fallback => self.run_fallback(ctx).await,
@@ -80,10 +79,11 @@ impl AgentRouter {
         })
     }
 
-    /// Fallback triggers only on `AgentError::TokenLimit`. A non-zero exit
-    /// from an agent is propagated as `Ok(AgentReport)` to the runner and
-    /// does not advance to the next agent.
-    async fn run_fallback(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, AgentError> {
+    /// Fallback triggers only on `AgentError::TokenLimit`. Any other failure
+    /// (a non-zero exit surfaces as `AgentError::Failed`, a signal as
+    /// `TerminatedBySignal`, etc.) is propagated as-is and does not advance
+    /// to the next agent.
+    async fn run_fallback(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let mut last_err = None;
         for (i, (name, agent)) in self.agents.iter().enumerate() {
             let attempt_ctx = AgentRunContext::new(
@@ -98,7 +98,7 @@ impl AgentRouter {
             .with_service_name(ctx.service_name.clone());
 
             match agent.run(attempt_ctx).await {
-                Ok(report) => return Ok(report),
+                Ok(run) => return Ok(run),
                 Err(AgentError::TokenLimit(detail)) => {
                     tracing::warn!(
                         target: "iter::agent_router",
@@ -115,7 +115,7 @@ impl AgentRouter {
         Err(last_err.expect("agents is non-empty"))
     }
 
-    async fn run_rotate(&self, ctx: AgentRunContext<'_>) -> Result<AgentReport, AgentError> {
+    async fn run_rotate(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let index = self.state.fetch_add(1, Ordering::Relaxed) % self.agents.len();
         let (_name, agent) = &self.agents[index];
         agent.run(ctx).await
@@ -135,7 +135,7 @@ impl Clone for AgentRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_core::agent::{AgentMode, ClaudeAgent, ClaudeSettings, ExitStatus, GenericAgent};
+    use iter_core::agent::{AgentMode, ClaudeAgent, ClaudeSettings, GenericAgent};
     use iter_core::signal::SignalId;
     use iter_core::Prompt;
     use std::io::Write;
@@ -182,8 +182,7 @@ mod tests {
         let prompt = Prompt::from("x");
 
         for _ in 0..3 {
-            let report = router.run(test_ctx(&prompt)).await.expect("run ok");
-            assert_eq!(report.exit_status, ExitStatus::Success);
+            router.run(test_ctx(&prompt)).await.expect("run ok");
         }
         assert_eq!(router.state.load(Ordering::Relaxed), 3);
     }
@@ -196,8 +195,7 @@ mod tests {
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");
-        let report = router.run(test_ctx(&prompt)).await.expect("run ok");
-        assert_eq!(report.exit_status, ExitStatus::Success);
+        router.run(test_ctx(&prompt)).await.expect("run ok");
     }
 
     #[tokio::test]
@@ -209,7 +207,7 @@ mod tests {
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");
         let err = router.run(test_ctx(&prompt)).await.unwrap_err();
-        assert!(matches!(err, AgentError::EmptyCommand));
+        assert!(matches!(err, AgentError::Launch(_)));
     }
 
     #[tokio::test]
@@ -222,8 +220,10 @@ mod tests {
         let agents = vec![("a".into(), agent_a), ("b".into(), agent_b)];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");
-        let report = router.run(test_ctx(&prompt)).await.expect("fallback should succeed");
-        assert_eq!(report.exit_status, ExitStatus::Success);
+        router
+            .run(test_ctx(&prompt))
+            .await
+            .expect("fallback should succeed");
     }
 
     #[tokio::test]

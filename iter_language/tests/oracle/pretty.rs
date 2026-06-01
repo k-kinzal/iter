@@ -266,11 +266,11 @@ fn pp_guard(out: &mut String, g: &RawGuard, parent_prec: u8) {
             out.push_str(&rhs.to_string());
         }
         RawGuard::IterationResultEq { value, .. } => {
-            out.push_str("iteration.previous_outcome == ");
+            out.push_str("iteration.previous_result == ");
             pp_string(out, value);
         }
         RawGuard::IterationResultNeq { value, .. } => {
-            out.push_str("iteration.previous_outcome != ");
+            out.push_str("iteration.previous_result != ");
             pp_string(out, value);
         }
         RawGuard::Or(l, r, _) | RawGuard::And(l, r, _) => {

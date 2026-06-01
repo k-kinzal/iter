@@ -309,19 +309,9 @@ impl Analyzer {
             .take_optional_string_list(fields, "stderr")
             .unwrap_or_default();
         let files = self.take_optional_string_kv_block(fields, "files");
-        let last_output = self.take_optional_string(fields, "last_output");
-        let turn_count = self.take_optional_u32(fields, "turn_count");
         self.reject_unknown_fields(
             fields,
-            &[
-                "exit_code",
-                "delay_secs",
-                "stdout",
-                "stderr",
-                "files",
-                "last_output",
-                "turn_count",
-            ],
+            &["exit_code", "delay_secs", "stdout", "stderr", "files"],
             &format!("agent {}", kind.name),
         );
         AgentDecl::Fake {
@@ -330,8 +320,6 @@ impl Analyzer {
             stdout,
             stderr,
             files,
-            last_output,
-            turn_count,
         }
     }
 

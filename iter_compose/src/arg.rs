@@ -280,7 +280,6 @@ fn render_agent(
             stdout,
             stderr,
             files,
-            last_output,
             ..
         } => {
             for s in stdout.iter_mut() {
@@ -298,9 +297,6 @@ fn render_agent(
                 })
                 .collect::<Result<_, ArgError>>()?;
             *files = rendered_files;
-            if let Some(lo) = last_output.as_mut() {
-                render_str(lo, values)?;
-            }
         }
         iter_language::AgentDecl::Router { agents, .. } => {
             for (_name, sub_decl) in agents.iter_mut() {
@@ -668,7 +664,6 @@ agent fake {
   files {
     "output/{{arg.name}}.txt" = "content for {{arg.name}}"
   }
-  last_output = "done: {{arg.name}}"
 }
 runner { continue_on_error = false behavior = loop }
 prompt "noop"
@@ -676,16 +671,10 @@ prompt "noop"
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
         match &root.agents.first().unwrap().node.decl {
-            iter_language::AgentDecl::Fake {
-                stdout,
-                files,
-                last_output,
-                ..
-            } => {
+            iter_language::AgentDecl::Fake { stdout, files, .. } => {
                 assert_eq!(stdout, &["result"]);
                 assert_eq!(files.get("output/result.txt"), Some(&"content for result".to_string()));
                 assert!(!files.contains_key("output/{{arg.name}}.txt"));
-                assert_eq!(last_output.as_deref(), Some("done: result"));
             }
             other => panic!("unexpected agent: {other:?}"),
         }

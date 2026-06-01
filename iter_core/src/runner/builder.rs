@@ -198,17 +198,10 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
     ///
     /// Returns an error if the operation fails.
     ///
-    /// Mirrors the bound on [`Runner::run`] so a misconfigured agent
-    /// surfaces the missing `Into<AgentError>` impl here at the build
-    /// site rather than at `runner.run(...)` later.  Setters above
-    /// (`queue`, `workspaces`, `agent`, …) are intentionally unbounded —
-    /// they would otherwise yield confusing "method not found"
-    /// diagnostics on innocent calls when the agent's error type cannot
-    /// be converted into an `AgentError`.
-    pub fn build(self) -> Result<Runner<Q, W, A>, BuilderError>
-    where
-        A::Error: Into<crate::agent::AgentError>,
-    {
+    /// Every driver now uses [`AgentError`](crate::agent::AgentError)
+    /// directly — the `Agent` trait has no associated error type — so this
+    /// builder needs no extra bound beyond the struct's `A: Agent`.
+    pub fn build(self) -> Result<Runner<Q, W, A>, BuilderError> {
         let workspaces = self
             .workspaces
             .ok_or(BuilderError::MissingField("workspaces"))?;

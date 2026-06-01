@@ -23,7 +23,7 @@
 //! the project's deny rules — so the policy is always the ceiling and the
 //! agent requirements are always the floor. If the agent's floor exceeds
 //! the project's ceiling the sandbox fails closed at construction time;
-//! silent downgrades would be a worse outcome than refusing to run.
+//! silent downgrades would be a worse result than refusing to run.
 //!
 //! # No project-shaped defaults
 //!

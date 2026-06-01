@@ -1,11 +1,22 @@
-//! Shared subprocess helper for running a CLI-backed agent.
+//! Shared subprocess primitive for running a CLI-backed agent.
 //!
-//! Every concrete agent in this crate eventually funnels through
-//! [`run_command`] (non-interactive/print mode) or the pair
-//! [`drive_interactive_child`] + [`drive_interactive_with_finalize`]
-//! (hook-based interactive mode) so the exit-status mapping, output-tail
-//! bookkeeping, stdin-plumbing, and hook-bundle finalize logic each live
-//! in exactly one place.
+//! This is infrastructure shared by the **Command level** of every driver.
+//! It owns the parts of spawning a child that are identical across CLIs —
+//! sandbox-prefix wrapping, process-group setup, stdin delivery, stdout/
+//! stderr teeing into `log.ndjson`, cancellation, and platform exit-status
+//! mapping — and hands back a [`CommandOutput`] (full captured output + a
+//! [`RawExit`]). It does **not** interpret that output: turning
+//! `(exit, stdout, stderr)` into a CLI-shaped result or error is each
+//! per-CLI Command's job (`drivers/<cli>/command.rs`).
+//!
+//! Two entry points:
+//!
+//! * [`spawn_capture`] — non-interactive/print mode: pipes stdio, captures
+//!   the child's **complete** stdout/stderr so a Command can parse the
+//!   machine-readable stream, and returns a [`CommandOutput`].
+//! * [`drive_interactive`] / [`drive_interactive_with_finalize`] — hook-based
+//!   interactive (TUI) mode: inherits stdio (no capture) and returns just the
+//!   [`RawExit`], optionally finalizing a hook bundle first.
 
 use std::ffi::{OsStr, OsString};
 use std::future::Future;
@@ -14,9 +25,9 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::current_sandbox_prefix;
 use crate::log::{LogStream, OutputSink};
 use crate::process::process_group::{self, ProcessGroup};
-use crate::{AgentReport, ExitStatus, current_sandbox_prefix};
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
@@ -44,12 +55,92 @@ pub(crate) const AGENT_TERMINATION_GRACE: Duration = Duration::from_secs(5);
 /// shutdown latency stays imperceptible.
 const CANCEL_TEE_DRAIN: Duration = Duration::from_secs(1);
 
-/// Maximum number of bytes of combined stdout/stderr preserved in
-/// [`AgentReport::last_output`]. This tail rides along on the
-/// `AgentFinished` event for observability — debug UIs and log sinks
-/// use it to peek at what the agent printed — so it only needs the
-/// recent output, not the entire session log.
-pub(crate) const LAST_OUTPUT_TAIL_BYTES: usize = 4096;
+/// Platform exit disposition of an agent child process, as observed by the
+/// shared spawn primitive — *before* any CLI-specific interpretation.
+///
+/// `Code(0)` is the only success disposition; a non-zero code, a terminating
+/// signal, or an indeterminate status are all reported faithfully and left
+/// for the Command/Adapter to interpret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum RawExit {
+    /// Process exited with the given code (`0` = clean exit).
+    Code(i32),
+    /// Process was terminated by the given signal number.
+    Signal(i32),
+    /// Platform exposed neither an exit code nor a terminating signal.
+    Unknown,
+}
+
+impl RawExit {
+    /// Map a non-success exit to an [`AgentError`] for Commands whose mode
+    /// produces no richer in-band signal (interactive TUI runs, and the
+    /// text-only CLIs once their scanners find nothing). Returns `None` for a
+    /// clean exit.
+    pub(crate) fn into_failure(self) -> Option<AgentError> {
+        match self {
+            Self::Code(0) => None,
+            Self::Code(code) => Some(AgentError::Failed {
+                code: Some(code),
+                message: format!("agent exited with code {code}"),
+            }),
+            Self::Signal(sig) => Some(AgentError::TerminatedBySignal(sig)),
+            Self::Unknown => Some(AgentError::Failed {
+                code: None,
+                message: "agent exited with an indeterminate status".to_owned(),
+            }),
+        }
+    }
+}
+
+/// Complete captured output of a non-interactive agent child.
+///
+/// Carries the full stdout and stderr byte streams (so a Command can parse
+/// the CLI's machine-readable result, however far into the stream the
+/// terminal event lands) plus the platform [`RawExit`]. Nothing is
+/// discarded at this layer — lossy projection happens in the Command/Adapter.
+#[derive(Debug, Clone)]
+pub(crate) struct CommandOutput {
+    /// Platform exit disposition.
+    pub(crate) exit: RawExit,
+    /// Complete captured stdout.
+    pub(crate) stdout: Vec<u8>,
+    /// Complete captured stderr.
+    pub(crate) stderr: Vec<u8>,
+}
+
+impl CommandOutput {
+    /// Borrow stdout as a UTF-8 string (lossy).
+    pub(crate) fn stdout_str(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.stdout)
+    }
+
+    /// Borrow stderr as a UTF-8 string (lossy).
+    pub(crate) fn stderr_str(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.stderr)
+    }
+}
+
+/// Failure of the shared spawn primitive itself — *before* a Command gets to
+/// interpret any output. Either the run was cancelled, or the child could
+/// not be launched / its streams could not be driven.
+#[derive(Debug)]
+pub(crate) enum SpawnError {
+    /// Cancellation fired before or during the run; the child (if any) has
+    /// been killed.
+    Cancelled,
+    /// The child could not be spawned, or an I/O error occurred while
+    /// writing the prompt / draining its streams.
+    Launch(std::io::Error),
+}
+
+impl From<SpawnError> for AgentError {
+    fn from(err: SpawnError) -> Self {
+        match err {
+            SpawnError::Cancelled => Self::Cancelled,
+            SpawnError::Launch(io) => Self::Launch(io.to_string()),
+        }
+    }
+}
 
 /// How the prompt should be delivered to the child process.
 #[derive(Debug, Clone, Copy)]
@@ -187,8 +278,8 @@ fn parse_traceparent_ids(traceparent: &str) -> Option<(&str, &str)> {
 /// The rebuilt command preserves everything the caller already
 /// configured: program, args, environment variables, working
 /// directory, process-group inheritance semantics. Stdio is left to
-/// the caller — [`run_command`] and
-/// [`drive_interactive_child`] set stdio on the returned `Command`
+/// the caller — [`spawn_capture`] and
+/// [`drive_interactive`] set stdio on the returned `Command`
 /// after the wrap has been applied.
 ///
 /// When the env var is unset (the common `local`/`clone` workspace
@@ -247,8 +338,9 @@ pub(crate) fn apply_sandbox_prefix(command: Command) -> Command {
     wrapped
 }
 
-/// Drive a prepared [`tokio::process::Command`] to completion and produce an
-/// [`AgentReport`].
+/// Drive a prepared [`tokio::process::Command`] to completion and capture its
+/// **complete** stdout/stderr plus platform exit status into a
+/// [`CommandOutput`].
 ///
 /// The caller is responsible for pre-populating the command with its program
 /// name, arguments, working directory, and environment variables. This
@@ -259,16 +351,19 @@ pub(crate) fn apply_sandbox_prefix(command: Command) -> Command {
 /// 3. Writes the prompt on stdin when `delivery` is
 ///    [`PromptDelivery::Stdin`], then closes stdin so the child sees EOF.
 /// 4. Tees the child's stdout/stderr line-by-line through `sink` so every
-///    line lands in `log.ndjson`, while keeping a trailing
-///    [`LAST_OUTPUT_TAIL_BYTES`] window per stream for
-///    [`AgentReport::last_output`].
-/// 5. Maps the resulting [`std::process::ExitStatus`] to [`ExitStatus`].
-pub(crate) async fn run_command(
+///    line lands in `log.ndjson`, while accumulating the full byte streams
+///    for the Command to parse.
+/// 5. Maps the resulting [`std::process::ExitStatus`] to [`RawExit`].
+///
+/// Interpretation of `(exit, stdout, stderr)` — success vs. failure, error
+/// class, session id — is **not** done here; that is the per-CLI Command's
+/// job. This function only fails for spawn/cancel reasons ([`SpawnError`]).
+pub(crate) async fn spawn_capture(
     command: Command,
     delivery: PromptDelivery<'_>,
     cancel: CancellationToken,
     sink: Arc<dyn OutputSink>,
-) -> Result<AgentReport, AgentError> {
+) -> Result<CommandOutput, SpawnError> {
     let mut command = apply_sandbox_prefix(command);
     command
         .stdin(Stdio::piped())
@@ -280,15 +375,12 @@ pub(crate) async fn run_command(
     // Fast-path: if cancellation already fired before we spawn, don't even
     // launch the process.
     if cancel.is_cancelled() {
-        return Err(AgentError::Cancelled);
+        return Err(SpawnError::Cancelled);
     }
 
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().map_err(SpawnError::Launch)?;
     // Record the spawned tree by its pgid so cancel can reap the entire
     // group (including grandchildren spawned by the agent's tool calls).
-    // `kill_on_drop(true)` above stays as a belt-and-suspenders fallback
-    // for the direct child, but `group.terminate(...)` below is the
-    // primary cancel path.
     let mut group = ProcessGroup::from_child(&child);
 
     // Take stdin up front so we can write and drop it regardless of delivery
@@ -296,112 +388,80 @@ pub(crate) async fn run_command(
     // Code's `--print` loop.
     if let Some(mut stdin) = child.stdin.take() {
         if let PromptDelivery::Stdin(text) = delivery {
-            // Write the prompt, but bail out early if cancellation fires
-            // mid-write so we don't hang on a stuck reader. `child` is
-            // still owned locally; on cancel, dropping it at function exit
-            // kicks `kill_on_drop`.
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => {
                     group.terminate(AGENT_TERMINATION_GRACE).await;
                     drop(child.wait().await);
-                    return Err(AgentError::Cancelled);
+                    return Err(SpawnError::Cancelled);
                 }
-                res = stdin.write_all(text.as_bytes()) => res?,
+                res = stdin.write_all(text.as_bytes()) => res.map_err(SpawnError::Launch)?,
             }
         }
         // Dropping here closes the pipe and delivers EOF.
         drop(stdin);
     }
 
-    // Take stdout/stderr handles so we can drain them concurrently without
-    // giving up ownership of `child`. We keep `&mut child` so we can both
-    // `wait()` and `start_kill()` it from the same select arm — something
-    // `Child::wait_with_output(mut self)` would not permit.
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
     let stdout_sink = sink.clone();
     let stdout_future = async move {
-        let mut tail = Vec::new();
+        let mut buf = Vec::new();
         if let Some(s) = stdout {
-            tee_lines(s, stdout_sink, Direction::Stdout, &mut tail).await;
+            tee_lines(s, stdout_sink, Direction::Stdout, &mut buf).await;
         }
-        tail
+        buf
     };
     let stderr_sink = sink.clone();
     let stderr_future = async move {
-        let mut tail = Vec::new();
+        let mut buf = Vec::new();
         if let Some(s) = stderr {
-            tee_lines(s, stderr_sink, Direction::Stderr, &mut tail).await;
+            tee_lines(s, stderr_sink, Direction::Stderr, &mut buf).await;
         }
-        tail
+        buf
     };
 
-    // Spawn the tee tasks so their progress survives the cancel branch
-    // of the select below. If the cancel arm wins, we still want to
-    // give the tee tasks a bounded window to finish forwarding any
-    // bytes already sitting in their `BufReader`s into the sink — those
-    // are the agent's last words before SIGTERM, and dropping them
-    // would leave the operator looking at `iter logs` wondering what
-    // the agent was doing when it was killed.
+    // Spawn the tee tasks so their progress survives the cancel branch of the
+    // select below. If the cancel arm wins, we still give the tee tasks a
+    // bounded window to flush already-buffered bytes — the agent's last words
+    // before SIGTERM.
     let stdout_handle = tokio::spawn(stdout_future);
     let stderr_handle = tokio::spawn(stderr_future);
 
-    // Drain stdout/stderr concurrently with waiting for exit, under a
-    // biased select on the cancel token so SIGTERM-initiated shutdowns
-    // kill the child promptly. The select arms each consume their own
-    // copy of the JoinHandles via `Option::take`; whichever arm runs
-    // owns and awaits the handles, the other arm sees `None`s and
-    // never moves them.
     let mut stdout_handle = Some(stdout_handle);
     let mut stderr_handle = Some(stderr_handle);
-    let (status, stdout_tail, stderr_tail) = tokio::select! {
+    let (status, stdout_buf, stderr_buf) = tokio::select! {
         biased;
         () = cancel.cancelled() => {
-            // SIGTERM the whole pgid (agent + sandbox + grandchildren)
-            // first, give them `AGENT_TERMINATION_GRACE` to clean up,
-            // then SIGKILL anything still alive. Finally reap the
-            // direct child to avoid leaking a zombie on short-lived
-            // runtimes.
             group.terminate(AGENT_TERMINATION_GRACE).await;
             drop(child.wait().await);
-            // Give the tee tasks a bounded window to forward any
-            // already-buffered bytes into the sink before we abandon
-            // them. Once `child.wait()` resolves the pipes will EOF and
-            // both futures finish quickly; a stuck reader is capped at
-            // CANCEL_TEE_DRAIN.
             if let Some(h) = stdout_handle.take() {
                 drop(tokio::time::timeout(CANCEL_TEE_DRAIN, h).await);
             }
             if let Some(h) = stderr_handle.take() {
                 drop(tokio::time::timeout(CANCEL_TEE_DRAIN, h).await);
             }
-            return Err(AgentError::Cancelled);
+            return Err(SpawnError::Cancelled);
         }
         res = async {
             let status = child.wait().await?;
-            // Pipes are now closed: the tee tasks will finish reading
-            // any remaining buffered bytes and return.
-            let stdout_tail = match stdout_handle.take() {
+            let stdout_buf = match stdout_handle.take() {
                 Some(h) => h.await.unwrap_or_default(),
                 None => Vec::new(),
             };
-            let stderr_tail = match stderr_handle.take() {
+            let stderr_buf = match stderr_handle.take() {
                 Some(h) => h.await.unwrap_or_default(),
                 None => Vec::new(),
             };
-            Ok::<_, std::io::Error>((status, stdout_tail, stderr_tail))
-        } => res?,
+            Ok::<_, std::io::Error>((status, stdout_buf, stderr_buf))
+        } => res.map_err(SpawnError::Launch)?,
     };
 
-    let exit_status = map_exit_status(status);
-    let last_output = tail_combined(&stdout_tail, &stderr_tail, LAST_OUTPUT_TAIL_BYTES);
-
-    Ok(AgentReport {
-        exit_status,
-        last_output,
-        turn_count: None,
+    Ok(CommandOutput {
+        exit: map_exit_status(status),
+        stdout: stdout_buf,
+        stderr: stderr_buf,
     })
 }
 
@@ -412,18 +472,16 @@ enum Direction {
 }
 
 /// Tee one piped stream from the child line-by-line into `sink` (so every
-/// line reaches `log.ndjson`) while maintaining a trailing
-/// [`LAST_OUTPUT_TAIL_BYTES`] window in `tail` for [`AgentReport::last_output`].
+/// line reaches `log.ndjson`) while accumulating the **complete** byte stream
+/// in `buf` for the Command to parse.
 ///
 /// Sink errors are swallowed (the agent run must not abort just because the
 /// log writer is gone); read errors end the loop early. After EOF the
 /// sink's *per-stream* partial buffer is flushed via
-/// [`OutputSink::flush_stream`] so any final unterminated bytes the agent
-/// emitted (no trailing newline before exit) surface as their own NDJSON
-/// record without disturbing the counterpart pipe's still-active partial
-/// — using the global [`OutputSink::flush`] here would prematurely drain
-/// the other stream mid-record.
-async fn tee_lines<R>(reader: R, sink: Arc<dyn OutputSink>, direction: Direction, tail: &mut Vec<u8>)
+/// [`OutputSink::flush_stream`] so any final unterminated bytes surface as
+/// their own NDJSON record without disturbing the counterpart pipe's still-
+/// active partial.
+async fn tee_lines<R>(reader: R, sink: Arc<dyn OutputSink>, direction: Direction, buf: &mut Vec<u8>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
@@ -436,12 +494,11 @@ where
             Err(err) => {
                 // `read_until` may return Err with bytes already buffered
                 // into `line` from a successful prior poll. Forward those
-                // bytes (treating the unterminated fragment the same way
-                // we treat a no-newline EOF) before ending the loop, so
-                // we don't silently drop the agent's last output on a
-                // pipe error.
+                // bytes (and keep them in `buf`) before ending the loop, so
+                // we don't silently drop the agent's last output on a pipe
+                // error.
                 if !line.is_empty() {
-                    push_tail(tail, &line, LAST_OUTPUT_TAIL_BYTES);
+                    buf.extend_from_slice(&line);
                     let chunk = Bytes::copy_from_slice(&line);
                     let send_res = match direction {
                         Direction::Stdout => sink.write_stdout(chunk).await,
@@ -465,10 +522,7 @@ where
                 break;
             }
             Ok(_) => {
-                // Push the raw bytes (newline included) into the tail
-                // ring so substring matches against AgentReport.last_output
-                // see the same shape they did under `read_to_end`.
-                push_tail(tail, &line, LAST_OUTPUT_TAIL_BYTES);
+                buf.extend_from_slice(&line);
                 let chunk = Bytes::copy_from_slice(&line);
                 let res = match direction {
                     Direction::Stdout => sink.write_stdout(chunk).await,
@@ -499,21 +553,14 @@ where
     }
 }
 
-/// Append `chunk` to `tail`, then trim from the front so `tail.len() <= cap`.
-fn push_tail(tail: &mut Vec<u8>, chunk: &[u8], cap: usize) {
-    tail.extend_from_slice(chunk);
-    if tail.len() > cap {
-        let drop = tail.len() - cap;
-        tail.drain(..drop);
-    }
-}
-
 /// Check whether an agent's output contains patterns indicating a
 /// context-window or token-limit error. Returns `Some(detail)` with the
 /// matched fragment when detected, `None` otherwise.
 ///
 /// This is inherently heuristic — each CLI surfaces the error differently.
-/// Patterns are intentionally conservative to avoid false positives.
+/// Patterns are intentionally conservative to avoid false positives. It is
+/// the primary success/fail classifier for the text-only Commands
+/// (Antigravity, Hermes `-z`) and a fallback refiner for the JSON ones.
 pub(crate) fn detect_token_limit(output: &str) -> Option<String> {
     const PATTERNS: &[&str] = &[
         "context window",
@@ -541,28 +588,24 @@ pub(crate) fn detect_token_limit(output: &str) -> Option<String> {
 }
 
 /// Drive an interactive child to completion (or cancellation) and map the
-/// resulting platform status onto [`ExitStatus`].
+/// resulting platform status onto [`RawExit`].
 ///
-/// Unlike [`run_command`], this helper assumes the caller has already
-/// configured stdio (typically `Stdio::inherit()` so the TUI renders to
-/// the parent terminal) and does **not** touch stdin. Hook-bundle
-/// lifecycle is the caller's responsibility — pair this with
+/// Unlike [`spawn_capture`], this helper assumes the caller has already
+/// configured stdio (typically `Stdio::inherit()` so the TUI renders to the
+/// parent terminal) and does **not** touch stdin or capture output. Hook-
+/// bundle lifecycle is the caller's responsibility — pair this with
 /// [`drive_interactive_with_finalize`] to get both concerns handled in a
 /// single place.
-///
-/// The four hook-capable agents (Claude, Codex, Copilot, Gemini) each
-/// used to carry a byte-identical copy of this function; it now lives
-/// here exactly once.
-pub(crate) async fn drive_interactive_child(
+pub(crate) async fn drive_interactive(
     command: Command,
     cancel: &CancellationToken,
-) -> Result<ExitStatus, AgentError> {
+) -> Result<RawExit, SpawnError> {
     let mut command = apply_sandbox_prefix(command);
     if cancel.is_cancelled() {
-        return Err(AgentError::Cancelled);
+        return Err(SpawnError::Cancelled);
     }
 
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().map_err(SpawnError::Launch)?;
     let mut group = ProcessGroup::from_child(&child);
 
     let status = tokio::select! {
@@ -570,109 +613,62 @@ pub(crate) async fn drive_interactive_child(
         () = cancel.cancelled() => {
             group.terminate(AGENT_TERMINATION_GRACE).await;
             drop(child.wait().await);
-            return Err(AgentError::Cancelled);
+            return Err(SpawnError::Cancelled);
         }
-        res = child.wait() => res?,
+        res = child.wait() => res.map_err(SpawnError::Launch)?,
     };
 
     Ok(map_exit_status(status))
 }
 
-/// Drive a pre-configured interactive child to completion, then finalize
-/// the hook bundle regardless of whether the child succeeded or errored.
+/// Drive a pre-configured interactive child to completion, then finalize the
+/// hook bundle regardless of whether the child succeeded or errored, and
+/// return the child's [`RawExit`].
 ///
-/// This helper centralises the "interactive run + hook finalize" skeleton
-/// that the four hook-capable agents (Claude, Codex, Copilot, Gemini)
-/// used to each inline as ~30 lines of near-identical code. The shared
-/// contract is:
-///
-/// 1. Run the child via [`drive_interactive_child`]. Record the result but
-///    do not propagate it yet — the bundle must still be finalized.
+/// 1. Run the child via [`drive_interactive`]. Record the result but do not
+///    propagate it yet — the bundle must still be finalized.
 /// 2. Await the caller-supplied `finalize` future (typically
-///    `bundle.finalize()`, which consumes the bundle and restores
-///    backed-up config files).
-/// 3. If finalize failed, surface whichever error is *causal*: the run
-///    error if the run itself failed, otherwise the finalize error. This
-///    ordering ensures we never silently swallow a run failure just to
-///    surface a cleanup failure instead.
-/// 4. Otherwise unwrap the run result into an [`AgentReport`].
-///
-/// The caller is responsible for everything up to this point: installing
-/// the bundle, building the command, and inheriting stdio. The finalize
-/// future is passed in (rather than the bundle itself) so this helper
-/// can stay bundle-type-agnostic — each agent's `HookBundle` is a
-/// different concrete type with a different internal shape, but
-/// `finalize(self) -> impl Future<Output = Result<(), _>>` is uniform
-/// across all four.
+///    `bundle.finalize()`).
+/// 3. If finalize failed, surface whichever error is *causal*: the run error
+///    if the run itself failed, otherwise the finalize error.
+/// 4. Otherwise return the child's [`RawExit`] for the caller to interpret.
 pub(crate) async fn drive_interactive_with_finalize<Fut>(
     command: Command,
     cancel: CancellationToken,
     finalize: Fut,
-) -> Result<AgentReport, AgentError>
+) -> Result<RawExit, AgentError>
 where
     Fut: Future<Output = Result<(), AgentError>> + Send,
 {
-    let run_result = drive_interactive_child(command, &cancel).await;
+    let run_result = drive_interactive(command, &cancel).await;
 
     if let Err(finalize_err) = finalize.await {
         return Err(match run_result {
-            Err(run_err) => run_err,
+            Err(run_err) => run_err.into(),
             Ok(_) => finalize_err,
         });
     }
 
-    let exit_status = run_result?;
-
-    Ok(AgentReport {
-        exit_status,
-        last_output: None,
-        turn_count: None,
-    })
+    Ok(run_result?)
 }
 
-/// Map a platform [`std::process::ExitStatus`] onto [`ExitStatus`].
+/// Map a platform [`std::process::ExitStatus`] onto [`RawExit`].
 ///
 /// On Unix a process may terminate via a signal without ever producing an
 /// exit code; `Command::status.code()` returns `None` in that case and we
-/// consult `ExitStatusExt::signal()` to synthesize [`ExitStatus::Signal`].
-fn map_exit_status(status: std::process::ExitStatus) -> ExitStatus {
-    if status.success() {
-        return ExitStatus::Success;
-    }
+/// consult `ExitStatusExt::signal()` to synthesize [`RawExit::Signal`].
+fn map_exit_status(status: std::process::ExitStatus) -> RawExit {
     if let Some(code) = status.code() {
-        return ExitStatus::Failure(code);
+        return RawExit::Code(code);
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
         if let Some(sig) = status.signal() {
-            return ExitStatus::Signal(sig);
+            return RawExit::Signal(sig);
         }
     }
-    ExitStatus::Unknown
-}
-
-/// Build the [`AgentReport::last_output`] window by concatenating stdout and
-/// stderr (in that order), then returning the trailing `max_bytes` — UTF-8
-/// lossy-decoded so callers receive a valid Rust [`String`].
-///
-/// Returns `None` when the combined streams are empty.
-fn tail_combined(stdout: &[u8], stderr: &[u8], max_bytes: usize) -> Option<String> {
-    if stdout.is_empty() && stderr.is_empty() {
-        return None;
-    }
-    let mut combined = Vec::with_capacity(stdout.len() + stderr.len());
-    combined.extend_from_slice(stdout);
-    combined.extend_from_slice(stderr);
-
-    // Trim from the front so we keep *trailing* bytes. We cannot naively slice
-    // at `len - max_bytes` because it could land mid-UTF-8-codepoint; instead
-    // we slice and then run a lossy decode which replaces malformed prefixes
-    // with U+FFFD. This is acceptable for the tail buffer since it's used for
-    // substring matches, not structural parsing.
-    let start = combined.len().saturating_sub(max_bytes);
-    let slice = &combined[start..];
-    Some(String::from_utf8_lossy(slice).into_owned())
+    RawExit::Unknown
 }
 
 #[cfg(test)]
@@ -681,42 +677,20 @@ mod tests {
     use async_trait::async_trait;
 
     #[test]
-    fn tail_combined_returns_none_when_empty() {
-        assert_eq!(tail_combined(&[], &[], 16), None);
-    }
-
-    #[test]
-    fn tail_combined_concatenates_stdout_then_stderr() {
-        let out = tail_combined(b"hello ", b"world", 64).expect("some");
-        assert_eq!(out, "hello world");
-    }
-
-    #[test]
-    fn tail_combined_keeps_only_trailing_bytes() {
-        let stdout = vec![b'a'; 2000];
-        let stderr = vec![b'b'; 3000];
-        let out = tail_combined(&stdout, &stderr, 100).expect("some");
-        assert_eq!(out.len(), 100);
-        // All trailing bytes should be from stderr.
-        assert!(out.chars().all(|c| c == 'b'));
-    }
-
-    #[test]
-    fn tail_combined_handles_lossy_utf8_prefix() {
-        // Start with an invalid leading byte, then valid ASCII. The replacement
-        // character should appear but the valid suffix should survive.
-        let stdout = [0xFF, b'o', b'k'];
-        let out = tail_combined(&stdout, &[], 64).expect("some");
-        assert!(out.ends_with("ok"));
-    }
-
-    #[test]
-    fn push_tail_truncates_from_front() {
-        let mut tail = Vec::new();
-        push_tail(&mut tail, b"abcdef", 4);
-        assert_eq!(tail, b"cdef");
-        push_tail(&mut tail, b"GH", 4);
-        assert_eq!(tail, b"efGH");
+    fn raw_exit_into_failure_maps_each_disposition() {
+        assert!(RawExit::Code(0).into_failure().is_none());
+        assert!(matches!(
+            RawExit::Code(7).into_failure(),
+            Some(AgentError::Failed { code: Some(7), .. })
+        ));
+        assert!(matches!(
+            RawExit::Signal(9).into_failure(),
+            Some(AgentError::TerminatedBySignal(9))
+        ));
+        assert!(matches!(
+            RawExit::Unknown.into_failure(),
+            Some(AgentError::Failed { code: None, .. })
+        ));
     }
 
     #[test]
@@ -860,24 +834,19 @@ mod tests {
 
     #[tokio::test]
     async fn tee_lines_flushes_buffered_bytes_on_read_error() {
-        // Per Codex round-4 finding 1: BufReader::read_until may return
-        // Err with bytes already buffered into `line` from a successful
-        // prior poll. The tee loop must forward those bytes (and push
-        // them into the tail ring) before breaking — otherwise an agent
-        // whose pipe errors mid-line silently loses its final output.
+        // BufReader::read_until may return Err with bytes already buffered
+        // into `line`. The tee loop must forward those bytes (and keep them
+        // in `buf`) before breaking — otherwise an agent whose pipe errors
+        // mid-line silently loses its final output.
         let reader = ChunkThenErr {
             chunk: Some(b"partial-no-newline".to_vec()),
             err: Some(std::io::Error::other("pipe broken mid-read")),
         };
-        // Hold the concrete recorder via a strong Arc so we can read its
-        // captured writes after `tee_lines` returns; the sink reference
-        // passed to `tee_lines` is the same Arc up-cast to the trait
-        // object.
         let recorder = Arc::new(RecordingSink::default());
         let sink: Arc<dyn OutputSink> = recorder.clone();
-        let mut tail = Vec::new();
+        let mut buf = Vec::new();
 
-        tee_lines(reader, sink, Direction::Stdout, &mut tail).await;
+        tee_lines(reader, sink, Direction::Stdout, &mut buf).await;
 
         let stdout_writes = recorder.stdout.lock().await;
         assert_eq!(
@@ -887,8 +856,8 @@ mod tests {
         );
         assert_eq!(stdout_writes[0], b"partial-no-newline");
         assert_eq!(
-            tail, b"partial-no-newline",
-            "the tail ring must observe the same bytes for AgentReport.last_output"
+            buf, b"partial-no-newline",
+            "the capture buffer must observe the same bytes for the Command to parse"
         );
     }
 
