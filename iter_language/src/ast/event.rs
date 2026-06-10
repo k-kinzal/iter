@@ -31,8 +31,8 @@ pub enum EventName {
     WorkspaceTeardownFinished,
     /// `runner_error` — fired when any earlier stage fails.
     RunnerError,
-    /// `runner_finished` — fired exactly once just before [`Runner::run`]
-    /// returns, regardless of termination reason.
+    /// `runner_finished` — fired exactly once just before the runner stops,
+    /// regardless of termination reason.
     RunnerFinished,
 }
 

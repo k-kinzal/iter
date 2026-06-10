@@ -152,6 +152,7 @@ fn route_strategy() -> impl Strategy<Value = RawRoute> {
     )
         .prop_map(|(event_pattern, when, fields)| RawRoute {
             event_pattern,
+            when_span: when.as_ref().map(|_| 0..0),
             when,
             body: RawBlock {
                 fields,

@@ -123,9 +123,8 @@ pub struct NamedTrigger {
     pub decl: TriggerDecl,
     /// Queue this trigger emits signals into.
     pub target: QueueRef,
-    /// When `true`, the trigger enqueues a
-    /// [`SignalKind::Terminate`](iter_core::SignalKind) signal on its
-    /// target queue after `run()` completes. Default is `false`.
+    /// When `true`, the trigger enqueues a terminate signal on its
+    /// target queue after it finishes emitting. Default is `false`.
     pub terminate_on_completion: bool,
 }
 

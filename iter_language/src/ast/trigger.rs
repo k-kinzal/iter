@@ -118,8 +118,8 @@ pub enum TriggerDecl {
         /// Stop after emitting this many signals. `None` means no limit.
         max_signals: Option<u64>,
     },
-    /// External, user-defined trigger. The contents are preserved as a
-    /// generic [`Value`] tree so the runner can interpret them.
+    /// External, user-defined trigger. The contents are preserved verbatim
+    /// as a generic [`Value`] tree.
     External {
         /// Trigger kind name as written in source.
         name: String,
@@ -186,8 +186,9 @@ pub enum OnErrorKeyword {
 pub struct WebhookRoute {
     /// Quoted event name pattern, e.g. `"issues.opened"`.
     pub event_pattern: String,
-    /// Optional `when "<expr>"` guard. Stored as a raw string and evaluated
-    /// by the runner.
+    /// Optional `when "<expr>"` guard. Stored as a raw string; its
+    /// `{{event.*}}` references are checked at analysis time and the guard
+    /// is evaluated by the webhook source when a matching event arrives.
     pub when: Option<String>,
     /// Priority keyword to assign to signals produced by this route.
     pub priority: Option<PriorityKeyword>,

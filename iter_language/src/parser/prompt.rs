@@ -53,18 +53,20 @@ impl Parser<'_> {
         let on_span = self.peek_span();
         self.bump(); // `on`
         let (pattern, _pat_span) = self.expect_string()?;
-        let when = if matches!(self.peek(), Some(Token::Ident(name)) if name == "when") {
+        let (when, when_span) = if matches!(self.peek(), Some(Token::Ident(name)) if name == "when")
+        {
             self.bump();
-            let (s, _) = self.expect_string()?;
-            Some(s)
+            let (s, sp) = self.expect_string()?;
+            (Some(s), Some(sp))
         } else {
-            None
+            (None, None)
         };
         let body = self.parse_block();
         let span_end = body.span.end;
         Some(RawRoute {
             event_pattern: pattern,
             when,
+            when_span,
             body,
             span: on_span.start..span_end,
         })

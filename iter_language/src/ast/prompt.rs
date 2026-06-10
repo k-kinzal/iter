@@ -5,8 +5,9 @@
 pub struct PromptDecl {
     /// Optional `when` guard expression.
     pub guard: Option<PromptGuard>,
-    /// Raw template body. Placeholders such as `{{metadata.foo}}` are NOT
-    /// resolved at parse time — that is the runner's responsibility.
+    /// Raw template body. Placeholders such as `{{metadata.foo}}` are kept
+    /// verbatim; they are resolved when the prompt is rendered, not during
+    /// analysis.
     pub body: String,
 }
 

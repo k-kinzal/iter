@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::Analyzer;
+use super::TemplatePosition;
 use super::value::value_from_raw_pure;
 use crate::ast::{ExtractExpr, FilesSource, PriorityKeyword, Span, TriggerDecl, WatchEventKind};
 use crate::diagnostic::Diagnostic;
@@ -358,7 +359,7 @@ impl Analyzer {
         fields: &mut BTreeMap<String, RawField>,
     ) -> CommonTriggerFields {
         let base_metadata = self
-            .take_optional_metadata_block(fields, "metadata")
+            .take_optional_metadata_block(fields, "metadata", TemplatePosition::TriggerBaseMetadata)
             .unwrap_or_default();
         let priority = self.take_optional_priority(fields, "priority");
         let max_signals = self.take_optional_u64(fields, "max_signals");

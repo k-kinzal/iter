@@ -24,6 +24,7 @@ pub(crate) use compose::lower_compose_and_check;
 
 use guard::lower_guard_pure;
 use suggest::{closest, parse_priority};
+pub(crate) use template::TemplatePosition;
 
 use crate::ast::{
     ArgDecl, EventHandlerDecl, NamedDef, NamedPrompt, PromptArm, PromptDecl, PromptExpr,
@@ -52,12 +53,40 @@ const TRIGGER_IN_ITERFILE_HINT: &str = "trigger declarations belong in `compose.
 pub(crate) fn lower_and_check(file: RawFile) -> (Option<Root>, Vec<Diagnostic>) {
     let mut analyzer = Analyzer::default();
     let result = analyzer.lower(file);
+    let declared: std::collections::BTreeSet<String> =
+        result.args.iter().map(|a| a.node.name.clone()).collect();
+    analyzer.finish_arg_refs(&declared);
     (Some(result), analyzer.errors)
 }
 
 #[derive(Default)]
 struct Analyzer {
     errors: Vec<Diagnostic>,
+    /// `{{arg.<name>}}` references gathered during template validation,
+    /// cross-checked against the file's declared `arg`s once lowering is
+    /// complete (args may be declared after the template that uses them).
+    arg_refs: Vec<(String, Span)>,
+}
+
+impl Analyzer {
+    /// Emit an error for every recorded `{{arg.<name>}}` reference whose
+    /// name is not among the file's declared `arg`s. Drains `arg_refs`.
+    fn finish_arg_refs(&mut self, declared: &std::collections::BTreeSet<String>) {
+        let refs = std::mem::take(&mut self.arg_refs);
+        for (name, span) in refs {
+            if !declared.contains(&name) {
+                self.errors.push(
+                    Diagnostic::error(
+                        span,
+                        format!("`{{{{arg.{name}}}}}` references an undeclared arg `{name}`"),
+                    )
+                    .with_hint(format!(
+                        "declare it with `arg {name} {{ default = \"...\" }}`, or `arg {name}` and pass `--arg {name}=...` at run time"
+                    )),
+                );
+            }
+        }
+    }
 }
 
 impl Analyzer {
@@ -418,7 +447,7 @@ impl Analyzer {
                                 "named prompt definitions (`prompt as <name>`) cannot have `when` guards",
                             ));
                         }
-                        self.validate_template(&body, &body_span);
+                        self.validate_template(&body, &body_span, TemplatePosition::Prompt);
                         if self.reject_duplicate_name(&seen.prompt_names, &name_ident.name, &span, "prompt") {
                             continue;
                         }
@@ -654,7 +683,7 @@ struct SectionSeen {
 }
 
 
-fn is_valid_arg_name(name: &str) -> bool {
+pub(super) fn is_valid_arg_name(name: &str) -> bool {
     let mut chars = name.chars();
     match chars.next() {
         Some(c) if c.is_ascii_alphabetic() || c == '_' => {}

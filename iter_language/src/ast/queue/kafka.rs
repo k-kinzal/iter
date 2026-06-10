@@ -40,9 +40,9 @@ pub struct KafkaConfig {
     pub api_version_request_timeout_ms: Option<i64>,
     /// Security / SASL / TLS settings.
     pub security: Option<KafkaSecurity>,
-    /// Producer knobs (used by [`crate::Queue::queue`]).
+    /// Producer knobs (used when enqueuing).
     pub producer: Option<KafkaProducer>,
-    /// Consumer knobs (used by [`crate::Queue::dequeue`]).
+    /// Consumer knobs (used when dequeuing).
     pub consumer: Option<KafkaConsumer>,
     /// Convenience flag — when true, iter sets idempotence + acks=all
     /// + a transactional id.

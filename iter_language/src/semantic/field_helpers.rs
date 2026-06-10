@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{Analyzer, MODE_HINT, closest, parse_priority};
+use super::{Analyzer, MODE_HINT, TemplatePosition, closest, parse_priority};
 use crate::ast::{AgentMode, OnErrorKeyword, PriorityKeyword, SecretExpr, Span};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawField, RawIdent, RawValue};
@@ -460,6 +460,7 @@ impl Analyzer {
         &mut self,
         fields: &mut BTreeMap<String, RawField>,
         name: &str,
+        position: TemplatePosition,
     ) -> Option<Vec<(String, String)>> {
         let field = fields.remove(name)?;
         match field.value {
@@ -468,7 +469,7 @@ impl Analyzer {
                 for f in block.fields {
                     match f.value {
                         RawValue::String(s, span) => {
-                            self.validate_template(&s, &span);
+                            self.validate_template(&s, &span, position);
                             out.push((f.name.name, s));
                         }
                         other => {
@@ -485,6 +486,31 @@ impl Analyzer {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a `{{ key = \"value\" ... }}` block"),
+                ));
+                None
+            }
+        }
+    }
+
+    /// Pop an optional string field whose value is a template, validating
+    /// its `{{...}}` placeholders against `position`. Used for fields like
+    /// the dead-letter `reason_template` that are rendered later by core.
+    pub(super) fn take_optional_template_text(
+        &mut self,
+        fields: &mut BTreeMap<String, RawField>,
+        name: &str,
+        position: TemplatePosition,
+    ) -> Option<String> {
+        let field = fields.remove(name)?;
+        match field.value {
+            RawValue::String(s, span) => {
+                self.validate_template(&s, &span, position);
+                Some(s)
+            }
+            other => {
+                self.errors.push(Diagnostic::error(
+                    other.span(),
+                    format!("`{name}` must be a string"),
                 ));
                 None
             }

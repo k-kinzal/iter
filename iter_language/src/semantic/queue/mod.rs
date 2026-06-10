@@ -13,6 +13,7 @@ pub(super) mod sqs;
 use std::collections::BTreeMap;
 
 use super::Analyzer;
+use super::TemplatePosition;
 use crate::ast::{DlqPolicyDecl, DlqTargetDecl, QueueDecl, RetryPolicyDecl, Span};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawField, RawIdent};
@@ -169,7 +170,11 @@ impl Analyzer {
         let mut block = self.take_optional_block(fields, name)?;
         let kind = self.take_optional_string(&mut block, "kind");
         let max_receive_count = self.take_optional_int(&mut block, "max_receive_count");
-        let reason_template = self.take_optional_string(&mut block, "reason_template");
+        let reason_template = self.take_optional_template_text(
+            &mut block,
+            "reason_template",
+            TemplatePosition::DeadLetterReason,
+        );
         let include_headers = self.take_optional_bool(&mut block, "include_headers");
         let target = self.lower_dlq_target(&mut block, "target", kind_span);
         self.reject_unknown_fields(&mut block, DLQ_FIELDS, "dlq");

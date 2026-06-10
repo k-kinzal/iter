@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::Analyzer;
+use super::{Analyzer, TemplatePosition};
 use crate::ast::WebhookRoute;
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawField, RawRoute};
@@ -20,9 +20,22 @@ impl Analyzer {
                 span: route.body.span.clone(),
             };
             let mut fields: BTreeMap<String, RawField> = self.collect_fields(Some(block));
+            // The `when` guard and per-subscription metadata are the two
+            // positions where `{{event.*}}` is legal (R8). The guard's
+            // `{{...}}` placeholders are validated here; the full guard
+            // grammar (and fail-closed evaluation) is reworked when the
+            // webhook source becomes a subprocess.
+            if let Some(when) = &route.when {
+                let when_span = route.when_span.clone().unwrap_or_else(|| route.span.clone());
+                self.validate_template(when, &when_span, TemplatePosition::WebhookSubscription);
+            }
             let priority = self.take_optional_priority(&mut fields, "priority");
             let metadata = self
-                .take_optional_metadata_block(&mut fields, "metadata")
+                .take_optional_metadata_block(
+                    &mut fields,
+                    "metadata",
+                    TemplatePosition::WebhookSubscription,
+                )
                 .unwrap_or_default();
             self.reject_unknown_fields(&mut fields, &["priority", "metadata"], "webhook route");
             for action in &route.body.actions {

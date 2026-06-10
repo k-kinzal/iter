@@ -8,9 +8,9 @@ use crate::ast::SecretExpr;
 pub struct PubSubConfig {
     /// GCP project hosting the topic and subscription. Required.
     pub project: String,
-    /// Topic id used by [`crate::Queue::queue`]. Required.
+    /// Topic id used when enqueuing. Required.
     pub topic: String,
-    /// Subscription id used by [`crate::Queue::dequeue`]. Required.
+    /// Subscription id used when dequeuing. Required.
     pub subscription: String,
     /// Optional regional endpoint or emulator host (`PUBSUB_EMULATOR_HOST`).
     pub endpoint: Option<String>,

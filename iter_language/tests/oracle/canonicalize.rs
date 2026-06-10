@@ -79,6 +79,9 @@ fn canon_block(b: &mut RawBlock) {
     }
     for r in &mut b.routes {
         r.span = 0..0;
+        if let Some(sp) = &mut r.when_span {
+            *sp = 0..0;
+        }
         canon_block(&mut r.body);
     }
     for a in &mut b.actions {

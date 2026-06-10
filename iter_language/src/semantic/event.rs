@@ -1,6 +1,6 @@
 //! `on <event> { ... }` top-level handler lowering plus shell-action collection.
 
-use super::{Analyzer, closest};
+use super::{Analyzer, TemplatePosition, closest};
 use crate::ast::{Action, EventHandlerDecl, EventName, Span, Spanned};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawAction, RawBlock, RawIdent};
@@ -83,7 +83,7 @@ impl Analyzer {
         let mut out = Vec::new();
         for raw in &block.actions {
             let RawAction { command, .. } = raw;
-            self.validate_template(command, &raw.span);
+            self.validate_template(command, &raw.span, TemplatePosition::ShellAction);
             out.push(Action::Shell(command.clone()));
         }
         out

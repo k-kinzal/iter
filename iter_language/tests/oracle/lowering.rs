@@ -538,6 +538,7 @@ fn lower_nested_route(pair: Pair<Rule>) -> RawRoute {
     let span = pair_span(&pair);
     let mut event_pattern: Option<String> = None;
     let mut when: Option<String> = None;
+    let mut when_span: Option<Span> = None;
     let mut body: Option<RawBlock> = None;
     for p in pair.into_inner() {
         match p.as_rule() {
@@ -550,6 +551,7 @@ fn lower_nested_route(pair: Pair<Rule>) -> RawRoute {
                     .into_inner()
                     .find(|c| c.as_rule() == Rule::string)
                     .expect("route_when contains string");
+                when_span = Some(pair_span(&s));
                 when = Some(lower_string_raw(&s));
             }
             Rule::block => body = Some(lower_block(p)),
@@ -559,6 +561,7 @@ fn lower_nested_route(pair: Pair<Rule>) -> RawRoute {
     RawRoute {
         event_pattern: event_pattern.expect("route event pattern"),
         when,
+        when_span,
         body: body.expect("route body"),
         span,
     }

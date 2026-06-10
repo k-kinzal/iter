@@ -106,7 +106,7 @@ pub enum SandboxNetworkDecl {
 /// Workspace-level sandbox policy (upper bound).
 ///
 /// The four `Vec<String>` fields are additive over the agent's declared
-/// `sandbox_requirements` (the lower bound). Empty vectors mean "no project
+/// operational requirements (the lower bound). Empty vectors mean "no project
 /// additions" — the common case and what you get when you omit the field.
 /// `network` is required: there is no honest default (`off` breaks some
 /// projects, `all` breaks others).

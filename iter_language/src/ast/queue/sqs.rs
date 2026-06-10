@@ -32,9 +32,9 @@ pub struct SqsConfig {
     pub credentials: Option<SqsCredentials>,
     /// Connection / request timing knobs.
     pub http_client: Option<SqsHttpClient>,
-    /// Producer-side knobs (used by [`crate::Queue::queue`]).
+    /// Producer-side knobs (used when enqueuing).
     pub producer: Option<SqsProducer>,
-    /// Consumer-side knobs (used by [`crate::Queue::dequeue`]).
+    /// Consumer-side knobs (used when dequeuing).
     pub consumer: Option<SqsConsumer>,
     /// Retry policy for SDK API calls.
     pub retry: Option<RetryPolicyDecl>,

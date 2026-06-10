@@ -97,13 +97,12 @@ pub enum TemplatedString {
     /// Static literal value.
     Literal(String),
     /// `from_metadata("key")` — at send time the named metadata field
-    /// is read off the [`Signal`](iter_core::Signal) and substituted.
+    /// is read off the signal and substituted.
     FromMetadata(String),
 }
 
-/// `RetryPolicy` declaration. Mirrors
-/// [`iter_core::queue::RetryPolicy`] one-for-one; the compose layer
-/// converts.
+/// `RetryPolicy` declaration. Mirrors the runtime retry policy one-for-one;
+/// the operator translates it when connecting the queue.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RetryPolicyDecl {
     /// One of `standard` | `adaptive` | `fixed` | `exponential`.

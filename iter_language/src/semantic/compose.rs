@@ -26,6 +26,13 @@ const TELEMETRY_NO_KIND_HINT: &str = "compose.iter telemetry is a singleton bloc
 pub(crate) fn lower_compose_and_check(file: RawFile) -> (Option<ComposeRoot>, Vec<Diagnostic>) {
     let mut analyzer = Analyzer::default();
     let result = analyzer.lower_compose(file);
+    // Note: `finish_arg_refs` is deliberately Iterfile-only. A compose.iter
+    // has no `arg` *declaration* surface — its only args are concrete
+    // build-time values a service passes down to its Iterfile — so there is
+    // no declared-name set to cross-check against here. Any `{{arg.*}}`
+    // recorded while lowering a compose file is therefore intentionally
+    // dropped rather than reported. Compose-side arg legality belongs to the
+    // operator layer that resolves those values.
     (Some(result), analyzer.errors)
 }
 

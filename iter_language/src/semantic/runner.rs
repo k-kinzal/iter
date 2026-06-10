@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{Analyzer, CONTINUE_ON_ERROR_HINT, RUNNER_BEHAVIOR_HINT};
+use super::{Analyzer, CONTINUE_ON_ERROR_HINT, RUNNER_BEHAVIOR_HINT, TemplatePosition};
 use crate::ast::{
     EventHandlerDecl, PromptArm, PromptExpr, PromptValue, RunnerBehavior, RunnerDecl, Span,
     Spanned,
@@ -371,7 +371,7 @@ impl Analyzer {
 
         match field.value {
             RawValue::String(s, span) => {
-                self.validate_template(&s, &span);
+                self.validate_template(&s, &span, TemplatePosition::Prompt);
                 PromptExpr::Single(PromptValue::Inline(s))
             }
             RawValue::Ident(name, _) => PromptExpr::Single(PromptValue::Ref(name)),
@@ -400,7 +400,7 @@ impl Analyzer {
         for arm in block.prompt_arms {
             let value = match arm.value {
                 RawValue::String(s, span) => {
-                    self.validate_template(&s, &span);
+                    self.validate_template(&s, &span, TemplatePosition::Prompt);
                     PromptValue::Inline(s)
                 }
                 RawValue::Ident(name, _) => PromptValue::Ref(name),
@@ -498,7 +498,7 @@ impl Analyzer {
         for field in block.fields {
             let value = match field.value {
                 RawValue::String(s, span) => {
-                    self.validate_template(&s, &span);
+                    self.validate_template(&s, &span, TemplatePosition::Prompt);
                     PromptValue::Inline(s)
                 }
                 RawValue::Ident(name, _) => PromptValue::Ref(name),

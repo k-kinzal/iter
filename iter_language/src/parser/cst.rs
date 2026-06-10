@@ -7,7 +7,7 @@
 
 use crate::ast::Span;
 
-/// Root of the concrete syntax tree produced by [`super::parse_tokens`].
+/// Root of the concrete syntax tree produced by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawFile {
     /// Top-level sections in source order.
@@ -189,6 +189,9 @@ pub struct RawRoute {
     pub event_pattern: String,
     /// Optional raw `when` guard string.
     pub when: Option<String>,
+    /// Span of the `when` guard string literal (when present), so analysis
+    /// can point diagnostics at the guard rather than the whole route.
+    pub when_span: Option<Span>,
     /// Body block.
     pub body: RawBlock,
     /// Full span of the route.
