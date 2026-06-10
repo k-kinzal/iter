@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: toplevel-on.iter
+---
+Error: top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`
+    ╭─[toplevel-on.iter:24:1]
+    │
+ 24 │ ╭─▶ on agent_finished {
+    ┆ ┆   
+ 26 │ ├─▶ }
+    │ │       
+    │ ╰─────── top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`
+────╯

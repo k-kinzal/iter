@@ -1,3 +1,2 @@
 workspace local { base = "unterminated
 }
-runner { continue_on_error = false  behavior = wait }

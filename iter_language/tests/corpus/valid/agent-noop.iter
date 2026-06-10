@@ -7,8 +7,10 @@ workspace local {
 agent noop {}
 
 runner {
+  agent = noop
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Noop test."
 }
-
-prompt "Noop test."

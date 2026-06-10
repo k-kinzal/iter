@@ -11,8 +11,10 @@ agent grok {
 }
 
 runner {
+  agent = grok
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Grok test."
 }
-
-prompt "Grok test."

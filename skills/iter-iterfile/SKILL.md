@@ -16,8 +16,9 @@ and CLI surface.
 ## Minimal Example
 
 The smallest Iterfile that runs under `iter run`: `workspace` + `agent` +
-`runner` + `prompt`. No queue (so `runner.behavior` must be `loop`), no `on`
-handlers. Every field shown is required.
+`runner`, with the prompt bound inside `runner`. No queue (so
+`runner.behavior` must be `loop`), no `on` handlers. Every field shown is
+required.
 
 ```hcl
 workspace local {
@@ -30,11 +31,12 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = local
   continue_on_error = false
   behavior          = loop
+  prompt            = "Improve the codebase."
 }
-
-prompt "Improve the codebase."
 ```
 
 ## Top-Level Sections
@@ -44,13 +46,18 @@ prompt "Improve the codebase."
 | `queue <kind>` | 0–1 | Optional | Required when `runner.behavior = wait`. |
 | `workspace <kind>` | 0–1 | For `iter run` | Kinds: `local`, `clone`, `sandbox`. |
 | `agent <kind>` | 0–1 | For `iter run` | 8 kinds; see [`reference/blocks.md`](reference/blocks.md). |
-| `runner` | 0–1 | For `iter run` | The only top-level block that takes no kind. |
-| `prompt [when <guard>] "<body>"` | 0–N | Optional | Multiple match → joined in source order. |
-| `on <event>` | 0–N | Optional | Lifecycle hooks (shell actions). |
+| `prompt as <name> "<body>"` | 0–N | Optional | Reusable named prompt; referenced by bareword in a runner. |
+| `runner` | 0–1 | For `iter run` | The only top-level block that takes no kind. Binds `agent`/`workspace`/`queue` by name and carries the `prompt` plus `on <event>` handlers. |
+
+Definitions (`workspace`, `agent`, `queue`) are **named** — the name is the
+kind, or an explicit `as <name>` alias. The `runner` block references them
+by name and is where the prompt and lifecycle handlers live; there are no
+top-level `prompt` or `on` sections.
 
 A partial Iterfile is allowed (a webhook handler may omit
 `workspace`/`agent`/`runner`); to be runnable standalone via `iter run` it
-needs `workspace` + `agent` + `runner` + `prompt`.
+needs `workspace` + `agent` + `runner`, and the runner must carry a
+`prompt`.
 
 Per-block field tables, including every kind variant, live in
 [`reference/blocks.md`](reference/blocks.md).
@@ -96,30 +103,37 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = clone
   continue_on_error = false
   behavior          = loop
+  prompt            = "x"
 }
-
-prompt "x"
 ```
 
 ## Prompt guards
 
-Each `prompt` may carry a `when` guard — a boolean expression over the
-Signal's metadata and the runner's iteration state.
+The runner's prompt is a `prompt { ... }` match block whose arms carry a
+guard — a boolean expression over the Signal's metadata and the runner's
+iteration state. The first arm whose guard is true wins; `_` is the
+required default.
 
 ```hcl
 workspace local { base = "." }
 agent claude { mode = print  command = "claude" }
-runner { continue_on_error = true  behavior = loop }
 
-prompt "Always-on instructions."
-
-prompt when metadata.task == "security" "Run a security audit."
-
-prompt when iteration.count % 50 == 0 "The current codebase has problems. Identify the issues and fix them."
-
-prompt when metadata.env == "prod" && metadata.task != "skip" "Run production-safe checks only."
+runner {
+  agent     = claude
+  workspace = local
+  continue_on_error = true
+  behavior  = loop
+  prompt {
+    metadata.task == "security" => "Run a security audit."
+    iteration.count % 50 == 0 => "The current codebase has problems. Identify the issues and fix them."
+    metadata.env == "prod" && metadata.task != "skip" => "Run production-safe checks only."
+    _ => "Always-on instructions."
+  }
+}
 ```
 
 Available `iteration.*` fields: `count` (1-indexed), `previous_exit_code`,
@@ -128,9 +142,10 @@ Available `iteration.*` fields: `count` (1-indexed), `previous_exit_code`,
 `<`, `<=`, `>`, `>=`, optional `% N`. `&&` and `||` group with
 parentheses.
 
-When several `prompt` blocks match the same Signal, their bodies are
-concatenated in source order, separated by a blank line, and sent as one
-prompt.
+The match selects exactly one body per iteration: guarded arms are
+evaluated top to bottom and the first true arm wins; if none match, the
+`_` default arm is used. To combine instructions, write them into a single
+arm body rather than expecting multiple arms to fire.
 
 ## Lifecycle Events
 
@@ -153,23 +168,29 @@ support `{{...}}` placeholders (`signal.*`, `metadata.*`, `iteration.*`,
 ```hcl
 workspace local { base = "." }
 agent claude { mode = print  command = "claude" }
-runner { continue_on_error = true  behavior = loop }
-prompt "x"
 
-on runner_starting {
-  shell "test -d .iter/wt || git worktree add .iter/wt HEAD"
-}
+runner {
+  agent     = claude
+  workspace = local
+  continue_on_error = true
+  behavior  = loop
+  prompt    = "x"
 
-on agent_finished {
-  shell "git status --short"
-}
+  on runner_starting {
+    shell "test -d .iter/wt || git worktree add .iter/wt HEAD"
+  }
 
-on signal_received {
-  shell "logger 'iter: signal {{signal.id}} received'"
-}
+  on agent_finished {
+    shell "git status --short"
+  }
 
-on runner_error {
-  shell "logger 'iter: runner errored on iteration {{iteration.count}}'"
+  on signal_received {
+    shell "logger 'iter: signal {{signal.id}} received'"
+  }
+
+  on runner_error {
+    shell "logger 'iter: runner errored on iteration {{iteration.count}}'"
+  }
 }
 ```
 

@@ -13,7 +13,10 @@ The agent receives no direction. Each iteration starts from the workspace
 state alone — no mission, no method, no evaluation criteria.
 
 ```hcl
-prompt "Please continue."
+runner {
+  # ...bindings...
+  prompt = "Please continue."
+}
 ```
 
 The agent decides what to look at, what to try, and when to stop. This is
@@ -30,7 +33,10 @@ A destination is named but the path is unspecified. The agent can approach
 the goal from any angle.
 
 ```hcl
-prompt "Please continue toward better error handling."
+runner {
+  # ...bindings...
+  prompt = "Please continue toward better error handling."
+}
 ```
 
 The goal anchors exploration to a region of the problem space but does not
@@ -46,14 +52,17 @@ exploration but also caps it — the agent is unlikely to discover angles
 outside the listed set.
 
 ```hcl
-prompt """
-Explore error handling.
+runner {
+  # ...bindings...
+  prompt = """
+  Explore error handling.
 
-Lenses:
-- Panic vs Result boundaries.
-- Error context propagation.
-- User-facing error messages.
-"""
+  Lenses:
+  - Panic vs Result boundaries.
+  - Error context propagation.
+  - User-facing error messages.
+  """
+}
 ```
 
 **Width trap:** naming existing abstractions in lenses (e.g. "the Runner's
@@ -70,14 +79,17 @@ significantly narrower than Levels 0–2 because the agent can no longer
 choose its own approach.
 
 ```hcl
-prompt """
-Improve test coverage.
+runner {
+  # ...bindings...
+  prompt = """
+  Improve test coverage.
 
-How to proceed:
-- Find an untested code path.
-- Write a failing test.
-- Make it pass.
-"""
+  How to proceed:
+  - Find an untested code path.
+  - Write a failing test.
+  - Make it pass.
+  """
+}
 ```
 
 Each methodological instruction ("form a hypothesis", "verify with code",
@@ -91,7 +103,10 @@ The prompt names a concrete deliverable. Exploration is minimal — the
 agent executes rather than explores.
 
 ```hcl
-prompt "Add a unit test for Queue::dequeue timeout behaviour."
+runner {
+  # ...bindings...
+  prompt = "Add a unit test for Queue::dequeue timeout behaviour."
+}
 ```
 
 ---
@@ -153,9 +168,15 @@ problems rather than continuing in the direction the workspace
 suggests.
 
 ```hcl
-prompt when iteration.count % 50 == 0 """
-The current codebase has problems. Identify the issues and fix them.
-"""
+runner {
+  # ...bindings...
+  prompt {
+    iteration.count % 50 == 0 => """
+    The current codebase has problems. Identify the issues and fix them.
+    """
+    _ => "Please continue."
+  }
+}
 ```
 
 Note: `consecutive_failures` and `consecutive_successes` track
@@ -169,19 +190,25 @@ changing its approach.
 
 When an external agent sends a course-correction signal via `iter enqueue
 -m prompt="..."`, the signal prompt should **replace** the base prompt,
-not append to it. Use mutually exclusive guards:
+not append to it. A `prompt { ... }` match block selects exactly one arm,
+so the correction arm naturally replaces the base default:
 
 ```hcl
-prompt when metadata.prompt == "" "Please continue."
-
-prompt when metadata.prompt != "" """
-{{metadata.prompt}}
-"""
+runner {
+  # ...bindings...
+  prompt {
+    metadata.prompt != "" => """
+    {{metadata.prompt}}
+    """
+    _ => "Please continue."
+  }
+}
 ```
 
-If both prompts fire (the default when guards are not exclusive), the base
-prompt's framing persists alongside the correction, limiting its
-effectiveness.
+Because the match selects a single arm — the first true guard, else `_` —
+the base prompt's framing never rides alongside the correction. (Avoid
+re-introducing the base text inside the correction arm, which would
+re-anchor the agent and blunt the course change.)
 
 ---
 

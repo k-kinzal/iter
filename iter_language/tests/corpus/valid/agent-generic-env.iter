@@ -13,8 +13,10 @@ agent generic {
 }
 
 runner {
+  agent = generic
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Generic env test."
 }
-
-prompt "Generic env test."

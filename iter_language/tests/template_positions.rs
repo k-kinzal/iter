@@ -5,7 +5,7 @@
 
 use iter_language::{parse, parse_compose};
 
-/// A complete flat Iterfile whose prompt body is `prompt_body` and which is
+/// A complete Iterfile whose runner prompt is `prompt_body` and which is
 /// preceded by `prologue` (e.g. `arg` declarations).
 fn iterfile(prologue: &str, prompt_body: &str) -> String {
     format!(
@@ -22,10 +22,13 @@ agent claude {{
   command = "claude"
 }}
 runner {{
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "{prompt_body}"
 }}
-prompt "{prompt_body}"
 "#
     )
 }
@@ -44,12 +47,32 @@ fn signal_metadata_iteration_today_are_legal_in_a_prompt() {
 
 #[test]
 fn event_root_is_rejected_in_a_shell_action() {
-    let src = format!(
-        "{}\non runner_finished {{ shell \"echo {{{{event.action}}}}\" }}\n",
-        iterfile("", "ok")
-    );
+    // The event handler lives inside the runner block; `{{event.*}}` is still
+    // illegal in its shell action regardless of where the handler is declared.
+    let src = r#"
+queue memory
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }
+}
+agent claude {
+  mode = print
+  command = "claude"
+}
+runner {
+  agent = claude
+  workspace = clone
+  queue = memory
+  continue_on_error = false
+  behavior = wait
+  prompt = "ok"
+  on runner_finished { shell "echo {{event.action}}" }
+}
+"#;
     assert!(
-        parse(&src).is_err(),
+        parse(src).is_err(),
         "`event` is not legal in an on-event shell action"
     );
 }
@@ -87,8 +110,14 @@ const SQS_DLQ: &str = r#"queue sqs {
 }
 workspace local { base = "." }
 agent claude { mode = print  command = "claude" }
-prompt "x"
-runner { continue_on_error = false  behavior = wait }
+runner {
+  agent = claude
+  workspace = local
+  queue = sqs
+  continue_on_error = false
+  behavior = wait
+  prompt = "x"
+}
 "#;
 
 #[test]

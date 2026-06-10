@@ -12,5 +12,11 @@ agent claude {
   command = "claude"
 }
 
-prompt "do the thing"
-runner { continue_on_error = false  behavior = wait }
+runner {
+  agent = claude
+  workspace = local
+  queue = shell
+  continue_on_error = false
+  behavior = wait
+  prompt = "do the thing"
+}

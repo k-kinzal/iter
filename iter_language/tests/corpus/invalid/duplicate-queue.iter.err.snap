@@ -2,20 +2,12 @@
 source: iter_language/tests/conformance.rs
 description: duplicate-queue.iter
 ---
-Error: duplicate `queue` declaration
+Error: duplicate queue name `memory`
    ╭─[duplicate-queue.iter:2:1]
    │
  2 │ queue memory
    │ ──────┬─────  
-   │       ╰─────── duplicate `queue` declaration
+   │       ╰─────── duplicate queue name `memory`
    │ 
    │ Help: previous declaration at bytes 0..12
-───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[duplicate-queue.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
 ───╯

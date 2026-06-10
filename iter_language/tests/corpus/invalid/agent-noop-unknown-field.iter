@@ -1,4 +1,3 @@
 agent noop {
   foo = "bar"
 }
-runner { continue_on_error = false  behavior = wait }

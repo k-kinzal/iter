@@ -10,6 +10,3 @@ agent claude {
   mode = print
   command = "claude"
 }
-
-prompt "x"
-runner { continue_on_error = false  behavior = wait }

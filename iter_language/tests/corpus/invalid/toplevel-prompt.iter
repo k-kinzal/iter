@@ -1,0 +1,24 @@
+queue memory
+
+workspace clone {
+  base = "."
+  excludes = []
+  preserve_mtime = true
+  apply_back { mode = sync }
+}
+
+agent claude {
+  mode = print
+  command = "claude"
+}
+
+runner {
+  agent = claude
+  workspace = clone
+  queue = memory
+  continue_on_error = false
+  behavior = wait
+  prompt = "Iterate."
+}
+
+prompt "stray top-level prompt"

@@ -9,11 +9,3 @@ Error: unknown field `flavor` in queue memory
    │                ───┬──  
    │                   ╰──── unknown field `flavor` in queue memory
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[unknown-field.iter:1:1]
-   │
- 1 │ queue memory { flavor = "chocolate" }
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

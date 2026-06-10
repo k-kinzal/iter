@@ -96,10 +96,11 @@ mod tests {
     use crate::diagnostic::Severity;
     use crate::parse_to_cst;
 
-    /// A minimal Iterfile prologue: every required section before any
-    /// `on` block, so the analyzer accepts the file as a whole and the
-    /// only diagnostic that survives is the one we want to inspect.
-    const PROLOGUE: &str = r#"
+    /// A minimal Iterfile head: every required section plus a runner that
+    /// binds its definitions, left open (no closing brace) so a test can
+    /// append runner-scoped `on` blocks. The file as a whole validates, so
+    /// the only diagnostics that survive are the ones we want to inspect.
+    const HEAD: &str = r#"
 queue memory
 workspace clone {
   base = "."
@@ -114,11 +115,19 @@ agent claude {
   command = "claude"
 }
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = false
   behavior = wait
-}
-prompt "Iterate."
+  prompt = "Iterate."
 "#;
+
+    /// Close [`HEAD`] around `on_blocks`, yielding a complete Iterfile whose
+    /// runner carries the given event handlers.
+    fn iterfile(on_blocks: &str) -> String {
+        format!("{HEAD}\n{on_blocks}}}\n")
+    }
 
     fn analyze(src: &str) -> Vec<crate::Diagnostic> {
         let (cst, mut diags) = parse_to_cst(src);
@@ -130,12 +139,12 @@ prompt "Iterate."
 
     #[test]
     fn deprecated_alias_emits_one_warning_with_canonical_hint() {
-        let src = format!("{PROLOGUE}\non workspace_torndown {{ shell \"echo done\" }}\n");
+        let src = iterfile("on workspace_torndown { shell \"echo done\" }\n");
         let diags = analyze(&src);
 
         let warnings: Vec<_> = diags
             .iter()
-            .filter(|d| d.severity == Severity::Warning && !d.message.contains("flat Iterfile syntax"))
+            .filter(|d| d.severity == Severity::Warning)
             .collect();
         assert_eq!(
             warnings.len(),
@@ -167,11 +176,11 @@ prompt "Iterate."
 
     #[test]
     fn canonical_event_name_emits_no_warning() {
-        let src = format!("{PROLOGUE}\non workspace_teardown_finished {{ shell \"echo done\" }}\n");
+        let src = iterfile("on workspace_teardown_finished { shell \"echo done\" }\n");
         let diags = analyze(&src);
         let warnings: Vec<_> = diags
             .iter()
-            .filter(|d| d.severity == Severity::Warning && !d.message.contains("flat Iterfile syntax"))
+            .filter(|d| d.severity == Severity::Warning)
             .collect();
         assert!(
             warnings.is_empty(),
@@ -194,11 +203,11 @@ prompt "Iterate."
             use std::fmt::Write as _;
             writeln!(body, "on {alias} {{ shell \"echo {alias}\" }}").expect("write to String");
         }
-        let src = format!("{PROLOGUE}\n{body}");
+        let src = iterfile(&body);
         let diags = analyze(&src);
         let warnings: Vec<_> = diags
             .iter()
-            .filter(|d| d.severity == Severity::Warning && !d.message.contains("flat Iterfile syntax"))
+            .filter(|d| d.severity == Severity::Warning)
             .collect();
         assert_eq!(warnings.len(), cases.len(), "one warning per alias");
         for (alias, canonical) in cases {
@@ -213,7 +222,7 @@ prompt "Iterate."
 
     #[test]
     fn unknown_event_name_is_an_error_not_a_warning() {
-        let src = format!("{PROLOGUE}\non not_a_real_event {{ shell \"echo x\" }}\n");
+        let src = iterfile("on not_a_real_event { shell \"echo x\" }\n");
         let diags = analyze(&src);
         let errors: Vec<_> = diags
             .iter()

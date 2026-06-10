@@ -19,8 +19,10 @@ agent router {
 }
 
 runner {
+  agent = router
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Strategy declared after sub-agents; order is beta then alpha."
 }
-
-prompt "Strategy declared after sub-agents; order is beta then alpha."

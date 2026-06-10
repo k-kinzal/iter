@@ -12,8 +12,10 @@ agent copilot {
 }
 
 runner {
+  agent = copilot
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Pass-through smoke test."
 }
-
-prompt "Pass-through smoke test."

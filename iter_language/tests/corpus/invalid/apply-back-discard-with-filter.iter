@@ -14,10 +14,3 @@ agent claude {
   mode = print
   command = "claude"
 }
-
-runner {
-  continue_on_error = false
-  behavior = wait
-}
-
-prompt "iterate"

@@ -21,11 +21,3 @@ Error: agent router requires at least one sub-agent
    │ 
    │ Help: add named sub-agent blocks: `primary { kind = claude; ... }`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[agent-router-missing-kind.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

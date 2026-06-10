@@ -12,8 +12,10 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Working on {{arg.worktree_name}}."
 }
-
-prompt "Working on {{arg.worktree_name}}."

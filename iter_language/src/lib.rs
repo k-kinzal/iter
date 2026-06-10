@@ -36,10 +36,13 @@
 //!         command = "claude"
 //!     }
 //!     runner {
+//!         agent = claude
+//!         workspace = clone
+//!         queue = memory
 //!         continue_on_error = false
 //!         behavior = wait
+//!         prompt = "Do the thing"
 //!     }
-//!     prompt "Do the thing"
 //! "#;
 //! let root = parse(source).expect("valid source");
 //! assert!(!root.queues.is_empty());

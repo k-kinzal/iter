@@ -3,19 +3,11 @@ source: iter_language/tests/conformance.rs
 description: prompt-iteration-bad-field.iter
 ---
 Error: unknown iteration field `bogus`
-    ╭─[prompt-iteration-bad-field.iter:19:23]
+    ╭─[prompt-iteration-bad-field.iter:21:15]
     │
- 19 │ prompt when iteration.bogus == 1 "should fail"
-    │                       ──┬──  
-    │                         ╰──── unknown iteration field `bogus`
+ 21 │     iteration.bogus == 1 => "should fail"
+    │               ──┬──  
+    │                 ╰──── unknown iteration field `bogus`
     │ 
     │ Help: valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_result ==/!= "none|success|errored"` for the result string.
 ────╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[prompt-iteration-bad-field.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

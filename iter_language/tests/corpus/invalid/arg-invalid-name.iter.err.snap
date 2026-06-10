@@ -9,11 +9,3 @@ Error: expected an identifier, found integer literal
    │     ─┬─  
    │      ╰─── expected an identifier, found integer literal
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[arg-invalid-name.iter:1:1]
-   │
- 1 │ arg 123bad
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

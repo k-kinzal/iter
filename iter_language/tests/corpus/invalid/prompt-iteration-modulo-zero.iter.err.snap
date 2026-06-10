@@ -3,17 +3,9 @@ source: iter_language/tests/conformance.rs
 description: prompt-iteration-modulo-zero.iter
 ---
 Error: `% 0` is not a valid iteration-guard modulus
-    ╭─[prompt-iteration-modulo-zero.iter:19:31]
+    ╭─[prompt-iteration-modulo-zero.iter:21:23]
     │
- 19 │ prompt when iteration.count % 0 == 0 "should fail"
-    │                               ┬  
-    │                               ╰── `% 0` is not a valid iteration-guard modulus
+ 21 │     iteration.count % 0 == 0 => "should fail"
+    │                       ┬  
+    │                       ╰── `% 0` is not a valid iteration-guard modulus
 ────╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[prompt-iteration-modulo-zero.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

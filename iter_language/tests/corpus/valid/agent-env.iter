@@ -14,8 +14,10 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Env test."
 }
-
-prompt "Env test."

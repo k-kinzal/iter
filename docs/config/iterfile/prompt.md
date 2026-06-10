@@ -1,23 +1,54 @@
 # Iterfile: `prompt`
 
-Declares the prompt text sent to the agent each iteration. Zero or more per `Iterfile`. Also usable inside a `compose.iter` inline service.
+Declares the prompt text sent to the agent each iteration. The prompt lives **inside the `runner` block** as a `prompt` field (or `prompt { ... }` match block); it is no longer a top-level section. Reusable prompt bodies are declared at top level with `prompt as <name>` and referenced by bareword. Also usable inside a `compose.iter` inline service.
 
-AST: `PromptDecl` and `PromptGuard` in `iter_language/src/ast/prompt.rs`.
+AST: `PromptExpr`, `PromptValue`, `PromptArm`, `NamedPrompt`, and `PromptGuard` in `iter_language/src/ast/prompt.rs`.
 
 ## Syntax
 
+A runner selects its prompt with one of two forms:
+
 ```hcl
-prompt [when <guard>] "<body>"
+runner {
+  # ...bindings...
+
+  # Single prompt — inline string or a bareword reference to a `prompt as <name>` definition.
+  prompt = "<body>"
+
+  # OR a match block — first true guard wins; `_` is the required default arm.
+  prompt {
+    <guard> => "<body>"
+    <guard> => <named-prompt>
+    _       => "<body>"
+  }
+}
 ```
 
-The body accepts any string literal form documented in [`language.md`](../language.md): single-line, triple-quoted multi-line, or triple-quoted indented heredoc.
+A reusable prompt is declared at top level and referenced by name:
+
+```hcl
+prompt as recovery """
+The previous turn failed. Re-read the workspace and recover.
+"""
+
+runner {
+  # ...bindings...
+  prompt {
+    iteration.previous_result == "errored" => recovery
+    _                                       => "Please continue."
+  }
+}
+```
+
+Bodies accept any string literal form documented in [`language.md`](../language.md): single-line, triple-quoted multi-line, or triple-quoted indented heredoc.
 
 ## Arguments
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `body` | `string` (positional) | Required | — | Prompt text. May contain `{{...}}` placeholders that are resolved at dispatch time. |
-| `when` | guard expression | Optional | — | Boolean predicate; the prompt fires only when it evaluates true against the current Signal's metadata. |
+| `prompt` value | `string` or named-prompt reference | Required (for `iter run`) | — | Prompt text, or a bareword referencing a top-level `prompt as <name>`. May contain `{{...}}` placeholders that are resolved at dispatch time. |
+| match arm guard | guard expression | — | — | Boolean predicate; the arm's value is selected for the iteration when it is the first guard (top to bottom) to evaluate true against the current Signal's metadata and iteration state. |
+| `_` default arm | `string` or reference | Required in a match block | — | Selected when no guarded arm matches. |
 
 ## Placeholder resolution
 
@@ -25,10 +56,11 @@ Placeholders such as `{{metadata.task}}` or `{{signal.id}}` are **not** resolved
 
 See [`language.md` § Placeholders](../language.md) for the full set of placeholder roots.
 
-## `when` guards
+## Match-arm guards
 
 A guard is a boolean expression over the Signal's metadata and the
-runner's iteration state. Grammar:
+runner's iteration state. It forms the left-hand side of a
+`prompt { <guard> => ... }` match arm. Grammar:
 
 ```
 guard      ::= term ( ( "&&" | "||" ) term )*
@@ -63,34 +95,60 @@ that accepts a string RHS, and it does not support `%`.
 
 ```hcl
 # Unconditional
-prompt "Please continue."
-
-# Fires only when the signal carries metadata.task == "security"
-prompt when metadata.task == "security" """
-Perform a security audit. Focus on authentication, input validation,
-and secret handling.
-"""
-
-# Compound guard
-prompt when metadata.env == "prod" && metadata.task != "skip" "Run production-safe checks only."
-
-# Periodic direction change: fires on count == 5, 10, 15, ...
-prompt when iteration.count % 50 == 0 "The current codebase has problems. Identify the issues and fix them."
+runner {
+  agent     = claude
+  workspace = local
+  continue_on_error = true
+  behavior  = loop
+  prompt    = "Please continue."
+}
 ```
-
-## Evaluation order and multiplicity
-
-- Each `prompt` block is evaluated independently. A Signal may match zero, one, or many prompts.
-- When multiple prompts match, their bodies are concatenated **in source order**, separated by a blank line, and sent as a single prompt.
-- A file with zero matching prompts produces an **empty prompt**; the agent is still invoked, but with nothing to read.
 
 ```hcl
-prompt "Start from the failing tests."
-prompt when metadata.strict == "true" "Do not modify public API signatures."
-prompt when metadata.strict == "true" "Require green CI before committing."
+# Guards as match arms — first true arm wins, `_` is the default.
+runner {
+  agent     = claude
+  workspace = local
+  continue_on_error = true
+  behavior  = loop
+  prompt {
+    # Fires only when the signal carries metadata.task == "security"
+    metadata.task == "security" => """
+    Perform a security audit. Focus on authentication, input validation,
+    and secret handling.
+    """
+    # Compound guard
+    metadata.env == "prod" && metadata.task != "skip" => "Run production-safe checks only."
+    # Periodic direction change: fires on count == 50, 100, 150, ...
+    iteration.count % 50 == 0 => "The current codebase has problems. Identify the issues and fix them."
+    _ => "Please continue."
+  }
+}
 ```
 
-For `metadata.strict == "true"`, the agent receives all three prompt bodies joined in order.
+## Evaluation order and selection
+
+- A `prompt = ...` field selects exactly one body unconditionally.
+- A `prompt { ... }` match block selects exactly one arm: guarded arms are evaluated **top to bottom** and the **first** one whose guard is true wins; if none match, the `_` default arm is used. Unlike the removed top-level form, arms are not concatenated — a single body is sent per iteration.
+- The `_` default is required in a match block, so a match always selects a body. A runner with no `prompt` at all produces an **empty prompt**; the agent is still invoked, but with nothing to read.
+
+```hcl
+runner {
+  agent     = claude
+  workspace = local
+  continue_on_error = true
+  behavior  = loop
+  prompt {
+    metadata.strict == "true" => """
+    Do not modify public API signatures.
+    Require green CI before committing.
+    """
+    _ => "Start from the failing tests."
+  }
+}
+```
+
+For `metadata.strict == "true"`, the agent receives the strict arm's body; otherwise it receives the default. To combine instructions, write them into a single arm body (as above) rather than relying on multiple prompts firing.
 
 ## See Also
 

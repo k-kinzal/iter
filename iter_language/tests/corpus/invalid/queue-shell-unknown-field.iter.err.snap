@@ -11,11 +11,3 @@ Error: unknown field `bogus` in queue shell
    │ 
    │ Help: valid fields: enqueue, dequeue, close, interpreter, enqueue_timeout
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[queue-shell-unknown-field.iter:1:1]
-   │
- 1 │ queue shell {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

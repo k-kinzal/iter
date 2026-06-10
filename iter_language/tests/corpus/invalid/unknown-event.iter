@@ -1,5 +1,21 @@
 queue memory
-on no_such_event {
-  shell "echo hi"
+
+workspace local { base = "." }
+
+agent claude {
+  mode = print
+  command = "claude"
 }
-runner { continue_on_error = false  behavior = wait }
+
+runner {
+  agent = claude
+  workspace = local
+  queue = memory
+  continue_on_error = false
+  behavior = wait
+  prompt = "iterate"
+
+  on no_such_event {
+    shell "echo hi"
+  }
+}

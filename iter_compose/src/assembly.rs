@@ -366,8 +366,13 @@ mod tests {
         let iterfile_src = "\
             workspace local { base = \".\" }\n\
             agent claude { mode = print command = \"claude\" }\n\
-            runner { continue_on_error = false behavior = wait }\n\
-            prompt \"hello\"\n";
+            runner {\n\
+              agent = claude\n\
+              workspace = local\n\
+              continue_on_error = false\n\
+              behavior = wait\n\
+              prompt = \"hello\"\n\
+            }\n";
 
         // Iterfile path: parse + assemble directly
         let root = iter_language::parse(iterfile_src).expect("parse iterfile");
@@ -421,8 +426,13 @@ mod tests {
             dir.path().join("Iterfile"),
             "workspace local { base = \".\" }\n\
              agent claude { mode = print command = \"claude\" }\n\
-             runner { continue_on_error = false behavior = wait }\n\
-             prompt \"hello\"\n",
+             runner {\n\
+               agent = claude\n\
+               workspace = local\n\
+               continue_on_error = false\n\
+               behavior = wait\n\
+               prompt = \"hello\"\n\
+             }\n",
         )
         .expect("write iterfile");
         let compose_content = "queue main file { path = \"./.iter/queue\" }\n\
@@ -500,8 +510,13 @@ mod tests {
         let iterfile_content = "\
             workspace local { base = \".\" }\n\
             agent claude { mode = print command = \"claude\" }\n\
-            runner { continue_on_error = false behavior = loop }\n\
-            prompt \"hello\"\n";
+            runner {\n\
+              agent = claude\n\
+              workspace = local\n\
+              continue_on_error = false\n\
+              behavior = loop\n\
+              prompt = \"hello\"\n\
+            }\n";
 
         let root = iter_language::parse(iterfile_content).expect("parse");
         let runner = root.runners.first().expect("runner");

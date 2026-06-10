@@ -99,10 +99,13 @@ agent claude {
     command = "claude"
 }
 runner {
+    agent = claude
+    workspace = local
+    queue = memory
     continue_on_error = false
     behavior = wait
+    prompt = "hello"
 }
-prompt "hello"
 "#,
         )
         .expect("write");

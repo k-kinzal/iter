@@ -12,8 +12,10 @@ agent antigravity {
 }
 
 runner {
+  agent = antigravity
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Antigravity test."
 }
-
-prompt "Antigravity test."

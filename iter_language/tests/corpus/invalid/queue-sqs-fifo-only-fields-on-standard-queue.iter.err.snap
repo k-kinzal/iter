@@ -11,11 +11,3 @@ Error: queue sqs: producer field(s) `message_group_id`, `message_deduplication_i
    │ 
    │ Help: use a `.fifo` queue URL/name or set `fifo = true`; otherwise drop these fields
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[queue-sqs-fifo-only-fields-on-standard-queue.iter:1:1]
-   │
- 1 │ queue sqs {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

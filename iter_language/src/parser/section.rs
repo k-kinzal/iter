@@ -123,7 +123,12 @@ impl Parser<'_> {
         } else {
             None
         };
-        let kind2 = if alias.is_none() {
+        // A second identifier (`queue main file { ... }`) only makes sense
+        // after a first one. No-kind keywords (`runner`, `telemetry`) leave
+        // `kind` as `None`, so they take no `kind2` either — gating on
+        // `kind.is_some()` keeps `runner foo { ... }` a hard parse error,
+        // matching the formal grammar where `runner` carries no leading ident.
+        let kind2 = if alias.is_none() && kind.is_some() {
             if let Some(Token::Ident(name)) = self.peek()
                 && !RESERVED_SECTION_KEYWORDS.contains(&name.as_str())
                 && matches!(self.peek_at(1), Some(Token::LBrace))

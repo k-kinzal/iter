@@ -11,11 +11,3 @@ Error: queue shell requires `dequeue`
    │ 
    │ Help: add `dequeue = "..."`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[queue-shell-missing-dequeue.iter:1:1]
-   │
- 1 │ queue shell {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

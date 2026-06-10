@@ -12,11 +12,15 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt {
+    iteration.previous_result == "none" => "first iteration"
+    iteration.previous_result == "errored" => "recover from previous error"
+    iteration.previous_result != "success" => "non-success path"
+    _ => "regular run after success"
+  }
 }
-
-prompt when iteration.previous_result == "none" "first iteration"
-prompt when iteration.previous_result == "errored" "recover from previous error"
-prompt when iteration.previous_result != "success" "non-success path"
-prompt "regular run after success"

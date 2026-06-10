@@ -2,4 +2,3 @@ workspace clone {
   base = "."
   preserve_mtime = true
   apply_back { mode = sync }}
-runner { continue_on_error = false  behavior = wait }

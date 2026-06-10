@@ -3,19 +3,11 @@ source: iter_language/tests/conformance.rs
 description: prompt-iteration-string-on-numeric.iter
 ---
 Error: string right-hand side is only valid for `iteration.previous_result`, but the left-hand side is `iteration.count`
-    ╭─[prompt-iteration-string-on-numeric.iter:19:23]
+    ╭─[prompt-iteration-string-on-numeric.iter:21:15]
     │
- 19 │ prompt when iteration.count == "ten" "should fail"
-    │                       ──┬──  
-    │                         ╰──── string right-hand side is only valid for `iteration.previous_result`, but the left-hand side is `iteration.count`
+ 21 │     iteration.count == "ten" => "should fail"
+    │               ──┬──  
+    │                 ╰──── string right-hand side is only valid for `iteration.previous_result`, but the left-hand side is `iteration.count`
     │ 
     │ Help: numeric `iteration.*` fields require an integer RHS; only `previous_result` accepts a string
 ────╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[prompt-iteration-string-on-numeric.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

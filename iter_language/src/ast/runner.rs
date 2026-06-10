@@ -7,7 +7,8 @@ use super::Spanned;
 /// `runner { ... }` declaration — project-shaped runtime policy for the
 /// iter loop.
 ///
-/// In the new syntax, a runner binds named definitions by reference:
+/// A runner binds named definitions by reference and carries the prompt
+/// selection plus lifecycle event handlers:
 /// ```text
 /// runner {
 ///     agent     = primary
@@ -17,9 +18,6 @@ use super::Spanned;
 ///     ...
 /// }
 /// ```
-///
-/// In the old (deprecated) flat syntax, these fields are absent and the
-/// semantic analyzer synthesises them from the sole top-level definitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunnerDecl {
     /// Optional runner name (for multi-runner files; currently unused at

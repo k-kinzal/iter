@@ -48,10 +48,13 @@ agent claude {{
     command = "claude"
 }}
 runner {{
+    agent = claude
+    workspace = local
+    queue = file
     continue_on_error = false
     behavior = wait
+    prompt = "{{{{metadata.prompt}}}}"
 }}
-prompt "{{{{metadata.prompt}}}}"
 "#,
             queue_path.display()
         ),
@@ -131,10 +134,12 @@ agent claude {
     command = "claude"
 }
 runner {
+    agent = claude
+    workspace = local
     continue_on_error = false
     behavior = wait
+    prompt = "stub"
 }
-prompt "stub"
 "#,
     );
 
@@ -185,10 +190,12 @@ agent claude {
     command = "claude"
 }
 runner {
+    agent = claude
+    workspace = local
     continue_on_error = false
     behavior = wait
+    prompt = "stub"
 }
-prompt "stub"
 "#,
     );
 
@@ -252,10 +259,12 @@ agent claude {
     command = "claude"
 }
 runner {
+    agent = claude
+    workspace = local
     continue_on_error = false
     behavior = wait
+    prompt = "stub"
 }
-prompt "stub"
 "#,
     );
 

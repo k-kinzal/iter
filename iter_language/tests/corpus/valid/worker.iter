@@ -14,21 +14,25 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = redis
   continue_on_error = false
   behavior = wait
-}
 
-prompt when metadata.kind == "issue" """
+  prompt {
+    metadata.kind == "issue" => """
   A new issue was opened in {{metadata.repo}}.
   Investigate and post your findings as a comment.
 """
-
-prompt when metadata.kind == "ci_fix" """
+    metadata.kind == "ci_fix" => """
   CI is failing on {{metadata.repo}}. Diagnose the failure and prepare a patch.
 """
-
-prompt when metadata.kind != "issue" && metadata.kind != "ci_fix" """
+    metadata.kind != "issue" && metadata.kind != "ci_fix" => """
   Unknown signal kind {{metadata.kind}} — log it and exit.
 """
+    _ => ""
+  }
 
-on workspace_teardown_finished { shell "./scripts/persist-worker-run.sh {{signal.id}}" }
+  on workspace_teardown_finished { shell "./scripts/persist-worker-run.sh {{signal.id}}" }
+}

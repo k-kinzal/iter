@@ -441,8 +441,13 @@ mod tests {
 arg worktree_name = "default-name"
 workspace local { base = "/path/to/{{arg.worktree_name}}" }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -460,8 +465,13 @@ prompt "noop"
 arg worktree_name = "default-name"
 workspace local { base = "/path/to/{{arg.worktree_name}}" }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         let mut overrides = BTreeMap::new();
@@ -481,8 +491,13 @@ prompt "noop"
 arg worktree_name
 workspace local { base = "/path/to/{{arg.worktree_name}}" }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         let err = resolve_args(&mut root, &BTreeMap::new()).unwrap_err();
@@ -494,8 +509,13 @@ prompt "noop"
         let source = r#"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         let mut overrides = BTreeMap::new();
@@ -510,8 +530,13 @@ prompt "noop"
 arg task = "review"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "Do the {{arg.task}} task."
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "Do the {{arg.task}} task."
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -529,9 +554,14 @@ prompt "Do the {{arg.task}} task."
 arg dir = "/tmp/work"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
-on runner_starting { shell "mkdir -p {{arg.dir}}" }
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+  on runner_starting { shell "mkdir -p {{arg.dir}}" }
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -554,8 +584,13 @@ agent claude {
     WORKTREE_NAME = "{{arg.worktree}}"
   }
 }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -571,8 +606,13 @@ prompt "noop"
         let source = r#"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -584,8 +624,13 @@ prompt "noop"
 arg worktree_name
 workspace local { base = "/path/to/{{arg.worktree_name}}" }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         let mut overrides = BTreeMap::new();
@@ -605,8 +650,13 @@ prompt "noop"
 arg env = "staging"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "Deploy {{arg.env}} for {{signal.id}} via {{metadata.source}}."
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "Deploy {{arg.env}} for {{signal.id}} via {{metadata.source}}."
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -623,16 +673,30 @@ prompt "Deploy {{arg.env}} for {{signal.id}} via {{metadata.source}}."
 
     #[test]
     fn unknown_arg_reference_errors() {
+        // A template that references an arg which is declared-but-wrong
+        // (`typo` vs the declared `known`) is rejected at parse time by the
+        // analyzer's `{{arg.*}}` cross-check, so the Iterfile never loads and
+        // `resolve_args` is never reached.
         let source = r#"
 arg known = "val"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "{{arg.typo}}"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "{{arg.typo}}"
+}
 "#;
-        let mut root = parse(source).expect("parse");
-        let err = resolve_args(&mut root, &BTreeMap::new()).unwrap_err();
-        assert!(matches!(err, ArgError::UnknownReference { ref name } if name == "typo"));
+        let diags = parse(source).expect_err("undeclared arg reference must fail to parse");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("undeclared arg") && d.message.contains("typo")),
+            "expected an undeclared-arg diagnostic naming `typo`; got: {:?}",
+            diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -641,8 +705,13 @@ prompt "{{arg.typo}}"
 arg greeting = \"hello\"
 workspace local { base = \".\" }
 agent claude { mode = print command = \"claude\" }
-runner { continue_on_error = false behavior = loop }
-prompt \"{{arg.greeting}} \u{4e16}\u{754c}\"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = \"{{arg.greeting}} \u{4e16}\u{754c}\"
+}
 ";
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -665,8 +734,13 @@ agent fake {
     "output/{{arg.name}}.txt" = "content for {{arg.name}}"
   }
 }
-runner { continue_on_error = false behavior = loop }
-prompt "noop"
+runner {
+  agent = fake
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
@@ -682,14 +756,27 @@ prompt "noop"
 
     #[test]
     fn undeclared_arg_reference_in_no_arg_file_errors() {
+        // A file that declares no args at all but references `{{arg.oops}}` is
+        // rejected at parse time, the same as a mistyped reference — the
+        // analyzer cross-checks every `{{arg.*}}` against the declared set.
         let source = r#"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = loop }
-prompt "{{arg.oops}}"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "{{arg.oops}}"
+}
 "#;
-        let mut root = parse(source).expect("parse");
-        let err = resolve_args(&mut root, &BTreeMap::new()).unwrap_err();
-        assert!(matches!(err, ArgError::UnknownReference { ref name } if name == "oops"));
+        let diags = parse(source).expect_err("undeclared arg reference must fail to parse");
+        assert!(
+            diags
+                .iter()
+                .any(|d| d.message.contains("undeclared arg") && d.message.contains("oops")),
+            "expected an undeclared-arg diagnostic naming `oops`; got: {:?}",
+            diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+        );
     }
 }

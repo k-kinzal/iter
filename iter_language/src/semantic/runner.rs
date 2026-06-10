@@ -11,70 +11,7 @@ use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
 
 impl Analyzer {
-    /// Lower old-style `runner { continue_on_error = ... behavior = ... }`.
-    /// Returns a partial struct with only the runtime policy fields set;
-    /// the caller fills in agent/workspace/queue/prompt/events.
-    pub(super) fn lower_runner_old(
-        &mut self,
-        kind: Option<&RawIdent>,
-        body: Option<RawBlock>,
-        keyword_span: &Span,
-    ) -> Option<OldRunnerDecl> {
-        if let Some(kind) = kind {
-            self.errors.push(Diagnostic::error(
-                kind.span.clone(),
-                format!("`runner` takes no kind, found `{}`", kind.name),
-            ));
-        }
-        if let Some(ref b) = body {
-            for route in &b.routes {
-                self.errors.push(Diagnostic::error(
-                    route.span.clone(),
-                    "nested `on \"...\"` routes are not valid in a runner block",
-                ));
-            }
-            for action in &b.actions {
-                self.errors.push(Diagnostic::error(
-                    action.span.clone(),
-                    "`shell` actions are not valid directly in a runner block",
-                ));
-            }
-            for arm in &b.prompt_arms {
-                self.errors.push(Diagnostic::error(
-                    arm.span.clone(),
-                    "prompt match arms are not valid directly in a runner block",
-                ));
-            }
-            for handler in &b.event_handlers {
-                self.errors.push(Diagnostic::error(
-                    handler.span.clone(),
-                    "event handlers are not valid in a flat Iterfile runner block; use top-level `on <event>` instead",
-                ));
-            }
-        }
-        let mut fields = self.collect_fields(body);
-        let continue_on_error = self.take_required_bool_explicit(
-            &mut fields,
-            "continue_on_error",
-            keyword_span,
-            "runner",
-            CONTINUE_ON_ERROR_HINT,
-        );
-        let behavior = self.take_required_runner_behavior(&mut fields, keyword_span);
-        let iteration_timeout_secs = self.take_iteration_timeout_secs(&mut fields);
-        self.reject_unknown_fields(
-            &mut fields,
-            &["continue_on_error", "behavior", "iteration_timeout_secs"],
-            "runner",
-        );
-        Some(OldRunnerDecl {
-            continue_on_error: continue_on_error?,
-            behavior: behavior?,
-            iteration_timeout_secs,
-        })
-    }
-
-    /// Lower new-style `runner { agent = <ref> workspace = <ref> ... }`.
+    /// Lower a `runner { agent = <ref> workspace = <ref> ... }` block.
     pub(super) fn lower_runner_new(
         &mut self,
         kind: Option<&RawIdent>,
@@ -127,6 +64,19 @@ impl Analyzer {
         }
 
         let mut fields = self.collect_fields_from_vec(block.fields);
+
+        // A `runner` that binds neither `agent` nor `workspace` is the legacy
+        // flat Iterfile shape — those references used to be synthesised from
+        // the sole top-level definitions. That desugaring is gone, so name the
+        // replacement grammar in one actionable error rather than emitting two
+        // generic "runner requires ..." diagnostics.
+        if !fields.contains_key("agent") && !fields.contains_key("workspace") {
+            self.errors.push(Diagnostic::error(
+                keyword_span.clone(),
+                "flat Iterfile syntax is no longer supported; define named `agent`/`workspace`/`queue` definitions and bind them in a `runner { agent = ... workspace = ... }` block",
+            ));
+            return None;
+        }
 
         // Extract binding references.
         let agent = self.take_required_ident(&mut fields, "agent", keyword_span, "runner");
@@ -657,11 +607,4 @@ impl Analyzer {
             }
         }
     }
-}
-
-/// Intermediate struct for old-style runner fields (no references).
-pub(super) struct OldRunnerDecl {
-    pub continue_on_error: bool,
-    pub behavior: RunnerBehavior,
-    pub iteration_timeout_secs: Option<i64>,
 }

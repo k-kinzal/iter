@@ -11,11 +11,3 @@ Error: queue sqs requires `queue_url` or `queue_name` + `account_id`
    │ 
    │ Help: add `queue_url = "https://sqs.<region>.amazonaws.com/<account>/<name>"`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[queue-sqs-missing-identity.iter:1:1]
-   │
- 1 │ queue sqs {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

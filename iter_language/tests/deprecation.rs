@@ -8,7 +8,7 @@
 
 use iter_language::{Severity, parse};
 
-const ITERFILE_PROLOGUE: &str = r#"
+const ITERFILE_HEAD: &str = r#"
 queue memory
 workspace clone {
   base = "."
@@ -23,14 +23,19 @@ agent claude {
   command = "claude"
 }
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = false
   behavior = wait
-}
-prompt "Iterate."
+  prompt = "Iterate."
 "#;
 
+/// Build an Iterfile whose runner carries `on_block` as a nested event
+/// handler. Event handlers live inside the runner in the current grammar, so
+/// the deprecated-alias coverage is exercised through a runner-scoped `on`.
 fn build_source(on_block: &str) -> String {
-    format!("{ITERFILE_PROLOGUE}\n{on_block}\n")
+    format!("{ITERFILE_HEAD}\n  {on_block}\n}}\n")
 }
 
 #[test]

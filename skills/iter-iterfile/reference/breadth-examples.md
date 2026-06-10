@@ -34,11 +34,12 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = sandbox
   continue_on_error = true
   behavior          = loop { delay_secs = 60 }
+  prompt            = "Please continue."
 }
-
-prompt "Please continue."
 ```
 
 Characteristics:
@@ -79,20 +80,22 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = sandbox
   continue_on_error = true
   behavior          = loop { delay_secs = 60 }
+  prompt {
+    # A course-correction signal replaces the base prompt entirely.
+    metadata.prompt != "" => """
+    {{metadata.prompt}}
+    """
+    # Periodic disruption when there is no correction signal.
+    iteration.count % 50 == 0 => """
+    The current codebase has problems. Identify the issues and fix them.
+    """
+    _ => "Please continue toward better error handling."
+  }
 }
-
-prompt when metadata.prompt == "" "Please continue toward better error handling."
-
-prompt when metadata.prompt != "" """
-{{metadata.prompt}}
-"""
-
-prompt when iteration.count % 50 == 0 """
-The current codebase has problems. Identify the issues and fix them.
-"""
-
 ```
 
 Characteristics:
@@ -100,8 +103,8 @@ Characteristics:
 - `apply_back { mode = sync }` — workspace files carry over (the single
   continuity channel).
 - Goal named ("error handling") but no lenses, no method.
-- Course-correction signal replaces the base prompt (mutually exclusive
-  guards).
+- Course-correction signal replaces the base prompt — the match selects a
+  single arm, so the correction arm wins over the `_` default.
 - Periodic disruption via `count % 50`.
 
 ---
@@ -133,27 +136,29 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = sandbox
   continue_on_error = true
   behavior          = loop { delay_secs = 60 }
+  prompt {
+    # A course-correction signal replaces the base prompt entirely.
+    metadata.prompt != "" => """
+    {{metadata.prompt}}
+    """
+    # Periodic direction change when there is no correction signal.
+    iteration.count % 7 == 0 => """
+    Change direction: pick a lens you have not tried yet, or invent a new one.
+    """
+    _ => """
+    Explore error handling in the codebase.
+
+    Lenses:
+    - Panic vs Result boundaries.
+    - Error context propagation.
+    - User-facing error messages.
+    """
+  }
 }
-
-prompt when metadata.prompt == "" """
-Explore error handling in the codebase.
-
-Lenses:
-- Panic vs Result boundaries.
-- Error context propagation.
-- User-facing error messages.
-"""
-
-prompt when metadata.prompt != "" """
-{{metadata.prompt}}
-"""
-
-prompt when iteration.count % 7 == 0 """
-Change direction: pick a lens you have not tried yet, or invent a new one.
-"""
-
 ```
 
 Characteristics:
@@ -188,21 +193,22 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = clone
   continue_on_error = true
   behavior          = loop { delay_secs = 60 }
+  prompt            = """
+  Improve test coverage for the queue subsystem.
+
+  How to proceed:
+  - Find an untested code path.
+  - Write a failing test.
+  - Make it pass.
+  - Commit with a descriptive message.
+
+  Iteration {{iteration.count}} / previous_result={{iteration.previous_result}}
+  """
 }
-
-prompt """
-Improve test coverage for the queue subsystem.
-
-How to proceed:
-- Find an untested code path.
-- Write a failing test.
-- Make it pass.
-- Commit with a descriptive message.
-
-Iteration {{iteration.count}} / previous_result={{iteration.previous_result}}
-"""
 ```
 
 Characteristics:
@@ -232,11 +238,12 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = local
   continue_on_error = false
   behavior          = loop
+  prompt            = "Add a unit test for Queue::dequeue timeout behaviour in iter_core/src/queue/file.rs."
 }
-
-prompt "Add a unit test for Queue::dequeue timeout behaviour in iter_core/src/queue/file.rs."
 ```
 
 Characteristics:

@@ -360,8 +360,13 @@ mod tests {
             r#"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = wait }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = wait
+  prompt = "noop"
+}
 "#,
         )
         .expect("write iterfile");
@@ -388,8 +393,13 @@ service alpha { build = "./Iterfile" }
             r#"
 workspace local { base = "." }
 agent claude { mode = print command = "claude" }
-runner { continue_on_error = false behavior = wait }
-prompt "noop"
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = wait
+  prompt = "noop"
+}
 "#,
         )
         .expect("write iterfile");

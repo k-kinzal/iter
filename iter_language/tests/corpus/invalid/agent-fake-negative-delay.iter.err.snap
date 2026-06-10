@@ -9,11 +9,3 @@ Error: unexpected character `-`
    │                ┬  
    │                ╰── unexpected character `-`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[agent-fake-negative-delay.iter:1:1]
-   │
- 1 │ agent fake {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

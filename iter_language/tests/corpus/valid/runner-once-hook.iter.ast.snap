@@ -76,7 +76,7 @@ Root {
                                 ),
                             ],
                         },
-                        span: 269..352,
+                        span: 326..413,
                     },
                     Spanned {
                         node: EventHandlerDecl {
@@ -87,11 +87,11 @@ Root {
                                 ),
                             ],
                         },
-                        span: 354..436,
+                        span: 417..503,
                     },
                 ],
             },
-            span: 170..226,
+            span: 170..505,
         },
     ],
 }

@@ -11,11 +11,3 @@ Error: workspace clone requires `excludes`
    │ 
    │ Help: iter no longer ships a default exclude list — `["target", "node_modules", ".venv"]` is a project-shaped decision. Use `excludes = []` for "no exclusions" or list the directories you want skipped.
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[clone-without-excludes.iter:1:1]
-   │
- 1 │ workspace clone {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

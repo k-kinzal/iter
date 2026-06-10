@@ -114,9 +114,7 @@ pub struct NamedDef<T> {
 /// A fully-parsed and semantically validated root of the iter language AST.
 ///
 /// Definitions are named and stored in vectors (multiple of each kind
-/// allowed). Runners bind definitions by name. Old-style flat Iterfiles
-/// are desugared into this structure by the semantic analyzer with
-/// deprecation warnings.
+/// allowed). Runners bind definitions by name.
 ///
 /// The Iterfile model has no top-level `trigger` section — triggers live in
 /// `compose.iter`. A `trigger { ... }` block at Iterfile root is a semantic

@@ -12,14 +12,16 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = false
   behavior = loop
-}
-
-prompt """
+  prompt = """
   Continue improving iter. When you believe the iteration is complete, write "ITER_DONE".
 """
 
-on workspace_teardown_finished {
-  shell "./scripts/on-torndown.sh {{signal.id}}"
+  on workspace_teardown_finished {
+    shell "./scripts/on-torndown.sh {{signal.id}}"
+  }
 }

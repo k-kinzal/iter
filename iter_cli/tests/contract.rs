@@ -321,8 +321,7 @@ fn compose_validate_json_is_valid_json() {
         &iterfile,
         "workspace local { base = \".\" }\n\
          agent claude {\n  mode = print\n  command = \"claude\"\n}\n\
-         runner {\n  continue_on_error = false\n  behavior = wait\n}\n\
-         prompt \"hi\"\n",
+         runner {\n  agent = claude\n  workspace = local\n  continue_on_error = false\n  behavior = wait\n  prompt = \"hi\"\n}\n",
     )
     .expect("write iterfile");
 
@@ -565,8 +564,7 @@ fn compose_config_renders_static_listing() {
         dir.path().join("Iterfile"),
         "workspace local { base = \".\" }\n\
          agent claude {\n  mode = print\n  command = \"claude\"\n}\n\
-         runner {\n  continue_on_error = false\n  behavior = wait\n}\n\
-         prompt \"hi\"\n",
+         runner {\n  agent = claude\n  workspace = local\n  continue_on_error = false\n  behavior = wait\n  prompt = \"hi\"\n}\n",
     )
     .expect("write iterfile");
 
@@ -701,11 +699,12 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = local
   continue_on_error = true
   behavior = wait
+  prompt = "noop"
 }
-
-prompt "noop"
 "#;
 
 /// Build a minimal `compose.iter` whose lone service name is

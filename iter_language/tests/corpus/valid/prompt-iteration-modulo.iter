@@ -12,9 +12,13 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt {
+    iteration.count % 10 == 0 => "every-tenth tick n={{iteration.count}}"
+    _ => "tick n={{iteration.count}}"
+  }
 }
-
-prompt when iteration.count % 10 == 0 "every-tenth tick n={{iteration.count}}"
-prompt "tick n={{iteration.count}}"

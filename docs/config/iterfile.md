@@ -13,15 +13,16 @@ An `Iterfile` defines a **single self-contained iter service**. It is the Docker
 | `queue <kind>` | 0–1 | Optional | [`iterfile/queue.md`](iterfile/queue.md) |
 | `workspace <kind>` | 0–1 | Optional (see below) | [`iterfile/workspace.md`](iterfile/workspace.md) |
 | `agent <kind>` | 0–1 | Optional (see below) | [`iterfile/agent.md`](iterfile/agent.md) |
+| `prompt as <name>` | 0–N | Optional | [`iterfile/prompt.md`](iterfile/prompt.md) |
 | `runner` | 0–1 | Optional (see below) | [`iterfile/runner.md`](iterfile/runner.md) |
-| `prompt` | 0–N | Optional | [`iterfile/prompt.md`](iterfile/prompt.md) |
-| `on <event>` | 0–N | Optional | [`iterfile/on.md`](iterfile/on.md) |
 
-An `Iterfile` is permitted to be **partial**. A webhook-handler Iterfile might omit `workspace` / `agent` / `runner`; a worker-only Iterfile might omit `prompt`. To run standalone via `iter run`, the file needs `workspace` + `agent` + `runner` + `prompt`.
+Definitions are **named**: `workspace`, `agent`, and `queue` each declare a definition whose name is its kind (or an explicit `as <name>` alias). The `runner` block binds them by reference and carries the prompt and the `on <event>` lifecycle handlers — there are no top-level `prompt` or `on` sections; both live inside `runner`.
+
+An `Iterfile` is permitted to be **partial**. A webhook-handler Iterfile might omit `workspace` / `agent` / `runner`. To run standalone via `iter run`, the file needs `workspace` + `agent` + `runner`, and the runner must carry a `prompt`.
 
 ## Minimal Example
 
-The smallest Iterfile that runs under `iter run`: `workspace` + `agent` + `runner` + `prompt`, with no `queue` (so `runner.behavior` must be `loop`) and no `on` handlers. Every field shown is required.
+The smallest Iterfile that runs under `iter run`: `workspace` + `agent` + `runner` + a `prompt` bound in the runner, with no `queue` (so `runner.behavior` must be `loop`) and no `on` handlers. Every field shown is required.
 
 ```hcl
 workspace local {
@@ -34,11 +35,12 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = local
   continue_on_error = false
   behavior          = loop
+  prompt            = "Improve the codebase."
 }
-
-prompt "Improve the codebase."
 ```
 
 ## Arg Declarations
@@ -102,7 +104,7 @@ Each section page documents its own fields and the events it emits.
 
 ## Full Example
 
-Every top-level section present, every optional field populated. Uses `workspace sandbox` (the most feature-rich workspace kind) and declares a handler for every lifecycle event.
+Every top-level section present, every optional field populated. Uses `workspace sandbox` (the most feature-rich workspace kind) and declares a handler for every lifecycle event inside the `runner` block.
 
 ```hcl
 arg environment = "staging"
@@ -141,55 +143,59 @@ agent claude {
 }
 
 runner {
+  agent             = claude
+  workspace         = sandbox
+  queue             = redis
   continue_on_error = true
   behavior          = loop { delay_secs = 60 }
-}
 
-prompt "Please continue."
+  prompt {
+    metadata.task == "security" => """
+    Security audit: review for vulnerabilities.
+    Focus on authentication, input validation, and secret handling.
+    """
+    _ => "Please continue."
+  }
 
-prompt when metadata.task == "security" """
-Security audit: review for vulnerabilities.
-Focus on authentication, input validation, and secret handling.
-"""
+  on runner_starting {
+    shell "logger 'iter: runner starting'"
+  }
 
-on runner_starting {
-  shell "logger 'iter: runner starting'"
-}
+  on signal_received {
+    shell "logger 'iter: signal {{signal.id}} received'"
+  }
 
-on signal_received {
-  shell "logger 'iter: signal {{signal.id}} received'"
-}
+  on workspace_setup_starting {
+    shell "logger 'iter: preparing workspace'"
+  }
 
-on workspace_setup_starting {
-  shell "logger 'iter: preparing workspace'"
-}
+  on workspace_setup_finished {
+    shell "npm install --no-audit --no-fund"
+  }
 
-on workspace_setup_finished {
-  shell "npm install --no-audit --no-fund"
-}
+  on agent_starting {
+    shell "logger 'iter: starting agent'"
+  }
 
-on agent_starting {
-  shell "logger 'iter: starting agent'"
-}
+  on agent_finished {
+    shell "git -C {{workspace.path}} status --short"
+  }
 
-on agent_finished {
-  shell "git -C {{workspace.path}} status --short"
-}
+  on workspace_teardown_starting {
+    shell "logger 'iter: tearing down'"
+  }
 
-on workspace_teardown_starting {
-  shell "logger 'iter: tearing down'"
-}
+  on workspace_teardown_finished {
+    shell "curl -fsS https://example.com/healthz"
+  }
 
-on workspace_teardown_finished {
-  shell "curl -fsS https://example.com/healthz"
-}
+  on runner_finished {
+    shell "logger 'iter: runner stopped'"
+  }
 
-on runner_finished {
-  shell "logger 'iter: runner stopped'"
-}
-
-on runner_error {
-  shell "notify-error 'Runner failed: {{error.message}}'"
+  on runner_error {
+    shell "notify-error 'Runner failed: {{error.message}}'"
+  }
 }
 ```
 

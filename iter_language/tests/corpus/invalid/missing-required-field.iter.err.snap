@@ -21,11 +21,3 @@ Error: queue redis requires `key`
    │ 
    │ Help: add `key = "..."`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[missing-required-field.iter:1:1]
-   │
- 1 │ queue redis { }
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

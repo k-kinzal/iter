@@ -13,8 +13,10 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "explore"
 }
-
-prompt "explore"

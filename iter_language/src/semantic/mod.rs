@@ -26,10 +26,7 @@ use guard::lower_guard_pure;
 use suggest::{closest, parse_priority};
 pub(crate) use template::TemplatePosition;
 
-use crate::ast::{
-    ArgDecl, EventHandlerDecl, NamedDef, NamedPrompt, PromptArm, PromptDecl, PromptExpr,
-    PromptValue, Root, RunnerDecl, Span, Spanned,
-};
+use crate::ast::{ArgDecl, NamedDef, NamedPrompt, PromptExpr, PromptValue, Root, Span, Spanned};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{RawBlock, RawFile, RawIdent, RawSection};
 
@@ -90,237 +87,17 @@ impl Analyzer {
 }
 
 impl Analyzer {
+    /// Lower an Iterfile into the typed [`Root`] AST.
+    ///
+    /// The Iterfile grammar is named definitions (`agent`/`workspace`/`queue`
+    /// and `prompt as <name>`) bound by a `runner { agent = ... workspace = ... }`
+    /// block. The legacy flat form — top-level definitions desugared into a
+    /// synthetic runner — is no longer supported; its constructs are reported
+    /// as semantic errors that name the replacement.
+    #[allow(clippy::too_many_lines)]
     fn lower(&mut self, file: RawFile) -> Root {
-        // First pass: classify sections and detect old vs new syntax.
-        // Old syntax: flat top-level workspace/agent/runner/prompt/on
-        //   with no `as` aliases and no references inside runner.
-        // New syntax: definitions use `as <name>`, runner carries
-        //   `agent = <ref>`, `workspace = <ref>`, etc.
-        //
-        // Heuristic: if any section has an `as` alias, a named prompt,
-        // or a runner body that uses new-syntax features (binding fields
-        // like `agent =` / `workspace =`, or nested event handlers),
-        // treat as new syntax. Otherwise, desugar as deprecated old syntax.
-        let has_new_syntax = file.sections.iter().any(|s| match s {
-            RawSection::Block {
-                alias,
-                keyword,
-                body,
-                ..
-            } => {
-                alias.is_some()
-                    || (keyword == "runner"
-                        && body.as_ref().is_some_and(|b| {
-                            !b.event_handlers.is_empty()
-                                || b.fields
-                                    .iter()
-                                    .any(|f| f.name.name == "agent" || f.name.name == "workspace")
-                        }))
-            }
-            RawSection::Prompt { name, .. } => name.is_some(),
-            RawSection::On { .. } => false,
-        });
-
-        if has_new_syntax {
-            self.lower_new_syntax(file)
-        } else {
-            self.lower_old_syntax(file)
-        }
-    }
-
-    /// Lower old-style flat Iterfile with deprecation warnings. Desugars
-    /// to the new AST by creating synthetic named definitions and a
-    /// synthetic runner that references them.
-    #[allow(clippy::too_many_lines)]
-    fn lower_old_syntax(&mut self, file: RawFile) -> Root {
         let mut root = Root::default();
         let mut seen = SectionSeen::default();
-
-        // Collect old-style sections.
-        let mut old_queue = None;
-        let mut old_workspace = None;
-        let mut old_agent = None;
-        let mut old_runner = None;
-        let mut old_prompts: Vec<Spanned<PromptDecl>> = Vec::new();
-        let mut old_events: Vec<Spanned<EventHandlerDecl>> = Vec::new();
-        let mut queue_kind_name: Option<String> = None;
-        let mut workspace_kind_name: Option<String> = None;
-        let mut agent_kind_name: Option<String> = None;
-
-        for section in file.sections {
-            match section {
-                RawSection::Block {
-                    keyword,
-                    keyword_span,
-                    kind,
-                    kind2,
-                    alias: _,
-                    body,
-                    span,
-                } => {
-                    if let Some(extra) = &kind2 {
-                        self.errors.push(Diagnostic::error(
-                            extra.span.clone(),
-                            format!(
-                                "unexpected second identifier `{}` after `{}` section",
-                                extra.name, keyword,
-                            ),
-                        ).with_hint("Iterfile sections take a single kind identifier; named sections (`queue main file { ... }`) belong in `compose.iter`."));
-                    }
-                    match keyword.as_str() {
-                        "arg" => {
-                            self.lower_arg_section(&mut root, &mut seen, kind, keyword_span, body, span);
-                        }
-                        "queue" => {
-                            if self.reject_duplicate(seen.queue.as_ref(), &span, "queue") {
-                                continue;
-                            }
-                            seen.queue = Some(span.clone());
-                            queue_kind_name = kind.as_ref().map(|k| k.name.clone());
-                            if let Some(decl) = self.lower_queue(kind, body, &keyword_span) {
-                                old_queue = Some(Spanned::new(decl, span));
-                            }
-                        }
-                        "workspace" => {
-                            if self.reject_duplicate(seen.workspace.as_ref(), &span, "workspace") {
-                                continue;
-                            }
-                            seen.workspace = Some(span.clone());
-                            workspace_kind_name = kind.as_ref().map(|k| k.name.clone());
-                            if let Some(decl) = self.lower_workspace(kind, body, &keyword_span) {
-                                old_workspace = Some(Spanned::new(decl, span));
-                            }
-                        }
-                        "agent" => {
-                            if self.reject_duplicate(seen.agent.as_ref(), &span, "agent") {
-                                continue;
-                            }
-                            seen.agent = Some(span.clone());
-                            agent_kind_name = kind.as_ref().map(|k| k.name.clone());
-                            if let Some(decl) = self.lower_agent(kind, body, &keyword_span) {
-                                old_agent = Some(Spanned::new(decl, span));
-                            }
-                        }
-                        "trigger" => {
-                            drop((kind, body));
-                            self.errors.push(
-                                Diagnostic::error(
-                                    span,
-                                    "`trigger` is no longer a valid top-level section in an Iterfile",
-                                )
-                                .with_hint(TRIGGER_IN_ITERFILE_HINT),
-                            );
-                        }
-                        "runner" => {
-                            if self.reject_duplicate(seen.runner.as_ref(), &span, "runner") {
-                                continue;
-                            }
-                            seen.runner = Some(span.clone());
-                            if let Some(decl) = self.lower_runner_old(kind.as_ref(), body, &keyword_span) {
-                                old_runner = Some(Spanned::new(decl, span));
-                            }
-                        }
-                        other => {
-                            self.errors.push(Diagnostic::error(
-                                keyword_span,
-                                format!("unknown top-level keyword `{other}`"),
-                            ));
-                        }
-                    }
-                }
-                RawSection::Prompt {
-                    guard,
-                    body,
-                    span,
-                    body_span,
-                    name: _,
-                    ..
-                } => {
-                    old_prompts.push(self.lower_prompt(guard, body, span, body_span));
-                }
-                RawSection::On {
-                    event,
-                    body,
-                    span,
-                    keyword_span: _,
-                } => {
-                    if let Some(decl) = self.lower_event(&event, &body, span) {
-                        old_events.push(decl);
-                    }
-                }
-            }
-        }
-
-        // Emit deprecation warning for old syntax.
-        self.errors.push(Diagnostic::warning(
-            0..0,
-            "flat Iterfile syntax is deprecated — use named definitions and runner binding",
-        ));
-
-        // Desugar old definitions into named definitions.
-        let queue_name = queue_kind_name.unwrap_or_else(|| "default".into());
-        let workspace_name = workspace_kind_name.unwrap_or_else(|| "default".into());
-        let agent_name = agent_kind_name.unwrap_or_else(|| "default".into());
-
-        if let Some(q) = old_queue {
-            let span = q.span.clone();
-            root.queues.push(Spanned::new(
-                NamedDef { name: queue_name.clone(), decl: q.node },
-                span,
-            ));
-        }
-        if let Some(w) = old_workspace {
-            let span = w.span.clone();
-            root.workspaces.push(Spanned::new(
-                NamedDef { name: workspace_name.clone(), decl: w.node },
-                span,
-            ));
-        }
-        if let Some(a) = old_agent {
-            let span = a.span.clone();
-            root.agents.push(Spanned::new(
-                NamedDef { name: agent_name.clone(), decl: a.node },
-                span,
-            ));
-        }
-
-        // Build prompt expression from old-style ordered prompts.
-        let prompt_expr = Self::build_prompt_expr_from_old_prompts(&old_prompts);
-
-        // Synthesise a runner only when all required definitions succeeded.
-        // If agent or workspace lowering failed, the runner would carry
-        // dangling references — skip it and let the earlier errors surface.
-        if let Some(old_r) = old_runner {
-            if !root.agents.is_empty() && !root.workspaces.is_empty() {
-                let span = old_r.span.clone();
-                root.runners.push(Spanned::new(
-                    RunnerDecl {
-                        name: None,
-                        agent: agent_name,
-                        workspace: workspace_name,
-                        queue: if root.queues.is_empty() { None } else { Some(queue_name) },
-                        continue_on_error: old_r.node.continue_on_error,
-                        behavior: old_r.node.behavior,
-                        iteration_timeout_secs: old_r.node.iteration_timeout_secs,
-                        prompt: prompt_expr,
-                        events: old_events,
-                    },
-                    span,
-                ));
-            }
-        }
-
-        root
-    }
-
-    /// Lower new-style Iterfile with named definitions and runner binding.
-    #[allow(clippy::too_many_lines)]
-    fn lower_new_syntax(&mut self, file: RawFile) -> Root {
-        let mut root = Root::default();
-        let mut seen = SectionSeen::default();
-
-        // Pending top-level `on` sections — will be attached to runner if present.
-        let mut pending_events: Vec<Spanned<EventHandlerDecl>> = Vec::new();
 
         for section in file.sections {
             match section {
@@ -459,23 +236,15 @@ impl Analyzer {
                     } else {
                         self.errors.push(Diagnostic::error(
                             span,
-                            "top-level `prompt` without `as <name>` is deprecated in new-syntax files; use `prompt as <name> \"...\"` or put the prompt inside a runner block",
+                            "top-level `prompt \"...\"` is no longer supported; define a named prompt with `prompt as <name> \"...\"` and reference it, or write the prompt inside the runner block (`prompt = \"...\"` or a `prompt { <guard> => ..., _ => ... }` match)",
                         ));
                     }
                 }
-                RawSection::On {
-                    event,
-                    body,
-                    span,
-                    keyword_span: _,
-                } => {
-                    self.errors.push(Diagnostic::warning(
-                        span.clone(),
-                        "top-level `on` is deprecated — move event handlers inside the runner block",
+                RawSection::On { span, .. } => {
+                    self.errors.push(Diagnostic::error(
+                        span,
+                        "top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`",
                     ));
-                    if let Some(decl) = self.lower_event(&event, &body, span) {
-                        pending_events.push(decl);
-                    }
                 }
             }
         }
@@ -506,13 +275,6 @@ impl Analyzer {
             Self::validate_prompt_refs(&runner.node.prompt, &root.prompts, &runner.span, &mut self.errors);
         }
 
-        // Attach pending top-level events to runners (backward compat shim).
-        if !pending_events.is_empty() {
-            for runner in &mut root.runners {
-                runner.node.events.extend(pending_events.clone());
-            }
-        }
-
         root
     }
 
@@ -540,35 +302,6 @@ impl Analyzer {
                 }
                 check_value(default);
             }
-        }
-    }
-
-    /// Convert old-style ordered prompt list into a `PromptExpr`.
-    fn build_prompt_expr_from_old_prompts(prompts: &[Spanned<PromptDecl>]) -> PromptExpr {
-        if prompts.is_empty() {
-            return PromptExpr::Single(PromptValue::Inline(String::new()));
-        }
-        if prompts.len() == 1 && prompts[0].node.guard.is_none() {
-            return PromptExpr::Single(PromptValue::Inline(prompts[0].node.body.clone()));
-        }
-        // Multiple prompts or guarded prompts → match expression.
-        let mut arms = Vec::new();
-        let mut default = None;
-        for p in prompts {
-            if let Some(guard) = &p.node.guard {
-                arms.push(PromptArm {
-                    guard: guard.clone(),
-                    value: PromptValue::Inline(p.node.body.clone()),
-                });
-            } else {
-                default = Some(PromptValue::Inline(p.node.body.clone()));
-            }
-        }
-        let default = default.unwrap_or_else(|| PromptValue::Inline(String::new()));
-        if arms.is_empty() {
-            PromptExpr::Single(default)
-        } else {
-            PromptExpr::Match { arms, default }
         }
     }
 
@@ -627,21 +360,6 @@ impl Analyzer {
         ));
     }
 
-    fn reject_duplicate(&mut self, prev: Option<&Span>, span: &Span, label: &str) -> bool {
-        if let Some(p) = prev {
-            self.errors.push(
-                Diagnostic::error(span.clone(), format!("duplicate `{label}` declaration"))
-                    .with_hint(format!(
-                        "previous declaration at bytes {}..{}",
-                        p.start, p.end
-                    )),
-            );
-            true
-        } else {
-            false
-        }
-    }
-
     fn reject_duplicate_name(
         &mut self,
         names: &std::collections::BTreeMap<String, Span>,
@@ -670,12 +388,7 @@ impl Analyzer {
 #[derive(Default)]
 struct SectionSeen {
     args: std::collections::BTreeMap<String, Span>,
-    // Old-syntax duplicate guards (singular).
-    queue: Option<Span>,
-    workspace: Option<Span>,
-    agent: Option<Span>,
-    runner: Option<Span>,
-    // New-syntax name-based duplicate guards.
+    // Name-based duplicate guards for named definitions.
     queue_names: std::collections::BTreeMap<String, Span>,
     workspace_names: std::collections::BTreeMap<String, Span>,
     agent_names: std::collections::BTreeMap<String, Span>,

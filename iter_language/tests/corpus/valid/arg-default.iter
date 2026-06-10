@@ -12,8 +12,10 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Use {{arg.model}} for this task."
 }
-
-prompt "Use {{arg.model}} for this task."

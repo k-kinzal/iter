@@ -22,8 +22,10 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = sandbox
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt = "iterate"
 }
-
-prompt "iterate"

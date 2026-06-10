@@ -30,12 +30,16 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt {
+    iteration.count % 3 == 0 => "TICK-3 n={{iteration.count}}"
+    _ => "tick n={{iteration.count}}"
+  }
 }
-
-prompt when iteration.count % 3 == 0 "TICK-3 n={{iteration.count}}"
-prompt "tick n={{iteration.count}}"
 "#;
 
 #[test]
@@ -87,12 +91,16 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt {
+    iteration.count == 1 => "first"
+    _ => "rest n={{iteration.count}}"
+  }
 }
-
-prompt when iteration.count == 1 "first"
-prompt "rest n={{iteration.count}}"
 "#;
     let root = parse(source).expect("source parses");
     let selector = build_prompt_selector(&root).expect("selector builds");
@@ -129,12 +137,16 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt {
+    iteration.previous_result == "none" => "first run"
+    _ => "regular run n={{iteration.count}}"
+  }
 }
-
-prompt when iteration.previous_result == "none" "first run"
-prompt "regular run n={{iteration.count}}"
 "#;
     let root = parse(source).expect("source parses");
     let selector = build_prompt_selector(&root).expect("selector builds");

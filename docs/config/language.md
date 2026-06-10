@@ -17,7 +17,7 @@ file = { SOI ~ section* ~ EOI }
 section = { prompt_section | on_section | block_section }
 ```
 
-A file is zero or more sections. Order is preserved and is significant for sections that allow multiple occurrences (for example, `prompt` blocks are applied in source order).
+A file is zero or more sections. Order is preserved and is significant where evaluation depends on it (for example, the arms of a `prompt { ... }` match block are evaluated top to bottom, first true guard winning).
 
 Top-level keywords:
 
@@ -27,8 +27,8 @@ Top-level keywords:
 | `workspace` | ✔ | ✔ (inside inline service) | [`iterfile/workspace.md`](iterfile/workspace.md) |
 | `agent` | ✔ | ✔ (inside inline service) | [`iterfile/agent.md`](iterfile/agent.md) |
 | `runner` | ✔ | ✔ (inside inline service) | [`iterfile/runner.md`](iterfile/runner.md) |
-| `prompt` | ✔ | ✔ (inside inline service) | [`iterfile/prompt.md`](iterfile/prompt.md) |
-| `on` | ✔ | ✔ (inside inline service) | [`iterfile/on.md`](iterfile/on.md) |
+| `prompt` | ✔ (top level only as `prompt as <name>`; the runner's prompt lives inside `runner`) | ✔ (inside inline service) | [`iterfile/prompt.md`](iterfile/prompt.md) |
+| `on` | ✘ at top level (lives inside `runner`) | ✔ (inside inline service) | [`iterfile/on.md`](iterfile/on.md) |
 | `service` | ✘ | ✔ | [`compose/service.md`](compose/service.md) |
 | `trigger` | ✘ | ✔ | [`compose/trigger.md`](compose/trigger.md) |
 
@@ -85,7 +85,7 @@ triple_string  = @{ "\"\"\"" ~ triple_body ~ "\"\"\"" }
 name = "hello"
 greeting = "line1\nline2"
 
-prompt """
+prompt as instructions """
 Multi-line
 content.
 """
@@ -238,22 +238,25 @@ runner_section = { kw_runner ~ block? }
 ### Prompt section
 
 ```pest
-prompt_section = { kw_prompt ~ prompt_guard? ~ string_literal }
+prompt_section  = { kw_prompt ~ ( prompt_as_alias | prompt_guard? ~ string_literal ) }
+prompt_as_alias = { kw_as ~ ident ~ string_literal }
 ```
 
-### Top-level `on` section
+At top level only the `prompt as <name> "..."` named-definition form is accepted by the semantic layer. The bare `prompt "..."` and guarded `prompt when <guard> "..."` forms still parse syntactically but are rejected during analysis — a runner's prompt is selected inside the `runner` block (`prompt = "..."` or a `prompt { <guard> => ..., _ => ... }` match), not declared as a top-level section.
+
+### `on` event-handler section
 
 ```pest
 on_section = { kw_on ~ ident ~ block }
 ```
 
-The event name is an identifier (not a string). Valid names are listed on [`iterfile/on.md`](iterfile/on.md).
+The event name is an identifier (not a string). Valid names are listed on [`iterfile/on.md`](iterfile/on.md). In an Iterfile, `on <event> { ... }` handlers live **inside the `runner` block** (as nested block entries); a top-level `on <event>` parses but is rejected during analysis. (Inside a `compose.iter` inline service the handler likewise sits within the service.)
 
 ---
 
 ## Guard Expressions
 
-Used by `prompt when ...`:
+Used as the guard of a `prompt { <guard> => ... }` match arm inside a `runner` block:
 
 ```pest
 guard              = { guard_or }
@@ -300,17 +303,27 @@ Constraints:
   evaluate to `false`, including `!=`.
 - `&&` binds tighter than `||` (standard precedence).
 
+Guards appear as the left-hand side of a `prompt { ... }` match arm inside the `runner` block:
+
 ```hcl
-prompt when metadata.task == "bug-fix" "Fix bugs."
+runner {
+  agent     = claude
+  workspace = local
+  continue_on_error = true
+  behavior  = loop
+  prompt {
+    metadata.task == "bug-fix" => "Fix bugs."
 
-prompt when metadata.type == "feature" && metadata.priority == "high"
-  "Implement high-priority feature."
+    metadata.type == "feature" && metadata.priority == "high" => "Implement high-priority feature."
 
-prompt when (metadata.env == "dev" || metadata.env == "staging") && metadata.task != "ignore"
-  "Work on non-production tasks."
+    (metadata.env == "dev" || metadata.env == "staging") && metadata.task != "ignore" => "Work on non-production tasks."
 
-# Periodic direction change
-prompt when iteration.count % 50 == 0 "The current codebase has problems. Identify the issues and fix them."
+    # Periodic direction change
+    iteration.count % 50 == 0 => "The current codebase has problems. Identify the issues and fix them."
+
+    _ => "Please continue."
+  }
+}
 ```
 
 Webhook route `when "..."` guards are stored as **raw strings** and evaluated by the runner; this grammar does not parse them.

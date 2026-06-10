@@ -12,16 +12,18 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = false
   behavior = wait
-}
+  prompt = "Iterate on the workspace once."
 
-prompt "Iterate on the workspace once."
+  on runner_starting {
+    shell "test -d .iter/wt || git worktree add .iter/wt HEAD"
+  }
 
-on runner_starting {
-  shell "test -d .iter/wt || git worktree add .iter/wt HEAD"
-}
-
-on runner_finished {
-  shell "echo 'runner done; worktree retained at .iter/wt'"
+  on runner_finished {
+    shell "echo 'runner done; worktree retained at .iter/wt'"
+  }
 }

@@ -9,11 +9,3 @@ Error: queue servicebus: `web_proxy` requires `transport = "amqp_websockets"`
    │       ─────┬────  
    │            ╰────── queue servicebus: `web_proxy` requires `transport = "amqp_websockets"`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[queue-servicebus-web-proxy-without-websockets.iter:1:1]
-   │
- 1 │ queue servicebus {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

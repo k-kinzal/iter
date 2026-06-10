@@ -3,17 +3,9 @@ source: iter_language/tests/conformance.rs
 description: runner-iteration-timeout-zero.iter
 ---
 Error: `iteration_timeout_secs` must be a positive duration
-    ╭─[runner-iteration-timeout-zero.iter:17:28]
+    ╭─[runner-iteration-timeout-zero.iter:20:28]
     │
- 17 │   iteration_timeout_secs = 0
+ 20 │   iteration_timeout_secs = 0
     │                            ┬  
     │                            ╰── `iteration_timeout_secs` must be a positive duration
 ────╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[runner-iteration-timeout-zero.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

@@ -12,11 +12,15 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
+  prompt {
+    iteration.count == 1 => "first run"
+    iteration.consecutive_failures >= 3 => "three failures in a row"
+    iteration.previous_exit_code != 0 => "previous turn errored exit={{iteration.previous_exit_code}}"
+    _ => "regular tick n={{iteration.count}}"
+  }
 }
-
-prompt when iteration.count == 1 "first run"
-prompt when iteration.consecutive_failures >= 3 "three failures in a row"
-prompt when iteration.previous_exit_code != 0 "previous turn errored exit={{iteration.previous_exit_code}}"
-prompt "regular tick n={{iteration.count}}"

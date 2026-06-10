@@ -11,11 +11,3 @@ Error: `apply_back.excludes` has no effect when `mode = discard`
    │ 
    │ Help: remove the field, or change `mode` from `discard` to `sync` or `merge` so the filter has somewhere to apply.
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[apply-back-discard-with-filter.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

@@ -21,8 +21,10 @@ agent router {
 }
 
 runner {
+  agent = router
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Router fallback test."
 }
-
-prompt "Router fallback test."

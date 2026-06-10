@@ -12,9 +12,11 @@ agent claude {
 }
 
 runner {
+  agent = claude
+  workspace = clone
+  queue = memory
   continue_on_error = true
   behavior = wait
   iteration_timeout_secs = -30
+  prompt = "iterate"
 }
-
-prompt "iterate"

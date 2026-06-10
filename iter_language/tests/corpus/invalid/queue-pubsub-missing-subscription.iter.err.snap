@@ -11,11 +11,3 @@ Error: queue pubsub requires `subscription`
    │ 
    │ Help: add `subscription = "..."`
 ───╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[queue-pubsub-missing-subscription.iter:1:1]
-   │
- 1 │ queue pubsub {
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

@@ -3,17 +3,9 @@ source: iter_language/tests/conformance.rs
 description: runner-iteration-timeout-negative.iter
 ---
 Error: unexpected character `-`
-    ╭─[runner-iteration-timeout-negative.iter:17:28]
+    ╭─[runner-iteration-timeout-negative.iter:20:28]
     │
- 17 │   iteration_timeout_secs = -30
+ 20 │   iteration_timeout_secs = -30
     │                            ┬  
     │                            ╰── unexpected character `-`
 ────╯
-
-Warning: flat Iterfile syntax is deprecated — use named definitions and runner binding
-   ╭─[runner-iteration-timeout-negative.iter:1:1]
-   │
- 1 │ queue memory
-   │ │ 
-   │ ╰─ flat Iterfile syntax is deprecated — use named definitions and runner binding
-───╯

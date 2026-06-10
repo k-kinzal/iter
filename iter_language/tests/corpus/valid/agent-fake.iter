@@ -16,8 +16,10 @@ agent fake {
 }
 
 runner {
+  agent = fake
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Fake test."
 }
-
-prompt "Fake test."

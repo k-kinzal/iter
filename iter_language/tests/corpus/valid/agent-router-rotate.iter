@@ -26,8 +26,10 @@ agent router {
 }
 
 runner {
+  agent = router
+  workspace = local
+  queue = memory
   continue_on_error = false
   behavior = wait
+  prompt = "Router rotate test."
 }
-
-prompt "Router rotate test."
