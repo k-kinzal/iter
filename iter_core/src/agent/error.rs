@@ -3,7 +3,7 @@
 //! This is the error half of the **Agent level** (see [`AgentRun`]). It is
 //! deliberately minimal: it enumerates only the failure classes iter
 //! actually consumes — either by branching on the variant (today only the
-//! [`agent_router`] matches [`AgentError::TokenLimit`]) or by reading it into
+//! [`AgentRouter`] matches [`AgentError::TokenLimit`]) or by reading it into
 //! a Factor (the runner reads the exit code off [`AgentError::Failed`] for
 //! the `iteration.previous_exit_code` template field).
 //!
@@ -15,7 +15,7 @@
 //! not branch on the class, and an unconsumed variant is dead surface.
 //!
 //! [`AgentRun`]: crate::agent::AgentRun
-//! [`agent_router`]: iter_compose
+//! [`AgentRouter`]: crate::agent::AgentRouter
 
 use std::io;
 

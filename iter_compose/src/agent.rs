@@ -20,7 +20,7 @@ use iter_core::{Agent, SandboxRequirements};
 use iter_language::{AgentDef, AgentMode as AstAgentMode};
 use thiserror::Error;
 
-use crate::agent_router::{AgentRouter, RoutingStrategy};
+use iter_core::agent::{AgentRouter, RoutingStrategy};
 
 /// Errors produced while translating an [`AgentDef`] into a boxed
 /// [`Agent`](iter_core::Agent).

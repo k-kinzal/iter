@@ -19,8 +19,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
-use iter_core::agent::{AgentError, AgentRun};
-use iter_core::{Agent, AgentRunContext};
+
+use crate::agent::{Agent, AgentError, AgentRun, AgentRunContext};
 
 /// Strategy governing how the router selects an agent each iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,11 +44,9 @@ impl AgentRouter {
     ///
     /// Exposed as an object-safe `&[(String, Box<dyn Agent>)]`. The named-pair
     /// enumeration backs routing and is deliberately kept un-flattened so each
-    /// sub-agent remains individually addressable for sandbox-profile
-    /// introspection by name. (Compose currently keys the sandbox merge off
-    /// the [`AgentDef`](iter_language::AgentDef) router definition, but the
-    /// runtime enumeration is preserved for callers that introspect a built
-    /// router.)
+    /// sub-agent stays individually addressable by name. The accessor is
+    /// preserved for callers that introspect a built router — for example, to
+    /// assemble a merged sandbox profile from its sub-agents.
     #[must_use]
     pub fn agents(&self) -> &[(String, Box<dyn Agent>)] {
         &self.agents
@@ -132,9 +130,9 @@ impl Agent for AgentRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_core::Prompt;
-    use iter_core::agent::{AgentMode, ClaudeAgent, GenericAgent};
-    use iter_core::signal::SignalId;
+    use crate::Prompt;
+    use crate::agent::{AgentMode, ClaudeAgent, GenericAgent};
+    use crate::signal::SignalId;
     use std::io::Write;
     use std::path::Path;
     use tokio_util::sync::CancellationToken;

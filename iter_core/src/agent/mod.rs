@@ -5,9 +5,11 @@
 //! (subprocess management, hook lifecycle) are
 //! `pub(crate)` internal modules used by the drivers.
 //!
-//! This module provides thirteen concrete implementations of the
-//! [`Agent`] trait. They fall into three broad groups based on how
-//! the underlying CLI is driven:
+//! This module provides fourteen concrete implementations of the
+//! [`Agent`] trait. Thirteen are CLI-backed drivers, falling into three
+//! broad groups based on how the underlying CLI is driven; the fourteenth,
+//! [`AgentRouter`], is a composite that drives no CLI of its own (see the
+//! **Composite** group below).
 //!
 //! * **Hook-capable** — [`ClaudeAgent`], [`CodexAgent`], [`GeminiAgent`],
 //!   [`HermesAgent`] (hook integration pending), [`AntigravityAgent`],
@@ -26,6 +28,10 @@
 //! * **Built-in** — [`NoopAgent`] and [`FakeAgent`]. These require
 //!   no external binary and run entirely in-process, exercising the
 //!   real pipeline for verification testing.
+//! * **Composite** — [`AgentRouter`] is itself an [`Agent`] that composes
+//!   named sub-agents and dispatches to one per iteration according to a
+//!   [`RoutingStrategy`]. It drives no CLI of its own; see [`router`] for
+//!   the routing strategies.
 //!
 //! # No implicit defaults
 //!
@@ -66,6 +72,7 @@ mod hook_install;
 pub mod inner;
 pub mod mode;
 pub(crate) mod process;
+pub mod router;
 pub mod run;
 pub(crate) mod session;
 
@@ -88,4 +95,5 @@ pub use drivers::opencode::OpenCodeAgent;
 pub use error::AgentError;
 pub use inner::{Agent, AgentRunContext, run_with_timeout};
 pub use mode::AgentMode;
+pub use router::{AgentRouter, RoutingStrategy};
 pub use run::AgentRun;
