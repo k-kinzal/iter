@@ -185,10 +185,29 @@ impl Agent for GrokAgent {
         .build(workspace_path);
         apply_user_env(&mut command, &self.env);
         // OTel trace-context / resource-attribute injection is deliberately
-        // omitted: Grok Build's consumption of `TRACEPARENT` /
-        // `OTEL_RESOURCE_ATTRIBUTES` is unverified, so — like the other
-        // print-only drivers — iter does not make its traces *look*
-        // correlated without confirming the agent actually participates.
+        // omitted — a *verified negative* for `grok 0.2.45`, not an unknown:
+        //
+        // * `TRACEPARENT` / `TRACESTATE` are not consumed. The shipped binary
+        //   contains no `TRACEPARENT`/`TRACESTATE` reference at all (string
+        //   scan of `~/.local/bin/grok`), and headless mode documents only
+        //   `XAI_API_KEY` / `GROK_HOME` / `GROK_LOG_FILE` / `RUST_LOG`
+        //   (`~/.grok/docs/user-guide/14-headless-mode.md`). Grok starts its
+        //   own trace; injecting a W3C carrier would make iter's trace *look*
+        //   correlated without Grok joining it.
+        // * `OTEL_RESOURCE_ATTRIBUTES` / `OTEL_SERVICE_NAME` are not honored.
+        //   Probing a headless run with `OTEL_EXPORTER_OTLP_ENDPOINT` aimed at
+        //   a local collector showed Grok *does* export OTLP, but every span
+        //   carried Grok's own Resource (`service.name=grok-cli`,
+        //   `app.entrypoint=headless`, Grok `user.id`/`team.id`) — the
+        //   injected `OTEL_SERVICE_NAME` / `iter.*` attributes were dropped.
+        //   That export is Grok's private telemetry pipeline (default
+        //   `cli-chat-proxy.grok.com`, gated by `GROK_TELEMETRY_TRACE_UPLOAD`),
+        //   so `inject_agent_otel_resource_attrs` would attach iter's
+        //   signal/workspace attributes to nothing Grok emits. Repointing
+        //   `OTEL_EXPORTER_OTLP_ENDPOINT` is likewise avoided — it would hijack
+        //   Grok's own telemetry destination, not correlate iter's trace.
+        //
+        // Re-verify against a newer CLI before enabling either injection.
 
         // The prompt is the value of `-p` (delivered inline), so no stdin.
         let output = spawn_capture(
@@ -202,6 +221,12 @@ impl Agent for GrokAgent {
         // Adapter: project the Command's CLI-shaped result/error onto iter's
         // domain. `?` runs the `From<GrokError>` impl above.
         let result = command::interpret(&output)?;
+        // Only `session_id` crosses into the domain `AgentRun`. The rich
+        // record (`request_id`, `thought`, `stop_reason`, `usage`) stays at the
+        // Command layer: `AgentRun` carries only what a Factor consumes, and
+        // iter has no agreed token/cost Factor field — matching how the
+        // Cursor/Claude drivers keep their usage/cost out of `AgentRun`. (Moot
+        // for `grok 0.2.45`, which reports no usage/cost anyway.)
         Ok(AgentRun {
             session_id: result.session_id,
         })
@@ -229,9 +254,11 @@ mod tests {
     /// Fake `grok` binary: echoes each argv arg to *stderr* (so a
     /// [`CaptureSink`] can observe the flags and the values following them),
     /// then prints a valid headless result JSON object to stdout so
-    /// [`command::interpret`] parses an `Ok`.
+    /// [`command::interpret`] parses an `Ok`. Uses the verified `grok 0.2.45`
+    /// shape (`text`/`stopReason`) so these integration tests exercise the
+    /// primary parse path, not the legacy fallback.
     const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
-printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
+printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
 
     #[tokio::test]
     async fn headless_passes_prompt_as_value_of_p_flag() {
