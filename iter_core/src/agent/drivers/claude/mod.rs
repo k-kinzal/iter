@@ -264,7 +264,7 @@ impl Agent for ClaudeAgent {
             stdio_sink,
             signal_id,
             signal_kind,
-            service_name,
+            hook_isolation_key,
             ..
         } = ctx;
         // Resolve the session id *before* spawning so a filesystem failure
@@ -321,7 +321,7 @@ impl Agent for ClaudeAgent {
                     cancel,
                     signal_id,
                     signal_kind,
-                    &service_name,
+                    &hook_isolation_key,
                 )
                 .await
             }
@@ -330,7 +330,7 @@ impl Agent for ClaudeAgent {
 }
 
 impl ClaudeAgent {
-    /// Drive `claude` as a TUI session. Installs the project-local Stop
+    /// Drive `claude` as a TUI session. Installs the workspace-local Stop
     /// hook bundle before spawning and finalizes it after — even on error
     /// paths — so the user's original settings are always restored.
     ///
@@ -347,9 +347,9 @@ impl ClaudeAgent {
         cancel: CancellationToken,
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
-        service_name: &str,
+        hook_isolation_key: &str,
     ) -> Result<AgentRun, AgentError> {
-        let bundle = HookBundle::install(path, service_name).await?;
+        let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
         let mut command = self.build_interactive_command(path, prompt, session_id);
         apply_user_env(&mut command, &self.env);

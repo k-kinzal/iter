@@ -29,9 +29,9 @@
 //!
 //! # Sidecar files
 //!
-//! All per-service hook state lives under
-//! `~/.iter/projects/<project-id>/<service>/hooks/`, never inside the
-//! workspace. This ensures iter does not pollute the project tree.
+//! All per-isolation-key hook state lives under
+//! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`, never inside the
+//! workspace. This ensures iter does not pollute the workspace tree.
 //!
 //! - `existing-stop-hooks.sh` — user's pre-existing Stop commands
 //!   extracted on install, executed by the hook before SIGKILL.
@@ -48,9 +48,9 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::agent::AgentError;
-use crate::agent::hook_lifecycle::{
-    BackupSlot, extract_user_hooks, make_executable, map_hook_io, project_hooks_dir,
-    remove_if_exists, shell_single_quote,
+use crate::agent::hook_install::{
+    BackupSlot, extract_user_hooks, make_executable, map_hook_io, remove_if_exists,
+    shell_single_quote, workspace_hooks_dir,
 };
 
 const CLAUDE_DIR: &str = ".claude";
@@ -117,9 +117,10 @@ impl HookBundle {
     /// pointing at the iter hook script, and writes the script body with
     /// mode `0o755`.
     ///
-    /// `service` is the compose service name or `"default"` for standalone
-    /// `iter run`.
-    pub(crate) async fn install(cwd: &Path, service: &str) -> Result<Self, AgentError> {
+    /// `isolation_key` is the per-exploration hook isolation key (the
+    /// operator-supplied compose service name, or `"default"` for standalone
+    /// `iter run`).
+    pub(crate) async fn install(cwd: &Path, isolation_key: &str) -> Result<Self, AgentError> {
         let claude_dir = cwd.join(CLAUDE_DIR);
         let bundle_dir = claude_dir.join(BUNDLE_DIR);
         let settings_path = claude_dir.join(SETTINGS_FILE);
@@ -139,7 +140,7 @@ impl HookBundle {
         settings_slot.snapshot().await?;
 
         // Extract any pre-existing user Stop hooks into a sidecar.
-        let hooks_dir = project_hooks_dir(cwd, service)?;
+        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
         let user_hooks_sidecar = extract_user_hooks(&settings_path, "Stop", &hooks_dir).await?;
 
         let hook_cmd = hook_script

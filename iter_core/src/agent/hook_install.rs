@@ -1,27 +1,30 @@
-//! Backup/restore lifecycle plumbing and project-scoped state directory
+//! Stop-hook installation plumbing and workspace-scoped state directory
 //! helpers for the per-agent hook modules.
 //!
 //! All four hook-based agents — [`ClaudeAgent`](crate::agent::ClaudeAgent),
 //! [`CodexAgent`](crate::agent::CodexAgent), [`GeminiAgent`](crate::agent::GeminiAgent),
 //! and [`CopilotAgent`](crate::agent::CopilotAgent) — install a Stop-style hook
-//! under a project-local directory (`${cwd}/.claude/`, `${cwd}/.codex/`,
+//! under a workspace-local directory (`${cwd}/.claude/`, `${cwd}/.codex/`,
 //! `${cwd}/.gemini/`, `${cwd}/.github/hooks/` respectively), let the
 //! interactive CLI run, then finalize: restore any user-authored files the
 //! installer overwrote and remove every scratch file produced by the install
 //! path.
 //!
-//! Hook sidecar files (backed-up user hooks, installed scripts that need to
-//! survive across the install → run → finalize boundary) live under
-//! `~/.iter/projects/<project-id>/<service>/hooks/`, never inside the
-//! workspace. See [`project_hooks_dir`] for the directory layout.
+//! Hook installation files (backed-up user hooks, installed scripts that need
+//! to survive across the install → run → finalize boundary) live outside the
+//! workspace, under
+//! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`. The
+//! `<workspace-id>` is the [`WorkspaceIdentity`] and `<isolation-key>` is the
+//! per-exploration `AgentRunContext::hook_isolation_key`. See
+//! [`workspace_hooks_dir`] for the directory layout.
 //!
-//! This module contains only the shared low-level lifecycle pieces:
+//! This module contains only the shared low-level installation pieces:
 //!
 //! * [`BackupSlot`] — handles the "back up whatever was there, remember
 //!   whether there was anything, restore on finalize" state machine for a
 //!   single file.
-//! * [`project_hooks_dir`] — resolves the per-project, per-service hooks
-//!   sidecar directory under `~/.iter/projects/`.
+//! * [`workspace_hooks_dir`] — resolves the per-workspace, per-isolation-key
+//!   hook-installation directory under `~/.iter/projects/`.
 //! * [`map_hook_io`] — funnel [`std::io::Error`] into
 //!   [`AgentError::Launch`] with a short static label.
 //! * [`make_executable`] — `chmod +x` for freshly written hook scripts.
@@ -34,30 +37,46 @@ use tokio::fs;
 
 use super::AgentError;
 
-/// Compute a project-scoped hooks sidecar directory.
+/// Identity of a workspace on shared host storage: `<basename>-<hash>`, where
+/// `<hash>` is the first eight hex chars of the SHA-256 of the canonical path.
+///
+/// What keeps the on-disk state of two workspaces apart when they happen to
+/// share a basename. The basename prefix keeps `ls ~/.iter/projects/`
+/// human-readable; the hash suffix prevents collisions across different paths
+/// sharing the same directory name. Distinct from compose's *project* (an
+/// operator grouping) — this identifies a single Workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WorkspaceIdentity(String);
+
+impl WorkspaceIdentity {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Compute a workspace-scoped hook-installation directory.
 ///
 /// The returned path is:
 ///
 /// ```text
-/// ~/.iter/projects/<project-id>/<service>/hooks/
+/// ~/.iter/projects/<workspace-id>/<isolation-key>/hooks/
 /// ```
 ///
-/// where `<project-id>` is `<basename>-<sha256(canonical_path)[:8]>`.
-/// The basename prefix keeps `ls ~/.iter/projects/` human-readable;
-/// the hash suffix prevents collisions across different paths sharing
-/// the same directory name.
+/// where `<workspace-id>` is the [`WorkspaceIdentity`] of `workspace_path`.
 ///
 /// `workspace_path` is the agent's working directory (the value of
-/// `AgentRunContext::workspace_path`). `service` is the compose service
-/// name in compose mode, or `"default"` for standalone `iter run`.
+/// `AgentRunContext::workspace_path`). `isolation_key` is the per-exploration
+/// [`AgentRunContext::hook_isolation_key`](super::AgentRunContext): the
+/// operator-supplied compose service name in compose mode, or `"default"` for
+/// standalone `iter run`.
 ///
 /// # Errors
 ///
 /// Returns [`AgentError::Launch`] if the home directory cannot be
 /// resolved or the workspace path cannot be canonicalized.
-pub(crate) fn project_hooks_dir(
+pub(crate) fn workspace_hooks_dir(
     workspace_path: &Path,
-    service: &str,
+    isolation_key: &str,
 ) -> Result<PathBuf, AgentError> {
     let home = crate::home::home_dir()
         .ok_or_else(|| AgentError::Launch("could not resolve home directory".into()))?;
@@ -67,17 +86,18 @@ pub(crate) fn project_hooks_dir(
             workspace_path.display()
         ))
     })?;
-    let project_id = compute_project_id(&canonical);
+    let workspace_id = compute_workspace_id(&canonical);
     Ok(home
         .join(".iter")
         .join("projects")
-        .join(project_id)
-        .join(service)
+        .join(workspace_id.as_str())
+        .join(isolation_key)
         .join("hooks"))
 }
 
-/// `<basename>-<sha256(canonical_path)[:8]>`.
-fn compute_project_id(canonical_path: &Path) -> String {
+/// Derive the [`WorkspaceIdentity`] (`<basename>-<sha256(canonical_path)[:8]>`)
+/// of a canonicalized workspace path.
+fn compute_workspace_id(canonical_path: &Path) -> WorkspaceIdentity {
     let basename = canonical_path
         .file_name()
         .and_then(|n| n.to_str())
@@ -86,7 +106,7 @@ fn compute_project_id(canonical_path: &Path) -> String {
     hasher.update(canonical_path.as_os_str().as_encoded_bytes());
     let hash = hasher.finalize();
     let hash_prefix = hex::encode(&hash[..4]);
-    format!("{basename}-{hash_prefix}")
+    WorkspaceIdentity(format!("{basename}-{hash_prefix}"))
 }
 
 /// Backup-on-install + restore-on-finalize state machine for a single
@@ -258,8 +278,8 @@ pub(crate) async fn remove_if_exists(path: &Path, op: &'static str) -> Result<()
 /// `config_path` is the agent's config file (e.g. `.claude/settings.json`).
 /// `hook_event` is the JSON key for the hook event (e.g. `"Stop"`,
 /// `"AfterAgent"`, `"agentStop"`).
-/// `hooks_dir` is the project-scoped hooks sidecar directory returned
-/// by [`project_hooks_dir`].
+/// `hooks_dir` is the workspace-scoped hook-installation directory returned
+/// by [`workspace_hooks_dir`].
 pub(crate) async fn extract_user_hooks(
     config_path: &Path,
     hook_event: &str,
@@ -281,7 +301,7 @@ pub(crate) async fn extract_user_hooks(
 
     fs::create_dir_all(hooks_dir)
         .await
-        .map_err(map_hook_io("create project hooks sidecar directory"))?;
+        .map_err(map_hook_io("create workspace hook-installation directory"))?;
 
     let sidecar = hooks_dir.join("existing-stop-hooks.sh");
     let mut script = String::from("#!/usr/bin/env bash\nset -euo pipefail\n");
@@ -398,28 +418,31 @@ mod tests {
     }
 
     #[test]
-    fn project_id_is_deterministic() {
-        let id1 = compute_project_id(Path::new("/Users/ab/Projects/iter"));
-        let id2 = compute_project_id(Path::new("/Users/ab/Projects/iter"));
+    fn workspace_id_is_deterministic() {
+        let id1 = compute_workspace_id(Path::new("/Users/ab/Projects/iter"));
+        let id2 = compute_workspace_id(Path::new("/Users/ab/Projects/iter"));
         assert_eq!(id1, id2);
-        assert!(id1.starts_with("iter-"), "expected iter-<hash>, got {id1}");
-        assert_eq!(id1.len(), "iter-".len() + 8);
+        assert!(
+            id1.as_str().starts_with("iter-"),
+            "expected iter-<hash>, got {id1:?}"
+        );
+        assert_eq!(id1.as_str().len(), "iter-".len() + 8);
     }
 
     #[test]
-    fn project_id_differs_for_different_paths() {
-        let id1 = compute_project_id(Path::new("/Users/ab/Projects/iter"));
-        let id2 = compute_project_id(Path::new("/Users/ab/Projects/other"));
+    fn workspace_id_differs_for_different_paths() {
+        let id1 = compute_workspace_id(Path::new("/Users/ab/Projects/iter"));
+        let id2 = compute_workspace_id(Path::new("/Users/ab/Projects/other"));
         assert_ne!(id1, id2);
     }
 
     #[test]
-    fn project_id_handles_same_basename_different_parent() {
-        let id1 = compute_project_id(Path::new("/a/foo"));
-        let id2 = compute_project_id(Path::new("/b/foo"));
+    fn workspace_id_handles_same_basename_different_parent() {
+        let id1 = compute_workspace_id(Path::new("/a/foo"));
+        let id2 = compute_workspace_id(Path::new("/b/foo"));
         assert_ne!(id1, id2, "same basename but different paths should differ");
-        assert!(id1.starts_with("foo-"));
-        assert!(id2.starts_with("foo-"));
+        assert!(id1.as_str().starts_with("foo-"));
+        assert!(id2.as_str().starts_with("foo-"));
     }
 
     #[tokio::test]

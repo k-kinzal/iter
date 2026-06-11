@@ -56,11 +56,12 @@ pub struct AgentRunContext<'a> {
     /// cancels the agent after this duration and returns
     /// [`AgentError::IterationTimeout`](crate::agent::AgentError::IterationTimeout).
     pub iteration_timeout: Option<Duration>,
-    /// Compose service name for hook sidecar isolation. `"default"` for
-    /// standalone `iter run`; set by `iter_compose` when running under a
-    /// compose file so that two services sharing a workspace path get
-    /// separate sidecar directories.
-    pub service_name: String,
+    /// Per-exploration hook isolation key. Distinguishes one Runner's
+    /// stop-hook installation from another's when both explore the same
+    /// workspace path. `"default"` for standalone `iter run`; the operator
+    /// supplies the compose service name so that two services sharing a
+    /// workspace path get separate hook-installation directories.
+    pub hook_isolation_key: String,
 }
 
 impl std::fmt::Debug for AgentRunContext<'_> {
@@ -73,7 +74,7 @@ impl std::fmt::Debug for AgentRunContext<'_> {
             .field("signal_kind", &self.signal_kind)
             .field("stdio_sink", &"<dyn OutputSink>")
             .field("iteration_timeout", &self.iteration_timeout)
-            .field("service_name", &self.service_name)
+            .field("hook_isolation_key", &self.hook_isolation_key)
             .finish()
     }
 }
@@ -95,7 +96,7 @@ impl<'a> AgentRunContext<'a> {
             signal_kind: SignalKind::Work,
             stdio_sink: Arc::new(NoopSink),
             iteration_timeout: None,
-            service_name: "default".to_owned(),
+            hook_isolation_key: "default".to_owned(),
         }
     }
 
@@ -122,10 +123,11 @@ impl<'a> AgentRunContext<'a> {
         self
     }
 
-    /// Set the compose service name for hook sidecar isolation.
+    /// Set the per-exploration hook isolation key (the operator supplies the
+    /// compose service name; `"default"` for standalone `iter run`).
     #[must_use]
-    pub fn with_service_name(mut self, name: String) -> Self {
-        self.service_name = name;
+    pub fn with_hook_isolation_key(mut self, key: String) -> Self {
+        self.hook_isolation_key = key;
         self
     }
 }

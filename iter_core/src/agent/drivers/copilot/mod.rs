@@ -240,7 +240,7 @@ impl Agent for CopilotAgent {
             stdio_sink,
             signal_id,
             signal_kind,
-            service_name,
+            hook_isolation_key,
             ..
         } = ctx;
         match self.mode {
@@ -277,7 +277,7 @@ impl Agent for CopilotAgent {
                     cancel,
                     signal_id,
                     signal_kind,
-                    &service_name,
+                    &hook_isolation_key,
                 )
                 .await
             }
@@ -286,7 +286,7 @@ impl Agent for CopilotAgent {
 }
 
 impl CopilotAgent {
-    /// Drive the Copilot CLI as a TUI session. Installs the project-local
+    /// Drive the Copilot CLI as a TUI session. Installs the workspace-local
     /// `agentStop` hook bundle before spawning and finalizes it after —
     /// even on error paths — so the user's original hook files are
     /// always restored.
@@ -303,9 +303,9 @@ impl CopilotAgent {
         cancel: CancellationToken,
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
-        service_name: &str,
+        hook_isolation_key: &str,
     ) -> Result<AgentRun, AgentError> {
-        let bundle = HookBundle::install(path, service_name).await?;
+        let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
         let mut command = self.build_command(path, prompt);
         apply_user_env(&mut command, &self.env);

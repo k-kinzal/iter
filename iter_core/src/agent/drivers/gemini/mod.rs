@@ -175,7 +175,7 @@ impl Agent for GeminiAgent {
             stdio_sink,
             signal_id,
             signal_kind,
-            service_name,
+            hook_isolation_key,
             ..
         } = ctx;
         match self.mode {
@@ -218,7 +218,7 @@ impl Agent for GeminiAgent {
                     cancel,
                     signal_id,
                     signal_kind,
-                    &service_name,
+                    &hook_isolation_key,
                 )
                 .await
             }
@@ -227,7 +227,7 @@ impl Agent for GeminiAgent {
 }
 
 impl GeminiAgent {
-    /// Drive `gemini` as a TUI session. Installs the project-local
+    /// Drive `gemini` as a TUI session. Installs the workspace-local
     /// `AfterAgent` hook bundle before spawning and finalizes it after
     /// — even on error paths — so the user's original `settings.json`
     /// is always restored.
@@ -243,9 +243,9 @@ impl GeminiAgent {
         cancel: CancellationToken,
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
-        service_name: &str,
+        hook_isolation_key: &str,
     ) -> Result<AgentRun, AgentError> {
-        let bundle = HookBundle::install(path, service_name).await?;
+        let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
         let mut command = self.build_interactive_command(path, prompt);
         apply_user_env(&mut command, &self.env);

@@ -19,7 +19,8 @@
 //!
 //! # Sidecar files
 //!
-//! Hook state lives under `~/.iter/projects/<project-id>/<service>/hooks/`,
+//! Hook state lives under
+//! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`,
 //! never inside the workspace.
 //!
 //! # Config file layout
@@ -34,9 +35,9 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::agent::AgentError;
-use crate::agent::hook_lifecycle::{
-    BackupSlot, extract_user_hooks, make_executable, map_hook_io, project_hooks_dir,
-    remove_if_exists, shell_single_quote,
+use crate::agent::hook_install::{
+    BackupSlot, extract_user_hooks, make_executable, map_hook_io, remove_if_exists,
+    shell_single_quote, workspace_hooks_dir,
 };
 
 const GEMINI_DIR: &str = ".gemini";
@@ -90,8 +91,10 @@ pub(crate) struct HookBundle {
 }
 
 impl HookBundle {
-    /// Install the project-local `AfterAgent` hook bundle under `cwd`.
-    pub(crate) async fn install(cwd: &Path, service: &str) -> Result<Self, AgentError> {
+    /// Install the workspace-local `AfterAgent` hook bundle under `cwd`.
+    ///
+    /// `isolation_key` is the per-exploration hook isolation key.
+    pub(crate) async fn install(cwd: &Path, isolation_key: &str) -> Result<Self, AgentError> {
         let gemini_dir = cwd.join(GEMINI_DIR);
         let bundle_dir = gemini_dir.join(BUNDLE_DIR);
         let settings_path = gemini_dir.join(SETTINGS_FILE);
@@ -110,7 +113,7 @@ impl HookBundle {
             BackupSlot::new(&bundle_dir, settings_path.clone(), SETTINGS_BACKUP_NAME);
         settings_slot.snapshot().await?;
 
-        let hooks_dir = project_hooks_dir(cwd, service)?;
+        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
         let user_hooks_sidecar =
             extract_user_hooks(&settings_path, "AfterAgent", &hooks_dir).await?;
 

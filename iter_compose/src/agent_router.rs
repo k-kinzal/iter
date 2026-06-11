@@ -98,7 +98,7 @@ impl AgentRouter {
             .with_signal_kind(ctx.signal_kind)
             .with_stdio_sink(ctx.stdio_sink.clone())
             .with_iteration_timeout(ctx.iteration_timeout)
-            .with_service_name(ctx.service_name.clone());
+            .with_hook_isolation_key(ctx.hook_isolation_key.clone());
 
             match agent.run(attempt_ctx).await {
                 Ok(run) => return Ok(run),

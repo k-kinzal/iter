@@ -61,7 +61,7 @@ pub mod drivers;
 pub(crate) mod cli_json;
 pub mod command_path;
 pub mod error;
-mod hook_lifecycle;
+mod hook_install;
 pub mod inner;
 pub mod mode;
 pub(crate) mod process;

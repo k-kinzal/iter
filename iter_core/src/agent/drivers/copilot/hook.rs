@@ -30,7 +30,8 @@
 //!
 //! # Sidecar files
 //!
-//! Hook state lives under `~/.iter/projects/<project-id>/<service>/hooks/`,
+//! Hook state lives under
+//! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`,
 //! never inside the workspace.
 //!
 //! # Config file layout
@@ -50,9 +51,9 @@ use serde_json::json;
 use tokio::fs;
 
 use crate::agent::AgentError;
-use crate::agent::hook_lifecycle::{
-    BackupSlot, extract_user_hooks, make_executable, map_hook_io, project_hooks_dir,
-    shell_single_quote,
+use crate::agent::hook_install::{
+    BackupSlot, extract_user_hooks, make_executable, map_hook_io, shell_single_quote,
+    workspace_hooks_dir,
 };
 
 const HOOKS_DIR: &str = ".github/hooks";
@@ -105,18 +106,20 @@ fn hook_script_body(user_hooks_sidecar: Option<&Path>) -> String {
 /// Handle returned from [`HookBundle::install`].
 #[derive(Debug)]
 pub(crate) struct HookBundle {
-    hooks_dir: PathBuf,
+    github_hooks_dir: PathBuf,
     config_slot: BackupSlot,
     script_slot: BackupSlot,
 }
 
 impl HookBundle {
-    /// Install the project-local agentStop hook bundle under `cwd`.
-    pub(crate) async fn install(cwd: &Path, service: &str) -> Result<Self, AgentError> {
-        let hooks_dir = cwd.join(HOOKS_DIR);
-        let bundle_dir = hooks_dir.join(BUNDLE_DIR);
-        let config_path = hooks_dir.join(HOOK_CONFIG_FILE);
-        let script_path = hooks_dir.join(HOOK_SCRIPT_FILE);
+    /// Install the workspace-local agentStop hook bundle under `cwd`.
+    ///
+    /// `isolation_key` is the per-exploration hook isolation key.
+    pub(crate) async fn install(cwd: &Path, isolation_key: &str) -> Result<Self, AgentError> {
+        let github_hooks_dir = cwd.join(HOOKS_DIR);
+        let bundle_dir = github_hooks_dir.join(BUNDLE_DIR);
+        let config_path = github_hooks_dir.join(HOOK_CONFIG_FILE);
+        let script_path = github_hooks_dir.join(HOOK_SCRIPT_FILE);
 
         fs::create_dir_all(&bundle_dir)
             .await
@@ -127,9 +130,8 @@ impl HookBundle {
         let script_slot = BackupSlot::new(&bundle_dir, script_path.clone(), SCRIPT_BACKUP_NAME);
         script_slot.snapshot().await?;
 
-        let proj_hooks_dir = project_hooks_dir(cwd, service)?;
-        let user_hooks_sidecar =
-            extract_user_hooks(&config_path, "agentStop", &proj_hooks_dir).await?;
+        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
+        let user_hooks_sidecar = extract_user_hooks(&config_path, "agentStop", &hooks_dir).await?;
 
         let config_payload = json!({
             "version": 1,
@@ -155,7 +157,7 @@ impl HookBundle {
         make_executable(&script_path).await?;
 
         Ok(Self {
-            hooks_dir,
+            github_hooks_dir,
             config_slot,
             script_slot,
         })
@@ -170,15 +172,15 @@ impl HookBundle {
     }
 
     async fn cleanup_scratch(&self) -> Result<(), AgentError> {
-        let bundle_dir = self.hooks_dir.join(BUNDLE_DIR);
+        let bundle_dir = self.github_hooks_dir.join(BUNDLE_DIR);
         match fs::remove_dir_all(&bundle_dir).await {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(map_hook_io("remove copilot .iter-bundle directory")(e)),
         }
 
-        drop(fs::remove_dir(&self.hooks_dir).await);
-        if let Some(dotgithub) = self.hooks_dir.parent() {
+        drop(fs::remove_dir(&self.github_hooks_dir).await);
+        if let Some(dotgithub) = self.github_hooks_dir.parent() {
             drop(fs::remove_dir(dotgithub).await);
         }
 
