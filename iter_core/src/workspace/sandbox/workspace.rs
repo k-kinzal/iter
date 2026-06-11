@@ -9,7 +9,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::workspace::WorkspaceError;
-use crate::{ITER_SANDBOX_COMMAND_PREFIX, SandboxRequirements, Workspace, encode_prefix_env};
+use crate::{SandboxRequirements, Workspace};
 use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
@@ -114,17 +114,6 @@ impl SandboxWorkspace {
         self.settings.apply_back
     }
 
-    /// The argv prefix the sandbox backend produced during setup.
-    ///
-    /// Empty before [`setup`](Workspace::setup) is called; populated by
-    /// the backend once the workspace is active. Useful for tests and
-    /// for callers that want to spawn commands inside the sandbox
-    /// without touching [`ITER_SANDBOX_COMMAND_PREFIX`].
-    #[must_use]
-    pub fn command_prefix(&self) -> &[OsString] {
-        &self.command_prefix
-    }
-
     /// Returns `true` if a sandbox backend is available for the host
     /// platform and its driver binary is present on `PATH`.
     ///
@@ -185,17 +174,12 @@ impl SandboxWorkspace {
         };
         let prefix = backend.prepare(&descriptor)?;
 
-        // ----- Phase 3: publish prefix as env var ------------------------
-        // SAFETY: mutating process env is unsound only when other threads
-        // are concurrently reading it. The runner is single-instance and
-        // children spawn after this point, so the write happens-before
-        // their env snapshot. See `ITER_SANDBOX_COMMAND_PREFIX` docs for
-        // the consumer contract.
-        let encoded = encode_prefix_env(&prefix);
-        unsafe {
-            std::env::set_var(ITER_SANDBOX_COMMAND_PREFIX, &encoded);
-        }
-
+        // ----- Phase 3: retain the prefix as typed invocation data -------
+        // The backend's argv prefix is command-construction data, not host
+        // process state. It is stored on the workspace value and surfaced
+        // through `Workspace::sandbox_command_prefix`; the runner reads it
+        // after setup and threads it into the agent invocation. Nothing is
+        // written to the process environment.
         self.mirror = Some(mirror);
         self.backend = Some(backend);
         self.command_prefix = prefix;
@@ -233,11 +217,6 @@ impl SandboxWorkspace {
                 ApplyBackMode::Sync => mirror.sync_back().await?,
                 ApplyBackMode::Merge => mirror.merge_back().await?,
             }
-        }
-
-        // Unset the env var we exported at setup; see SAFETY note there.
-        unsafe {
-            std::env::remove_var(ITER_SANDBOX_COMMAND_PREFIX);
         }
 
         if let Some(mut backend) = self.backend.take() {
@@ -290,6 +269,13 @@ impl Workspace for SandboxWorkspace {
         // base, so the base is the stable location post-teardown event
         // handlers should see.
         &self.base
+    }
+
+    fn sandbox_command_prefix(&self) -> &[OsString] {
+        // The backend-produced wrap, retained on the value during setup.
+        // Empty before setup / after teardown; the runner only reads it
+        // while the workspace is active.
+        &self.command_prefix
     }
 }
 
@@ -448,21 +434,42 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn sandbox_command_prefix_empty_before_setup() {
+        // Before setup the workspace has produced no wrap; the trait method
+        // must report an empty prefix (the same answer local/clone give),
+        // never reach for ambient process state.
+        let base = TempDir::new().expect("tempdir");
+        let ws = SandboxWorkspace::new(
+            base.path(),
+            clone_settings(),
+            default_deny_policy(),
+            SandboxRequirements::default(),
+        );
+        assert!(Workspace::sandbox_command_prefix(&ws).is_empty());
+    }
+
     #[test]
-    fn encode_decode_prefix_roundtrip() {
-        use crate::decode_prefix_env;
+    fn sandbox_command_prefix_returns_retained_wrap() {
+        // The trait method surfaces exactly the argv the backend produced,
+        // as typed data carried on the value — no encode/decode round-trip
+        // and no environment variable in the path.
+        let base = TempDir::new().expect("tempdir");
         let prefix = vec![
             OsString::from("sandbox-exec"),
             OsString::from("-f"),
             OsString::from("/tmp/profile.sb"),
         ];
-        let encoded = encode_prefix_env(&prefix);
-        let decoded = decode_prefix_env(encoded.to_str().unwrap());
-        assert_eq!(decoded, prefix);
-    }
-
-    #[test]
-    fn decode_empty_returns_empty() {
-        assert!(crate::decode_prefix_env("").is_empty());
+        let ws = SandboxWorkspace {
+            base: base.path().to_path_buf(),
+            settings: clone_settings(),
+            policy: default_deny_policy(),
+            requirements: SandboxRequirements::default(),
+            mirror: None,
+            backend: None,
+            command_prefix: prefix.clone(),
+            set_up: true,
+        };
+        assert_eq!(Workspace::sandbox_command_prefix(&ws), prefix.as_slice());
     }
 }

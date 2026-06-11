@@ -96,6 +96,7 @@ impl Agent for ClineAgent {
             prompt,
             cancel,
             stdio_sink,
+            sandbox_command_prefix,
             ..
         } = ctx;
 
@@ -111,6 +112,7 @@ impl Agent for ClineAgent {
             PromptDelivery::Stdin(prompt.as_str()),
             cancel,
             stdio_sink,
+            sandbox_command_prefix,
         )
         .await?;
         // Adapter: project the Command's CLI-shaped result/error onto iter's

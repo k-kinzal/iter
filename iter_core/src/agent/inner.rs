@@ -10,6 +10,7 @@
 //! allocation is irrelevant here: every `run` spawns a CLI subprocess that
 //! runs for minutes, dwarfing one heap allocation and one indirect call.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -66,6 +67,16 @@ pub struct AgentRunContext<'a> {
     /// supplies the compose service name so that two services sharing a
     /// workspace path get separate hook-installation directories.
     pub hook_isolation_key: String,
+    /// Argv prefix the agent's child command must be launched under for the
+    /// active workspace's isolation to take effect.
+    ///
+    /// This is typed command-construction data, **not** an environment
+    /// variable: the runner reads it from the active workspace via
+    /// [`Workspace::sandbox_command_prefix`](crate::workspace::Workspace::sandbox_command_prefix)
+    /// after setup and threads it here. Process-launch helpers splice it in
+    /// front of the agent's own program/args. Empty for `local`/`clone`
+    /// (non-sandbox) workspaces, in which case the command runs verbatim.
+    pub sandbox_command_prefix: &'a [OsString],
 }
 
 impl std::fmt::Debug for AgentRunContext<'_> {
@@ -79,6 +90,7 @@ impl std::fmt::Debug for AgentRunContext<'_> {
             .field("stdio_sink", &"<dyn OutputSink>")
             .field("iteration_timeout", &self.iteration_timeout)
             .field("hook_isolation_key", &self.hook_isolation_key)
+            .field("sandbox_command_prefix", &self.sandbox_command_prefix)
             .finish()
     }
 }
@@ -101,6 +113,7 @@ impl<'a> AgentRunContext<'a> {
             stdio_sink: Arc::new(NoopSink),
             iteration_timeout: None,
             hook_isolation_key: "default".to_owned(),
+            sandbox_command_prefix: &[],
         }
     }
 
@@ -132,6 +145,17 @@ impl<'a> AgentRunContext<'a> {
     #[must_use]
     pub fn with_hook_isolation_key(mut self, key: String) -> Self {
         self.hook_isolation_key = key;
+        self
+    }
+
+    /// Set the sandbox command prefix the agent's child must be launched
+    /// under. The runner supplies the active workspace's
+    /// [`sandbox_command_prefix`](crate::workspace::Workspace::sandbox_command_prefix);
+    /// the borrow lives for the duration of one iteration. Defaults to an
+    /// empty slice (the verbatim, non-sandbox case).
+    #[must_use]
+    pub fn with_sandbox_command_prefix(mut self, prefix: &'a [OsString]) -> Self {
+        self.sandbox_command_prefix = prefix;
         self
     }
 }

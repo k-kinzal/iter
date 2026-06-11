@@ -8,6 +8,7 @@
 //! every `setup`/`teardown` does filesystem work (or spawns a sandbox) that
 //! dominates an indirect call by orders of magnitude.
 
+use std::ffi::OsString;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -124,4 +125,27 @@ pub trait Workspace: Send + Sync {
     /// `SandboxWorkspace`), return the durable destination that is
     /// still valid after `teardown()` has run.
     fn final_path(&self) -> &Path;
+
+    /// Argv prefix the agent's child commands must be launched under for
+    /// this workspace's isolation to take effect.
+    ///
+    /// This is **command-construction data**, not an environment variable
+    /// and not operator configuration: it is the typed handoff from
+    /// workspace setup to agent invocation within a single runner
+    /// iteration. The [`Runner`](crate::Runner) reads it from the active
+    /// workspace after a successful [`setup`](Workspace::setup) and threads
+    /// it into the agent's per-iteration invocation; process-launch helpers
+    /// splice it in front of the agent's own program/args.
+    ///
+    /// The default implementation returns an empty slice unconditionally —
+    /// the correct answer for every workspace that runs the agent verbatim
+    /// (`local`, `clone`). Only [`SandboxWorkspace`] overrides it, and its
+    /// override returns a non-empty prefix only during the **active** phase
+    /// (between a successful `setup()` and `teardown()`); before setup or
+    /// after teardown it, too, reports empty.
+    ///
+    /// [`SandboxWorkspace`]: crate::workspace::SandboxWorkspace
+    fn sandbox_command_prefix(&self) -> &[OsString] {
+        &[]
+    }
 }

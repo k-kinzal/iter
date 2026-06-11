@@ -81,6 +81,7 @@
 //! means "invoke the binary with no subcommand" (for standalone Copilot TUI
 //! builds).
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -205,6 +206,7 @@ impl Agent for CopilotAgent {
             signal_id,
             signal_kind,
             hook_isolation_key,
+            sandbox_command_prefix,
             ..
         } = ctx;
         match self.mode {
@@ -225,8 +227,14 @@ impl Agent for CopilotAgent {
                 );
                 inject_copilot_trace_parent_env(&mut command);
                 // The prompt is embedded in argv via `-p`, so no stdin data.
-                let output =
-                    spawn_capture(command, PromptDelivery::Inline, cancel, stdio_sink).await?;
+                let output = spawn_capture(
+                    command,
+                    PromptDelivery::Inline,
+                    cancel,
+                    stdio_sink,
+                    sandbox_command_prefix,
+                )
+                .await?;
                 // Adapter: project the Command's CLI-shaped result/error onto
                 // iter's domain. `?` runs the `From<CopilotError>` above.
                 let result = command::interpret(&output)?;
@@ -242,6 +250,7 @@ impl Agent for CopilotAgent {
                     signal_id,
                     signal_kind,
                     &hook_isolation_key,
+                    sandbox_command_prefix,
                 )
                 .await
             }
@@ -268,6 +277,7 @@ impl CopilotAgent {
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
         hook_isolation_key: &str,
+        sandbox_prefix: &[OsString],
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
@@ -283,7 +293,9 @@ impl CopilotAgent {
 
         // Interactive mode has no machine-readable output: the only signal is
         // the child's exit. A clean exit is a run; anything else is a failure.
-        let exit = drive_interactive_with_finalize(command, cancel, bundle.finalize()).await?;
+        let exit =
+            drive_interactive_with_finalize(command, cancel, sandbox_prefix, bundle.finalize())
+                .await?;
         if let Some(err) = exit.into_failure() {
             return Err(err);
         }

@@ -118,7 +118,14 @@ impl Agent for GenericAgent {
         // The generic escape hatch has no machine-readable contract: a clean
         // exit is a run, a non-zero exit is a failure. Token-limit text in
         // the output is still surfaced so the router can fall back.
-        let output = spawn_capture(command, delivery, ctx.cancel, ctx.stdio_sink).await?;
+        let output = spawn_capture(
+            command,
+            delivery,
+            ctx.cancel,
+            ctx.stdio_sink,
+            ctx.sandbox_command_prefix,
+        )
+        .await?;
         if let Some(err) = output.exit.into_failure() {
             if let Some(detail) = detect_token_limit(&output.stdout_str())
                 .or_else(|| detect_token_limit(&output.stderr_str()))

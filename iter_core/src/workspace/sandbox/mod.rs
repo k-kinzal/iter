@@ -10,10 +10,12 @@
 //!    exposes. The agent's *working* path is the tmpdir.
 //! 2. **Wrap.** A platform-specific [`SandboxBackend`] generates an argv
 //!    prefix (macOS `sandbox-exec`, Linux `bwrap`) that child processes
-//!    must be spawned under. The prefix is exported via the
-//!    [`ITER_SANDBOX_COMMAND_PREFIX`](crate::ITER_SANDBOX_COMMAND_PREFIX)
-//!    environment variable so well-behaved agents pick it up at
-//!    `Command` construction time.
+//!    must be spawned under. The prefix is retained on the workspace value
+//!    and surfaced through
+//!    [`Workspace::sandbox_command_prefix`](crate::Workspace::sandbox_command_prefix);
+//!    the runner reads it after setup and threads it into the agent
+//!    invocation as typed command-construction data — never through the
+//!    process environment.
 //!
 //! # The two sides of the sandbox contract
 //!
@@ -60,8 +62,5 @@ pub mod workspace;
 pub use backend::{BackendError, SandboxBackend, SandboxDescriptor};
 pub use error::SandboxWorkspaceError;
 pub use policy::{NetworkAccess, SandboxPolicy};
-pub use requirements::{
-    ITER_SANDBOX_COMMAND_PREFIX, SANDBOX_PREFIX_SEP, SandboxRequirements, current_sandbox_prefix,
-    decode_prefix_env, encode_prefix_env, match_env_pattern,
-};
+pub use requirements::{SandboxRequirements, match_env_pattern};
 pub use workspace::SandboxWorkspace;

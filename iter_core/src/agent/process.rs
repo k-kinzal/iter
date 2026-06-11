@@ -25,7 +25,6 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::current_sandbox_prefix;
 use crate::log::{LogStream, OutputSink};
 use crate::process_group::{self, ProcessGroup};
 use bytes::Bytes;
@@ -269,24 +268,32 @@ fn parse_traceparent_ids(traceparent: &str) -> Option<(&str, &str)> {
     Some((trace_id, span_id))
 }
 
-/// If [`ITER_SANDBOX_COMMAND_PREFIX`](crate::ITER_SANDBOX_COMMAND_PREFIX)
-/// is exported by an enclosing
-/// [`SandboxWorkspace`](crate::Workspace), splice the decoded argv
-/// prefix in front of the caller's `command` and return a new
-/// [`Command`] that invokes the original program under that prefix.
+/// Splice the sandbox argv `prefix` in front of the caller's `command` and
+/// return a new [`Command`] that invokes the original program under that
+/// prefix.
+///
+/// The `prefix` is the typed command-construction data the runner reads from
+/// the active workspace via
+/// [`Workspace::sandbox_command_prefix`](crate::workspace::Workspace::sandbox_command_prefix)
+/// and threads onto the agent invocation — it is **not** read from the
+/// process environment.
 ///
 /// The rebuilt command preserves everything the caller already
-/// configured: program, args, environment variables, working
-/// directory, process-group inheritance semantics. Stdio is left to
-/// the caller — [`spawn_capture`] and
-/// [`drive_interactive`] set stdio on the returned `Command`
-/// after the wrap has been applied.
+/// configured *that can be introspected*: program, args, environment
+/// variables, working directory, process-group inheritance semantics.
 ///
-/// When the env var is unset (the common `local`/`clone` workspace
-/// case) the function is a pure pass-through — no allocations, no
-/// behavior change.
-pub(crate) fn apply_sandbox_prefix(command: Command) -> Command {
-    let prefix = current_sandbox_prefix();
+/// Two child attributes have no `std`/`tokio` getter and therefore
+/// **cannot** be carried across the rebuild — stdio disposition and
+/// `kill_on_drop`. The spawning helper re-asserts both on the returned
+/// command after the wrap: [`spawn_capture`] sets piped stdio +
+/// `kill_on_drop(true)`, [`drive_interactive`] inherits stdio (the default)
+/// and sets `kill_on_drop(true)`. Callers must not rely on either attribute
+/// surviving a non-empty-prefix wrap.
+///
+/// When `prefix` is empty (the common `local`/`clone` workspace case) the
+/// function is a pure pass-through — the caller's command is returned
+/// verbatim, so any stdio / `kill_on_drop` it set is retained.
+pub(crate) fn apply_sandbox_prefix(command: Command, prefix: &[OsString]) -> Command {
     if prefix.is_empty() {
         // Pass-through: the caller's command runs verbatim, but we still
         // install the process-group attribute so the resulting child is
@@ -363,8 +370,9 @@ pub(crate) async fn spawn_capture(
     delivery: PromptDelivery<'_>,
     cancel: CancellationToken,
     sink: Arc<dyn OutputSink>,
+    sandbox_prefix: &[OsString],
 ) -> Result<CommandOutput, SpawnError> {
-    let mut command = apply_sandbox_prefix(command);
+    let mut command = apply_sandbox_prefix(command, sandbox_prefix);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -599,8 +607,16 @@ pub(crate) fn detect_token_limit(output: &str) -> Option<String> {
 pub(crate) async fn drive_interactive(
     command: Command,
     cancel: &CancellationToken,
+    sandbox_prefix: &[OsString],
 ) -> Result<RawExit, SpawnError> {
-    let mut command = apply_sandbox_prefix(command);
+    let mut command = apply_sandbox_prefix(command, sandbox_prefix);
+    // Re-assert kill-on-drop after the wrap: a non-empty prefix rebuilds the
+    // command, and `kill_on_drop` cannot be read back to carry it over. The
+    // caller already set it on the pre-wrap command (preserved in the
+    // pass-through case); this guarantees it on the wrapped command too, so a
+    // dropped future kills the sandbox host directly even if the process-group
+    // teardown does not run. Mirrors `spawn_capture`.
+    command.kill_on_drop(true);
     if cancel.is_cancelled() {
         return Err(SpawnError::Cancelled);
     }
@@ -635,12 +651,13 @@ pub(crate) async fn drive_interactive(
 pub(crate) async fn drive_interactive_with_finalize<Fut>(
     command: Command,
     cancel: CancellationToken,
+    sandbox_prefix: &[OsString],
     finalize: Fut,
 ) -> Result<RawExit, AgentError>
 where
     Fut: Future<Output = Result<(), AgentError>> + Send,
 {
-    let run_result = drive_interactive(command, &cancel).await;
+    let run_result = drive_interactive(command, &cancel, sandbox_prefix).await;
 
     if let Err(finalize_err) = finalize.await {
         return Err(match run_result {
@@ -763,24 +780,19 @@ mod tests {
         );
     }
 
-    // `apply_sandbox_prefix` reads a process-wide env var; the two cases
-    // below must be serialised, so they share a `#[serial_test]`-style
-    // mutex via `std::sync::Mutex`.
+    // Both the OTel resource-attribute test and the legacy-protocol
+    // regression test below mutate process-wide env vars; this mutex ensures
+    // they never race each other. The remaining prefix-wrapping tests touch no
+    // environment at all and take no lock.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
-    fn apply_sandbox_prefix_passes_through_when_env_unset() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // SAFETY: the lock above guarantees no other test in this
-        // module observes the env var concurrently.
-        unsafe {
-            std::env::remove_var(crate::ITER_SANDBOX_COMMAND_PREFIX);
-        }
+    fn apply_sandbox_prefix_passes_through_when_empty() {
+        // The verbatim (`local`/`clone`) case: an empty invocation prefix
+        // leaves the caller's program and args untouched.
         let mut original = Command::new("/bin/echo");
         original.arg("hi");
-        let wrapped = apply_sandbox_prefix(original);
+        let wrapped = apply_sandbox_prefix(original, &[]);
         let std_cmd = wrapped.as_std();
         assert_eq!(std_cmd.get_program(), "/bin/echo");
         let args: Vec<_> = std_cmd.get_args().map(OsStr::to_os_string).collect();
@@ -886,23 +898,18 @@ mod tests {
     }
 
     #[test]
-    fn apply_sandbox_prefix_splices_prefix_when_env_set() {
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let encoded = format!("sandbox-exec{sep}-f{sep}/tmp/p.sb", sep = '\x1f');
-        // SAFETY: serialised via ENV_LOCK.
-        unsafe {
-            std::env::set_var(crate::ITER_SANDBOX_COMMAND_PREFIX, &encoded);
-        }
+    fn apply_sandbox_prefix_splices_invocation_prefix() {
+        // Wrapping is driven entirely by the prefix argument — the typed
+        // command-construction data the runner threads onto the agent
+        // invocation. No environment is consulted.
+        let prefix = vec![
+            OsString::from("sandbox-exec"),
+            OsString::from("-f"),
+            OsString::from("/tmp/p.sb"),
+        ];
         let mut original = Command::new("/bin/echo");
         original.arg("hi").arg("there");
-        let wrapped = apply_sandbox_prefix(original);
-        // Restore before assertions run so a panic does not leak state.
-        // SAFETY: serialised via ENV_LOCK.
-        unsafe {
-            std::env::remove_var(crate::ITER_SANDBOX_COMMAND_PREFIX);
-        }
+        let wrapped = apply_sandbox_prefix(original, &prefix);
         let std_cmd = wrapped.as_std();
         assert_eq!(std_cmd.get_program(), "sandbox-exec");
         let args: Vec<_> = std_cmd.get_args().map(OsStr::to_os_string).collect();
@@ -916,5 +923,79 @@ mod tests {
                 OsString::from("there"),
             ]
         );
+    }
+
+    #[test]
+    fn apply_sandbox_prefix_ignores_legacy_env_protocol() {
+        // Regression guard: the sandbox prefix used to cross from workspace
+        // setup to command launch through the `ITER_SANDBOX_COMMAND_PREFIX`
+        // process-global env var. That protocol is gone — wrapping reads only
+        // the invocation argument. Even with the old variable set to a hostile
+        // value, an empty prefix passes through verbatim and a real prefix
+        // wins.
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // SAFETY: serialised via ENV_LOCK so no concurrent reader observes it.
+        unsafe {
+            std::env::set_var("ITER_SANDBOX_COMMAND_PREFIX", "bwrap\x1f--bind\x1f/evil");
+        }
+
+        let mut verbatim = Command::new("/bin/echo");
+        verbatim.arg("hi");
+        let passthrough = apply_sandbox_prefix(verbatim, &[]);
+
+        let prefix = vec![OsString::from("sandbox-exec"), OsString::from("/tmp/ok.sb")];
+        let wrapped = apply_sandbox_prefix(Command::new("/bin/echo"), &prefix);
+
+        // SAFETY: serialised via ENV_LOCK; restore before assertions so a
+        // panic cannot leak state into the OTel test.
+        unsafe {
+            std::env::remove_var("ITER_SANDBOX_COMMAND_PREFIX");
+        }
+
+        assert_eq!(passthrough.as_std().get_program(), "/bin/echo");
+        assert_eq!(wrapped.as_std().get_program(), "sandbox-exec");
+    }
+
+    #[test]
+    fn concurrent_prefixes_do_not_cross_contaminate() {
+        // Acceptance: concurrent runners cannot race through process-global
+        // sandbox-prefix state, because no such global exists. Each call
+        // carries its own prefix; wrapping many commands in parallel yields a
+        // result that reflects only that call's prefix.
+        use std::thread;
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                thread::spawn(move || {
+                    let prefix = vec![
+                        OsString::from(format!("sandbox-{i}")),
+                        OsString::from("-f"),
+                        OsString::from(format!("/tmp/{i}.sb")),
+                    ];
+                    let wrapped = apply_sandbox_prefix(Command::new("/bin/echo"), &prefix);
+                    let std_cmd = wrapped.as_std();
+                    let program = std_cmd.get_program().to_os_string();
+                    let args: Vec<OsString> =
+                        std_cmd.get_args().map(OsStr::to_os_string).collect();
+                    (i, program, args)
+                })
+            })
+            .collect();
+        for handle in handles {
+            let (i, program, args) = handle.join().expect("worker thread");
+            // Both the program *and* every arg must reflect only this thread's
+            // prefix — a partial isolation that co-mingled the argv tail would
+            // pass a program-only assertion.
+            assert_eq!(program, OsString::from(format!("sandbox-{i}")));
+            assert_eq!(
+                args,
+                vec![
+                    OsString::from("-f"),
+                    OsString::from(format!("/tmp/{i}.sb")),
+                    OsString::from("/bin/echo"),
+                ]
+            );
+        }
     }
 }

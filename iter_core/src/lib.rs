@@ -53,7 +53,4 @@ pub use signal::{
     Metadata, MetadataError, MetadataKey, MetadataValue, Signal, SignalId, SignalKind,
 };
 pub use template::{LifecycleRenderContext, RenderContext, SignalContext, Template, TemplateError};
-pub use workspace::{
-    ITER_SANDBOX_COMMAND_PREFIX, SANDBOX_PREFIX_SEP, SandboxRequirements, Workspace,
-    current_sandbox_prefix, decode_prefix_env, encode_prefix_env, match_env_pattern,
-};
+pub use workspace::{SandboxRequirements, Workspace, match_env_pattern};

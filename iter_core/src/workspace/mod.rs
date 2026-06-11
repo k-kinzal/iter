@@ -35,7 +35,6 @@ pub use apply_back::ApplyBackMode;
 pub use clone::{CloneSettings, CloneWorkspace, CloneWorkspaceError};
 pub use local::{LocalWorkspace, LocalWorkspaceError};
 pub use sandbox::{
-    BackendError, ITER_SANDBOX_COMMAND_PREFIX, NetworkAccess, SANDBOX_PREFIX_SEP, SandboxBackend,
-    SandboxDescriptor, SandboxPolicy, SandboxRequirements, SandboxWorkspace, SandboxWorkspaceError,
-    current_sandbox_prefix, decode_prefix_env, encode_prefix_env, match_env_pattern,
+    BackendError, NetworkAccess, SandboxBackend, SandboxDescriptor, SandboxPolicy,
+    SandboxRequirements, SandboxWorkspace, SandboxWorkspaceError, match_env_pattern,
 };

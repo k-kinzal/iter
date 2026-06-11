@@ -43,6 +43,7 @@
 //! value is a project-shaped decision iter cannot honestly pick on the
 //! operator's behalf. The agent is constructed directly from its fields.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -147,6 +148,7 @@ impl Agent for GeminiAgent {
             signal_id,
             signal_kind,
             hook_isolation_key,
+            sandbox_command_prefix,
             ..
         } = ctx;
         match self.mode {
@@ -173,6 +175,7 @@ impl Agent for GeminiAgent {
                     PromptDelivery::Inline,
                     cancel,
                     stdio_sink,
+                    sandbox_command_prefix,
                 )
                 .await?;
                 // Adapter: project the Command's CLI-shaped result/error onto
@@ -190,6 +193,7 @@ impl Agent for GeminiAgent {
                     signal_id,
                     signal_kind,
                     &hook_isolation_key,
+                    sandbox_command_prefix,
                 )
                 .await
             }
@@ -207,6 +211,7 @@ impl GeminiAgent {
     /// [`drive_interactive_with_finalize`]; this method only handles the
     /// Gemini-specific bits: bundle install, command construction, and
     /// stdio inheritance wiring.
+    #[allow(clippy::too_many_arguments)]
     async fn run_interactive(
         &self,
         path: &Path,
@@ -215,6 +220,7 @@ impl GeminiAgent {
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
         hook_isolation_key: &str,
+        sandbox_prefix: &[OsString],
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
@@ -229,7 +235,9 @@ impl GeminiAgent {
 
         // Interactive mode has no machine-readable output: the only signal is
         // the child's exit. A clean exit is a run; anything else is a failure.
-        let exit = drive_interactive_with_finalize(command, cancel, bundle.finalize()).await?;
+        let exit =
+            drive_interactive_with_finalize(command, cancel, sandbox_prefix, bundle.finalize())
+                .await?;
         if let Some(err) = exit.into_failure() {
             return Err(err);
         }

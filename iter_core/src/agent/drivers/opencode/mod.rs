@@ -84,6 +84,7 @@ impl Agent for OpenCodeAgent {
             stdio_sink,
             signal_id,
             signal_kind,
+            sandbox_command_prefix,
             ..
         } = ctx;
 
@@ -107,7 +108,14 @@ impl Agent for OpenCodeAgent {
         // actually participating in propagation.
 
         // The prompt is embedded in the argv, so no stdin payload is sent.
-        let output = spawn_capture(command, PromptDelivery::Inline, cancel, stdio_sink).await?;
+        let output = spawn_capture(
+            command,
+            PromptDelivery::Inline,
+            cancel,
+            stdio_sink,
+            sandbox_command_prefix,
+        )
+        .await?;
         // Adapter: project the Command's CLI-shaped result/error onto iter's
         // domain. `?` runs the `From<OpenCodeError>` above.
         let result = command::interpret(&output)?;

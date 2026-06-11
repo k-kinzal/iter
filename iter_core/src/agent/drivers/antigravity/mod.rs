@@ -44,6 +44,7 @@
 //! the value is a project-shaped decision iter cannot honestly pick on the
 //! operator's behalf. The agent is constructed directly from its fields.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -132,6 +133,7 @@ impl Agent for AntigravityAgent {
             prompt,
             cancel,
             stdio_sink,
+            sandbox_command_prefix,
             ..
         } = ctx;
         match self.mode {
@@ -145,8 +147,14 @@ impl Agent for AntigravityAgent {
                 .build(workspace_path);
                 apply_user_env(&mut command, &self.env);
                 // Prompt is embedded inline as the value of `-p`; no stdin.
-                let output =
-                    spawn_capture(command, PromptDelivery::Inline, cancel, stdio_sink).await?;
+                let output = spawn_capture(
+                    command,
+                    PromptDelivery::Inline,
+                    cancel,
+                    stdio_sink,
+                    sandbox_command_prefix,
+                )
+                .await?;
                 // Adapter: project the Command's CLI-shaped result/error onto
                 // iter's domain. `?` runs the `From<AntigravityError>` above.
                 let result = command::interpret(&output)?;
@@ -154,7 +162,10 @@ impl Agent for AntigravityAgent {
                     session_id: result.session_id,
                 })
             }
-            AgentMode::Interactive => self.run_interactive(workspace_path, prompt, cancel).await,
+            AgentMode::Interactive => {
+                self.run_interactive(workspace_path, prompt, cancel, sandbox_command_prefix)
+                    .await
+            }
         }
     }
 }
@@ -172,6 +183,7 @@ impl AntigravityAgent {
         path: &Path,
         prompt: &Prompt,
         cancel: CancellationToken,
+        sandbox_prefix: &[OsString],
     ) -> Result<AgentRun, AgentError> {
         let mut command = self.build_interactive_command(path, prompt);
         apply_user_env(&mut command, &self.env);
@@ -181,7 +193,7 @@ impl AntigravityAgent {
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
 
-        let exit = drive_interactive(command, &cancel).await?;
+        let exit = drive_interactive(command, &cancel, sandbox_prefix).await?;
         if let Some(err) = exit.into_failure() {
             return Err(err);
         }

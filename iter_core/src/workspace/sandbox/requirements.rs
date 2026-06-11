@@ -12,7 +12,6 @@
 //! patterns) so the same declaration can be consumed by a macOS
 //! `sandbox-exec` profile, a Linux `bwrap` argv, or any other backend.
 
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// OS-level access an [`Agent`](crate::agent::Agent) needs to function
@@ -122,64 +121,6 @@ pub fn match_env_pattern(pattern: &str, name: &str) -> bool {
     match pattern.strip_suffix('*') {
         Some(prefix) => name.starts_with(prefix),
         None => pattern == name,
-    }
-}
-
-/// Name of the environment variable used by a sandboxing workspace to
-/// tell every agent process under it the argv prefix that must be
-/// prepended to child commands to apply the kernel-level sandbox wrap.
-///
-/// The workspace sets this variable during `setup()` and unsets it
-/// during `teardown()`. Agent implementations that support sandboxing
-/// read it, decode it with [`decode_prefix_env`], and splice the
-/// resulting argv in front of their own command. Agents that do not
-/// read it still function — they just run unsandboxed, which is the
-/// correct fallback when the workspace is `local` or `clone`.
-pub const ITER_SANDBOX_COMMAND_PREFIX: &str = "ITER_SANDBOX_COMMAND_PREFIX";
-
-/// Separator used inside [`ITER_SANDBOX_COMMAND_PREFIX`] between argv
-/// entries.
-///
-/// ASCII Unit Separator (`\x1f`) is chosen because it is non-printable,
-/// not used by any real binary path or flag, and does not require
-/// shell-style quoting.
-pub const SANDBOX_PREFIX_SEP: char = '\x1f';
-
-/// Encode an argv prefix for [`ITER_SANDBOX_COMMAND_PREFIX`]. Each
-/// entry is joined by [`SANDBOX_PREFIX_SEP`].
-#[must_use]
-pub fn encode_prefix_env(prefix: &[OsString]) -> OsString {
-    let mut out = OsString::new();
-    let mut first = true;
-    for part in prefix {
-        if !first {
-            out.push(SANDBOX_PREFIX_SEP.to_string());
-        }
-        out.push(part);
-        first = false;
-    }
-    out
-}
-
-/// Decode an [`ITER_SANDBOX_COMMAND_PREFIX`] value back into an argv
-/// vector. Returns an empty vector when `raw` is empty — equivalent to
-/// "no sandbox wrap requested".
-#[must_use]
-pub fn decode_prefix_env(raw: &str) -> Vec<OsString> {
-    if raw.is_empty() {
-        return Vec::new();
-    }
-    raw.split(SANDBOX_PREFIX_SEP).map(OsString::from).collect()
-}
-
-/// Read [`ITER_SANDBOX_COMMAND_PREFIX`] from the current process
-/// environment and decode it. Returns an empty vector when the
-/// variable is unset or empty.
-#[must_use]
-pub fn current_sandbox_prefix() -> Vec<OsString> {
-    match std::env::var(ITER_SANDBOX_COMMAND_PREFIX) {
-        Ok(raw) => decode_prefix_env(&raw),
-        Err(_) => Vec::new(),
     }
 }
 

@@ -42,6 +42,7 @@
 //! constructed directly from its fields; there is no separate settings
 //! struct.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -226,6 +227,7 @@ impl Agent for ClaudeAgent {
             signal_id,
             signal_kind,
             hook_isolation_key,
+            sandbox_command_prefix,
             ..
         } = ctx;
         // Resolve the session id *before* spawning so a filesystem failure
@@ -265,6 +267,7 @@ impl Agent for ClaudeAgent {
                     PromptDelivery::Stdin(prompt.as_str()),
                     cancel,
                     stdio_sink,
+                    sandbox_command_prefix,
                 )
                 .await?;
                 // Adapter: project the Command's CLI-shaped result/error onto
@@ -283,6 +286,7 @@ impl Agent for ClaudeAgent {
                     signal_id,
                     signal_kind,
                     &hook_isolation_key,
+                    sandbox_command_prefix,
                 )
                 .await
             }
@@ -309,6 +313,7 @@ impl ClaudeAgent {
         signal_id: crate::signal::SignalId,
         signal_kind: crate::signal::SignalKind,
         hook_isolation_key: &str,
+        sandbox_prefix: &[OsString],
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
@@ -323,7 +328,9 @@ impl ClaudeAgent {
 
         // Interactive mode has no machine-readable output: the only signal is
         // the child's exit. A clean exit is a run; anything else is a failure.
-        let exit = drive_interactive_with_finalize(command, cancel, bundle.finalize()).await?;
+        let exit =
+            drive_interactive_with_finalize(command, cancel, sandbox_prefix, bundle.finalize())
+                .await?;
         if let Some(err) = exit.into_failure() {
             return Err(err);
         }

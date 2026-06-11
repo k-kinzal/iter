@@ -60,6 +60,7 @@
 //! value is a project-shaped decision iter cannot honestly pick on the
 //! operator's behalf. The agent is constructed directly from its fields.
 
+use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
@@ -142,6 +143,7 @@ impl Agent for HermesAgent {
             prompt,
             cancel,
             stdio_sink,
+            sandbox_command_prefix,
             ..
         } = ctx;
         match self.mode {
@@ -161,8 +163,14 @@ impl Agent for HermesAgent {
                 //
                 // The prompt is already embedded in argv (`-z <prompt>`), so
                 // nothing is written to stdin.
-                let output =
-                    spawn_capture(command, PromptDelivery::Inline, cancel, stdio_sink).await?;
+                let output = spawn_capture(
+                    command,
+                    PromptDelivery::Inline,
+                    cancel,
+                    stdio_sink,
+                    sandbox_command_prefix,
+                )
+                .await?;
                 // Adapter: project the Command's CLI-shaped result/error onto
                 // iter's domain. `?` runs the `From<HermesError>` above.
                 let result = command::interpret(&output)?;
@@ -170,7 +178,10 @@ impl Agent for HermesAgent {
                     session_id: result.session_id,
                 })
             }
-            AgentMode::Interactive => self.run_interactive(workspace_path, prompt, cancel).await,
+            AgentMode::Interactive => {
+                self.run_interactive(workspace_path, prompt, cancel, sandbox_command_prefix)
+                    .await
+            }
         }
     }
 }
@@ -186,6 +197,7 @@ impl HermesAgent {
         path: &Path,
         prompt: &Prompt,
         cancel: CancellationToken,
+        sandbox_prefix: &[OsString],
     ) -> Result<AgentRun, AgentError> {
         let mut command = self.build_interactive_command(path, prompt);
         apply_user_env(&mut command, &self.env);
@@ -197,7 +209,9 @@ impl HermesAgent {
 
         // Interactive mode has no machine-readable output: the only signal is
         // the child's exit. A clean exit is a run; anything else is a failure.
-        let exit = drive_interactive_with_finalize(command, cancel, async { Ok(()) }).await?;
+        let exit =
+            drive_interactive_with_finalize(command, cancel, sandbox_prefix, async { Ok(()) })
+                .await?;
         if let Some(err) = exit.into_failure() {
             return Err(err);
         }

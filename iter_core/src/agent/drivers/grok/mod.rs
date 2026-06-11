@@ -160,6 +160,7 @@ impl Agent for GrokAgent {
             prompt,
             cancel,
             stdio_sink,
+            sandbox_command_prefix,
             ..
         } = ctx;
         // Resolve the session id *before* spawning so a filesystem failure
@@ -190,7 +191,14 @@ impl Agent for GrokAgent {
         // correlated without confirming the agent actually participates.
 
         // The prompt is the value of `-p` (delivered inline), so no stdin.
-        let output = spawn_capture(command, PromptDelivery::Inline, cancel, stdio_sink).await?;
+        let output = spawn_capture(
+            command,
+            PromptDelivery::Inline,
+            cancel,
+            stdio_sink,
+            sandbox_command_prefix,
+        )
+        .await?;
         // Adapter: project the Command's CLI-shaped result/error onto iter's
         // domain. `?` runs the `From<GrokError>` impl above.
         let result = command::interpret(&output)?;

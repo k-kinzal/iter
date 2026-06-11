@@ -590,11 +590,18 @@ async fn drive_workspace(
         .agent_starting(signal, &workspace_path, prompt, snap)
         .await;
 
+    // Read the sandbox command prefix from the active workspace after setup.
+    // It is empty for `local`/`clone` workspaces and the backend-produced wrap
+    // for a sandbox workspace — typed invocation data, never an env var. The
+    // owned copy decouples its lifetime from the workspace borrow that
+    // teardown reclaims below.
+    let sandbox_command_prefix = workspace.sandbox_command_prefix().to_vec();
     let agent_ctx =
         crate::agent::AgentRunContext::new(&workspace_path, prompt, cancel.clone(), signal_id)
             .with_signal_kind(signal.kind())
             .with_stdio_sink(stdio_sink.clone())
-            .with_iteration_timeout(config.iteration_timeout);
+            .with_iteration_timeout(config.iteration_timeout)
+            .with_sandbox_command_prefix(&sandbox_command_prefix);
     let agent_span = tracing::info_span!(
         "iter.agent.run",
         iter.signal.id = %signal_id,
