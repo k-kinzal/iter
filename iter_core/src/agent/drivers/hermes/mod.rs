@@ -56,15 +56,15 @@
 //!
 //! # Construction
 //!
-//! [`HermesAgent`] exposes no defaults. Every field on
-//! [`HermesSettings`] is required because the value is a
-//! project-shaped decision iter cannot honestly pick on the operator's
-//! behalf.
+//! [`HermesAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use std::path::Path;
 use std::process::Stdio;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -104,22 +104,6 @@ impl From<HermesError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`HermesAgent`].
-///
-/// Every field is required; there is no `Default` impl.
-#[derive(Debug, Clone)]
-pub struct HermesSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Print vs. interactive mode.
-    pub mode: AgentMode,
-    /// Additional arguments appended after the built-in flags.
-    /// Empty is allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// Hermes CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct HermesAgent {
@@ -134,24 +118,6 @@ pub struct HermesAgent {
 }
 
 impl HermesAgent {
-    /// Build a fully-specified Hermes agent. Every knob must be
-    /// decided by the caller; iter provides no implicit defaults.
-    #[must_use]
-    pub fn new(settings: HermesSettings) -> Self {
-        let HermesSettings {
-            command,
-            mode,
-            args,
-            env,
-        } = settings;
-        Self {
-            command,
-            mode,
-            args,
-            env,
-        }
-    }
-
     fn build_interactive_command(&self, path: &Path, prompt: &Prompt) -> Command {
         let mut cmd = Command::new(&self.command);
         cmd.current_dir(path);
@@ -164,7 +130,12 @@ impl HermesAgent {
     }
 }
 
+#[async_trait]
 impl Agent for HermesAgent {
+    fn name(&self) -> &'static str {
+        "hermes"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -239,8 +210,8 @@ mod tests {
     use super::*;
     use crate::agent::testutil::{ctx, ctx_capturing, fake_binary_script};
 
-    fn settings(command: impl Into<String>, mode: AgentMode) -> HermesSettings {
-        HermesSettings {
+    fn hermes_agent(command: impl Into<String>, mode: AgentMode) -> HermesAgent {
+        HermesAgent {
             command: command.into(),
             mode,
             args: Vec::new(),
@@ -257,7 +228,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_emits_dash_z_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let agent = HermesAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("hello-hermes");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -272,9 +243,9 @@ printf 'final response\n'"#;
     async fn print_mode_env_is_forwarded_to_child() {
         let (_guard, bin) =
             fake_binary_script("printf 'ENV=%s\\n' \"$HERMES_TEST_ENV_VAR\" 1>&2\nprintf 'ok\\n'");
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("HERMES_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = HermesAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -284,9 +255,9 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_extra_args_appended_after_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
         s.args = vec!["--yolo".into(), "--max-turns".into(), "30".into()];
-        let agent = HermesAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -301,7 +272,7 @@ printf 'final response\n'"#;
     async fn print_mode_nonzero_exit_maps_to_launch() {
         // Exit 1 with a traceback on stderr → uncaught → Launch.
         let (_guard, bin) = fake_binary_script("printf 'Traceback: boom\\n' 1>&2\nexit 1");
-        let agent = HermesAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -313,7 +284,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_exit_two_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("exit 2");
-        let agent = HermesAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -325,7 +296,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_token_limit_is_detected() {
         let (_guard, bin) = fake_binary_script("printf 'Error: context window exceeded\\n'");
-        let agent = HermesAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -340,7 +311,7 @@ printf 'final response\n'"#;
         let argv_file = tmp.path().join("argv.txt");
         let script = format!("for a in \"$@\"; do printf '%s\\n' \"$a\"; done > {argv_file:?}");
         let (_guard, bin) = fake_binary_script(&script);
-        let agent = HermesAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("interactive-prompt");
         let run = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
         assert_eq!(run.session_id, None);
@@ -358,7 +329,7 @@ printf 'final response\n'"#;
     async fn interactive_mode_nonzero_exit_maps_to_failed() {
         let (_guard, bin) = fake_binary_script("exit 7");
         let tmp = tempfile::TempDir::new().expect("tmp");
-        let agent = HermesAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(tmp.path(), &prompt))

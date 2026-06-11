@@ -1970,6 +1970,7 @@ dependencies = [
 name = "iter_compose"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "globset",
  "iter_command_cli",

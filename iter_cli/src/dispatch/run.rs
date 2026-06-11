@@ -106,8 +106,8 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         | IterfileError::Read { .. }
         | IterfileError::QueueBuild(_)
         | IterfileError::Runner(_)
-        | IterfileError::Lifecycle(_) => exit_codes::RUNTIME,
-        IterfileError::Assembly(iter_compose::AssemblyError::QueueBuild(_)) => exit_codes::RUNTIME,
+        | IterfileError::Lifecycle(_)
+        | IterfileError::Assembly(iter_compose::AssemblyError::QueueBuild(_)) => exit_codes::RUNTIME,
         IterfileError::Parse { .. }
         | IterfileError::MissingSection(_)
         | IterfileError::Arg(_)

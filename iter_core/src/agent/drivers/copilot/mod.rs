@@ -45,14 +45,14 @@
 //!   subcommand first:
 //!
 //!   ```no_run
-//!   # use iter_core::agent::{AgentMode, CopilotAgent, CopilotSettings};
-//!   let agent = CopilotAgent::new(CopilotSettings {
+//!   # use iter_core::agent::{AgentMode, CopilotAgent};
+//!   let agent = CopilotAgent {
 //!       command: "copilot".into(),
 //!       mode: AgentMode::Interactive,
 //!       subcommand: Some(Vec::<String>::new()),
 //!       args: Vec::new(),
 //!       env: Vec::new(),
-//!   });
+//!   };
 //!   ```
 //!
 //!   Interactive mode inherits stdin/stdout/stderr from the parent
@@ -73,17 +73,19 @@
 //!
 //! # Construction
 //!
-//! [`CopilotAgent`] exposes no project-shaped defaults. Every field on
-//! [`CopilotSettings`] is required. Note that `subcommand` is a genuine
-//! `Option`: `None` asks iter to apply its canonical one-shot subcommand
-//! (`["copilot", "suggest"]`) which is agent-operational knowledge, not a
-//! project-shaped decision; `Some(vec![])` means "invoke the binary with
-//! no subcommand" (for standalone Copilot TUI builds).
+//! [`CopilotAgent`] exposes no project-shaped defaults. Every field is
+//! required and the agent is constructed directly from its fields. Note that
+//! `subcommand` is a genuine `Option`: `None` asks iter to apply its
+//! canonical one-shot subcommand (`["copilot", "suggest"]`) which is
+//! agent-operational knowledge, not a project-shaped decision; `Some(vec![])`
+//! means "invoke the binary with no subcommand" (for standalone Copilot TUI
+//! builds).
 
 use std::path::Path;
 use std::process::Stdio;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -141,29 +143,6 @@ impl From<CopilotError> for AgentError {
 /// iter holds so users don't need to look up the Copilot CLI's shape.
 const CANONICAL_SUBCOMMAND: &[&str] = &["copilot", "suggest"];
 
-/// Fully-specified configuration for [`CopilotAgent`].
-///
-/// Every field is required. `subcommand` is a genuine `Option` (agent
-/// operational default on `None`; explicit override on `Some`).
-#[derive(Debug, Clone)]
-pub struct CopilotSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Print vs. interactive mode.
-    pub mode: AgentMode,
-    /// Subcommand arguments inserted between the binary and the positional
-    /// prompt. `None` → iter applies its canonical
-    /// `["copilot", "suggest"]` (agent-operational knowledge). `Some(v)` →
-    /// use `v` exactly; `Some(vec![])` means "no subcommand" (standalone
-    /// `copilot` TUI).
-    pub subcommand: Option<Vec<String>>,
-    /// Additional arguments inserted between the subcommand and the prompt.
-    /// Empty is allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// GitHub Copilot CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct CopilotAgent {
@@ -183,26 +162,6 @@ pub struct CopilotAgent {
 }
 
 impl CopilotAgent {
-    /// Build a fully-specified Copilot agent. Every knob must be
-    /// supplied by the caller; iter provides no project-shaped defaults.
-    #[must_use]
-    pub fn new(settings: CopilotSettings) -> Self {
-        let CopilotSettings {
-            command,
-            mode,
-            subcommand,
-            args,
-            env,
-        } = settings;
-        Self {
-            command,
-            mode,
-            subcommand,
-            args,
-            env,
-        }
-    }
-
     /// Interactive-mode argv builder: binary + subcommand + args + positional
     /// prompt. The interactive TUI takes the prompt as its final positional
     /// argument; print mode instead uses the [`CopilotCommand`] builder, which
@@ -231,7 +190,12 @@ impl CopilotAgent {
     }
 }
 
+#[async_trait]
 impl Agent for CopilotAgent {
+    fn name(&self) -> &'static str {
+        "copilot"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -335,8 +299,8 @@ mod tests {
     use tempfile::TempDir;
     use tokio::fs;
 
-    fn settings(command: impl Into<String>, mode: AgentMode) -> CopilotSettings {
-        CopilotSettings {
+    fn copilot_agent(command: impl Into<String>, mode: AgentMode) -> CopilotAgent {
+        CopilotAgent {
             command: command.into(),
             mode,
             subcommand: None,
@@ -355,7 +319,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
     #[tokio::test]
     async fn print_mode_emits_print_json_and_allow_all_tools_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("hello-copilot");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -372,9 +336,9 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         s.args = vec!["--model".into(), "gpt-5".into()];
-        let agent = CopilotAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -389,7 +353,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
         let script = r#"printf '%s' '{"type":"session.error","errorType":"quota_exceeded","statusCode":402}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("quota is an error");
@@ -401,7 +365,7 @@ exit 1"#;
         let script = r#"printf '%s' '{"type":"session.error","errorType":"unauthorized","statusCode":401}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("auth is an error");
@@ -420,7 +384,7 @@ exit 1"#;
     #[tokio::test]
     async fn print_mode_no_result_maps_to_failed() {
         let (_guard, bin) = fake_binary_script("printf 'garbage'\nexit 1");
-        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("no result is an error");
@@ -435,7 +399,7 @@ exit 1"#;
         let script = "printf '%s\\n' \"$OTEL_RESOURCE_ATTRIBUTES\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}'";
         let (_guard, bin) = fake_binary_script(script);
         let tmp = TempDir::new().expect("tmp");
-        let agent = CopilotAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
 
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
@@ -458,9 +422,9 @@ exit 1"#;
     async fn print_mode_env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$COPILOT_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("COPILOT_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = CopilotAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -498,9 +462,9 @@ exit 0
             .await
             .expect("write user script");
 
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Interactive);
+        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Interactive);
         s.subcommand = Some(Vec::new());
-        let agent = CopilotAgent::new(s);
+        let agent = s;
 
         let prompt = Prompt::from("go");
         // The fake either exits 0 (`Ok`) or is SIGKILLed by the hook
@@ -525,9 +489,9 @@ exit 0
         // Fake copilot that exits nonzero without touching the hook.
         let (_guard, bin) = fake_binary_script("exit 7");
         let tmp = TempDir::new().expect("tmp");
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Interactive);
+        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Interactive);
         s.subcommand = Some(Vec::new());
-        let agent = CopilotAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let result = agent.run(ctx(tmp.path(), &prompt)).await;
 

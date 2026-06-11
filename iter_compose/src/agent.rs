@@ -1,23 +1,29 @@
-//! `AnyAgent` enum + the `build_agent` builder.
+//! Definition → agent translation (`agent_from_def`) plus the per-agent
+//! sandbox-requirements selection.
+//!
+//! There is no `Any*` agent wrapper: the closed set of agent kinds lives in
+//! the [`AgentDef`] definition enum, and the runtime drives a single
+//! `Box<dyn Agent>` trait object (R18). [`agent_from_def`] is the one place
+//! that selects a concrete driver from a definition and boxes it; dispatch at
+//! run time is the vtable, not a match.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use iter_core::agent::{
-    AgentError, AgentMode as ImplAgentMode, AntigravityAgent, AntigravitySettings, ClaudeAgent,
-    ClaudeSettings, ClineAgent, ClineSettings, CodexAgent, CodexSettings, CopilotAgent,
-    CopilotSettings, CursorAgent, CursorSettings, FakeAgent, FakeSettings, GeminiAgent,
-    GeminiSettings, GenericAgent, GrokAgent, GrokSettings, HermesAgent, HermesSettings, NoopAgent,
-    OpenCodeAgent, OpenCodeSettings,
+    AgentMode as ImplAgentMode, AntigravityAgent, ClaudeAgent, ClineAgent, CodexAgent,
+    CopilotAgent, CursorAgent, FakeAgent, GeminiAgent, GenericAgent, GrokAgent, HermesAgent,
+    NoopAgent, OpenCodeAgent,
 };
 use iter_core::workspace::sandbox::agent_requirements;
-use iter_core::{Agent, AgentRun, AgentRunContext, SandboxRequirements};
+use iter_core::{Agent, SandboxRequirements};
 use iter_language::{AgentDef, AgentMode as AstAgentMode};
 use thiserror::Error;
 
 use crate::agent_router::{AgentRouter, RoutingStrategy};
 
-/// Errors produced while building an [`AnyAgent`] from an [`AgentDef`].
+/// Errors produced while translating an [`AgentDef`] into a boxed
+/// [`Agent`](iter_core::Agent).
 #[derive(Debug, Error)]
 pub enum AgentBuildError {
     /// `agent generic { command = [] }` — a generic agent declaration with
@@ -40,93 +46,251 @@ pub enum AgentBuildError {
     },
 }
 
-/// Enum dispatch wrapper over every concrete [`iter_core::Agent`]
-/// implementation in the workspace.
-#[derive(Debug, Clone)]
-pub enum AnyAgent {
-    /// Anthropic Claude Code agent.
-    Claude(ClaudeAgent),
-    /// `OpenAI` Codex agent.
-    Codex(CodexAgent),
-    /// Google Gemini agent.
-    Gemini(GeminiAgent),
-    /// Nous Research Hermes agent.
-    Hermes(HermesAgent),
-    /// Google Antigravity CLI agent.
-    Antigravity(AntigravityAgent),
-    /// GitHub Copilot agent.
-    Copilot(CopilotAgent),
-    /// Cursor agent.
-    Cursor(CursorAgent),
-    /// Cline agent.
-    Cline(ClineAgent),
-    /// `opencode` agent.
-    OpenCode(OpenCodeAgent),
-    /// xAI Grok Build agent.
-    Grok(GrokAgent),
-    /// Generic command-driven agent.
-    Generic(GenericAgent),
-    /// Built-in no-op agent (no external binary).
-    Noop(NoopAgent),
-    /// Built-in configurable fake agent (no external binary).
-    Fake(FakeAgent),
-    /// Multi-agent router with fallback or rotation strategy.
-    Router(AgentRouter),
-}
-
-impl Agent for AnyAgent {
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        match self {
-            Self::Claude(a) => a.run(ctx).await,
-            Self::Codex(a) => a.run(ctx).await,
-            Self::Gemini(a) => a.run(ctx).await,
-            Self::Hermes(a) => a.run(ctx).await,
-            Self::Antigravity(a) => a.run(ctx).await,
-            Self::Copilot(a) => a.run(ctx).await,
-            Self::Cursor(a) => a.run(ctx).await,
-            Self::Cline(a) => a.run(ctx).await,
-            Self::OpenCode(a) => a.run(ctx).await,
-            Self::Grok(a) => a.run(ctx).await,
-            Self::Generic(a) => a.run(ctx).await,
-            Self::Noop(a) => a.run(ctx).await,
-            Self::Fake(a) => a.run(ctx).await,
-            Self::Router(a) => a.run(ctx).await,
-        }
+fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
+    match mode {
+        AstAgentMode::Interactive => ImplAgentMode::Interactive,
+        AstAgentMode::Print => ImplAgentMode::Print,
     }
 }
 
-impl AnyAgent {
-    /// Assemble the sandbox access profile for this agent.
-    ///
-    /// Dispatch happens here (at the compose layer, where the concrete
-    /// agent variant is known) rather than on the [`Agent`] trait itself,
-    /// because sandbox policy is a Workspace-side concern — see
-    /// [`iter_core::workspace::sandbox::agent_requirements`].
-    #[must_use]
-    pub fn sandbox_requirements(&self) -> SandboxRequirements {
-        match self {
-            Self::Claude(a) => agent_requirements::claude(a),
-            Self::Grok(a) => agent_requirements::grok(a),
-            Self::Codex(_)
-            | Self::Gemini(_)
-            | Self::Hermes(_)
-            | Self::Antigravity(_)
-            | Self::Copilot(_)
-            | Self::Cursor(_)
-            | Self::Cline(_)
-            | Self::OpenCode(_)
-            | Self::Generic(_)
-            | Self::Noop(_)
-            | Self::Fake(_) => SandboxRequirements::default(),
-            Self::Router(r) => merge_sandbox_requirements(r.agents()),
-        }
+/// Build the concrete [`ClaudeAgent`] for a `AgentDef::Claude` definition.
+///
+/// Shared by [`agent_from_def`] (which boxes it) and
+/// [`sandbox_requirements_for`] (which reads its command to assemble the
+/// sandbox profile), so the field bind is expressed exactly once.
+fn build_claude(
+    mode: AstAgentMode,
+    command: &str,
+    args: &[String],
+    session_id_file: Option<&String>,
+    env: &BTreeMap<String, String>,
+) -> ClaudeAgent {
+    ClaudeAgent {
+        command: command.to_owned(),
+        mode: convert_mode(mode),
+        args: args.to_vec(),
+        session_id_file: session_id_file.map(PathBuf::from),
+        env: resolve_env(env),
     }
 }
 
-fn merge_sandbox_requirements(agents: &[(String, AnyAgent)]) -> SandboxRequirements {
+/// Build the concrete [`GrokAgent`] for a `AgentDef::Grok` definition.
+///
+/// Shared by [`agent_from_def`] and [`sandbox_requirements_for`] for the same
+/// reason as [`build_claude`].
+fn build_grok(
+    command: &str,
+    args: &[String],
+    session_id_file: Option<&String>,
+    env: &BTreeMap<String, String>,
+) -> GrokAgent {
+    GrokAgent {
+        command: command.to_owned(),
+        args: args.to_vec(),
+        session_id_file: session_id_file.map(PathBuf::from),
+        env: resolve_env(env),
+    }
+}
+
+/// Translate an [`AgentDef`] into the concrete driver it selects, boxed as a
+/// `dyn Agent` trait object.
+///
+/// This is a pure selection-by-variant followed by a mechanical field move:
+/// every field on the definition flows straight onto the corresponding agent
+/// without defaults applied in between (agent-operational knowledge — the
+/// canonical Copilot subcommand, the built-in CLI flags, sandbox requirements
+/// — lives inside `iter_core::agent::*`, not here). The declaration `String`
+/// session-id paths become core `PathBuf`s (a principled typing), and the
+/// declared `env` map is resolved with `ITER_` overrides into the core
+/// `Vec<(String, String)>`; no other reshaping happens at the boundary.
+///
+/// # Errors
+///
+/// Returns [`AgentBuildError`] when the definition is structurally invalid
+/// for the chosen variant — the empty `generic { command = [] }` case and an
+/// empty `router { }`.
+#[allow(clippy::too_many_lines)]
+pub fn agent_from_def(def: &AgentDef) -> Result<Box<dyn Agent>, AgentBuildError> {
+    Ok(match def {
+        AgentDef::Claude {
+            mode,
+            command,
+            args,
+            session_id_file,
+            env,
+        } => Box::new(build_claude(
+            *mode,
+            command,
+            args,
+            session_id_file.as_ref(),
+            env,
+        )),
+        AgentDef::Codex {
+            mode,
+            command,
+            args,
+            env,
+        } => Box::new(CodexAgent {
+            command: command.clone(),
+            mode: convert_mode(*mode),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Gemini {
+            mode,
+            command,
+            args,
+            env,
+        } => Box::new(GeminiAgent {
+            command: command.clone(),
+            mode: convert_mode(*mode),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Hermes {
+            mode,
+            command,
+            args,
+            env,
+        } => Box::new(HermesAgent {
+            command: command.clone(),
+            mode: convert_mode(*mode),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Antigravity {
+            mode,
+            command,
+            args,
+            conversation_id,
+            env,
+        } => Box::new(AntigravityAgent {
+            command: command.clone(),
+            mode: convert_mode(*mode),
+            args: args.clone(),
+            conversation_id: conversation_id.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Copilot {
+            mode,
+            command,
+            subcommand,
+            args,
+            env,
+        } => Box::new(CopilotAgent {
+            command: command.clone(),
+            mode: convert_mode(*mode),
+            subcommand: subcommand.clone(),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Cursor { command, args, env } => Box::new(CursorAgent {
+            command: command.clone(),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Cline { command, args, env } => Box::new(ClineAgent {
+            command: command.clone(),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::OpenCode { command, args, env } => Box::new(OpenCodeAgent {
+            command: command.clone(),
+            args: args.clone(),
+            env: resolve_env(env),
+        }),
+        AgentDef::Grok {
+            command,
+            args,
+            session_id_file,
+            env,
+        } => Box::new(build_grok(command, args, session_id_file.as_ref(), env)),
+        AgentDef::Noop => Box::new(NoopAgent),
+        AgentDef::Fake {
+            exit_code,
+            delay_secs,
+            stdout,
+            stderr,
+            files,
+        } => Box::new(FakeAgent {
+            exit_code: *exit_code,
+            delay_secs: delay_secs.unwrap_or(0),
+            stdout: stdout.clone(),
+            stderr: stderr.clone(),
+            files: files.clone(),
+        }),
+        AgentDef::Generic { command, env } => {
+            if command.is_empty() {
+                return Err(AgentBuildError::GenericEmptyCommand);
+            }
+            let mut agent = GenericAgent::new(command.clone());
+            agent.env = resolve_env(env);
+            Box::new(agent)
+        }
+        AgentDef::Router { agents, strategy } => Box::new(build_router(agents, *strategy)?),
+    })
+}
+
+fn build_router(
+    agents: &[(String, Box<AgentDef>)],
+    strategy: iter_language::RouterStrategy,
+) -> Result<AgentRouter, AgentBuildError> {
+    if agents.is_empty() {
+        return Err(AgentBuildError::RouterEmpty);
+    }
+    let routing_strategy = match strategy {
+        iter_language::RouterStrategy::Fallback => RoutingStrategy::Fallback,
+        iter_language::RouterStrategy::Rotate => RoutingStrategy::Rotate,
+    };
+    let mut built: Vec<(String, Box<dyn Agent>)> = Vec::with_capacity(agents.len());
+    for (name, sub_def) in agents {
+        let sub_agent = agent_from_def(sub_def).map_err(|e| AgentBuildError::RouterSubAgent {
+            name: name.clone(),
+            source: Box::new(e),
+        })?;
+        built.push((name.clone(), sub_agent));
+    }
+    Ok(AgentRouter::new(built, routing_strategy))
+}
+
+/// Assemble the sandbox access profile an [`AgentDef`] requires.
+///
+/// Sandbox policy is a Workspace-side concern (see
+/// [`iter_core::workspace::sandbox::agent_requirements`]); the selection of
+/// *which* policy applies is dispatched here, at the compose layer, keyed on
+/// the agent definition's variant. Only `claude` and `grok` carry a
+/// non-default profile today; a router merges the profiles of its sub-agents.
+#[must_use]
+pub fn sandbox_requirements_for(def: &AgentDef) -> SandboxRequirements {
+    match def {
+        AgentDef::Claude {
+            mode,
+            command,
+            args,
+            session_id_file,
+            env,
+        } => agent_requirements::claude(&build_claude(
+            *mode,
+            command,
+            args,
+            session_id_file.as_ref(),
+            env,
+        )),
+        AgentDef::Grok {
+            command,
+            args,
+            session_id_file,
+            env,
+        } => agent_requirements::grok(&build_grok(command, args, session_id_file.as_ref(), env)),
+        AgentDef::Router { agents, .. } => merge_sandbox_requirements(agents),
+        _ => SandboxRequirements::default(),
+    }
+}
+
+fn merge_sandbox_requirements(agents: &[(String, Box<AgentDef>)]) -> SandboxRequirements {
     let mut merged = SandboxRequirements::default();
-    for (_name, agent) in agents {
-        let reqs = agent.sandbox_requirements();
+    for (_name, sub_def) in agents {
+        let reqs = sandbox_requirements_for(sub_def);
         merged.network_hosts.extend(reqs.network_hosts);
         merged.file_reads.extend(reqs.file_reads);
         merged.file_writes.extend(reqs.file_writes);
@@ -145,179 +309,6 @@ fn merge_sandbox_requirements(agents: &[(String, AnyAgent)]) -> SandboxRequireme
     merged.env_pass.sort();
     merged.env_pass.dedup();
     merged
-}
-
-fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
-    match mode {
-        AstAgentMode::Interactive => ImplAgentMode::Interactive,
-        AstAgentMode::Print => ImplAgentMode::Print,
-    }
-}
-
-/// Build an [`AnyAgent`] from an [`AgentDef`].
-///
-/// The compose layer is a pure 1:1 mapping: every field on the AST variant
-/// flows through to the corresponding `*Settings` struct without any
-/// defaults applied in between. Agent-operational knowledge (the canonical
-/// Copilot subcommand, sandbox requirements, etc.) lives inside
-/// `iter_core::agent::*` and is merged by those modules, not here.
-///
-/// # Errors
-///
-/// Returns [`AgentBuildError`] when the declaration is structurally invalid
-/// for the chosen variant — currently only the `generic { command = [] }`
-/// case.
-#[allow(clippy::too_many_lines)]
-pub fn build_agent(decl: &AgentDef) -> Result<AnyAgent, AgentBuildError> {
-    Ok(match decl {
-        AgentDef::Claude {
-            mode,
-            command,
-            args,
-            session_id_file,
-            env,
-        } => AnyAgent::Claude(ClaudeAgent::new(ClaudeSettings {
-            command: command.clone(),
-            mode: convert_mode(*mode),
-            args: args.clone(),
-            session_id_file: session_id_file.as_ref().map(PathBuf::from),
-            env: resolve_env(env),
-        })),
-        AgentDef::Codex {
-            mode,
-            command,
-            args,
-            env,
-        } => AnyAgent::Codex(CodexAgent::new(CodexSettings {
-            command: command.clone(),
-            mode: convert_mode(*mode),
-            args: args.clone(),
-            env: resolve_env(env),
-        })),
-        AgentDef::Gemini {
-            mode,
-            command,
-            args,
-            env,
-        } => AnyAgent::Gemini(GeminiAgent::new(GeminiSettings {
-            command: command.clone(),
-            mode: convert_mode(*mode),
-            args: args.clone(),
-            env: resolve_env(env),
-        })),
-        AgentDef::Hermes {
-            mode,
-            command,
-            args,
-            env,
-        } => AnyAgent::Hermes(HermesAgent::new(HermesSettings {
-            command: command.clone(),
-            mode: convert_mode(*mode),
-            args: args.clone(),
-            env: resolve_env(env),
-        })),
-        AgentDef::Antigravity {
-            mode,
-            command,
-            args,
-            conversation_id,
-            env,
-        } => AnyAgent::Antigravity(AntigravityAgent::new(AntigravitySettings {
-            command: command.clone(),
-            mode: convert_mode(*mode),
-            args: args.clone(),
-            conversation_id: conversation_id.clone(),
-            env: resolve_env(env),
-        })),
-        AgentDef::Copilot {
-            mode,
-            command,
-            subcommand,
-            args,
-            env,
-        } => AnyAgent::Copilot(CopilotAgent::new(CopilotSettings {
-            command: command.clone(),
-            mode: convert_mode(*mode),
-            subcommand: subcommand.clone(),
-            args: args.clone(),
-            env: resolve_env(env),
-        })),
-        AgentDef::Cursor { command, args, env } => {
-            AnyAgent::Cursor(CursorAgent::new(CursorSettings {
-                command: command.clone(),
-                args: args.clone(),
-                env: resolve_env(env),
-            }))
-        }
-        AgentDef::Cline { command, args, env } => AnyAgent::Cline(ClineAgent::new(ClineSettings {
-            command: command.clone(),
-            args: args.clone(),
-            env: resolve_env(env),
-        })),
-        AgentDef::OpenCode { command, args, env } => {
-            AnyAgent::OpenCode(OpenCodeAgent::new(OpenCodeSettings {
-                command: command.clone(),
-                args: args.clone(),
-                env: resolve_env(env),
-            }))
-        }
-        AgentDef::Grok {
-            command,
-            args,
-            session_id_file,
-            env,
-        } => AnyAgent::Grok(GrokAgent::new(GrokSettings {
-            command: command.clone(),
-            args: args.clone(),
-            session_id_file: session_id_file.as_ref().map(PathBuf::from),
-            env: resolve_env(env),
-        })),
-        AgentDef::Noop => AnyAgent::Noop(NoopAgent),
-        AgentDef::Fake {
-            exit_code,
-            delay_secs,
-            stdout,
-            stderr,
-            files,
-        } => AnyAgent::Fake(FakeAgent::new(FakeSettings {
-            exit_code: *exit_code,
-            delay_secs: delay_secs.unwrap_or(0),
-            stdout: stdout.clone(),
-            stderr: stderr.clone(),
-            files: files.clone(),
-        })),
-        AgentDef::Generic { command, env } => {
-            if command.is_empty() {
-                return Err(AgentBuildError::GenericEmptyCommand);
-            }
-            let mut agent = GenericAgent::new(command.clone());
-            agent.env = resolve_env(env);
-            AnyAgent::Generic(agent)
-        }
-        AgentDef::Router { agents, strategy } => build_router(agents, *strategy)?,
-    })
-}
-
-fn build_router(
-    agents: &[(String, Box<AgentDef>)],
-    strategy: iter_language::RouterStrategy,
-) -> Result<AnyAgent, AgentBuildError> {
-    if agents.is_empty() {
-        return Err(AgentBuildError::RouterEmpty);
-    }
-    let routing_strategy = match strategy {
-        iter_language::RouterStrategy::Fallback => RoutingStrategy::Fallback,
-        iter_language::RouterStrategy::Rotate => RoutingStrategy::Rotate,
-    };
-    let mut built = Vec::with_capacity(agents.len());
-    for (name, sub_decl) in agents {
-        let sub_agent = build_agent(sub_decl).map_err(|e| AgentBuildError::RouterSubAgent {
-            name: name.clone(),
-            source: Box::new(e),
-        })?;
-        built.push((name.clone(), sub_agent));
-    }
-    Ok(AnyAgent::Router(AgentRouter::new(built, routing_strategy)))
 }
 
 /// Resolve declared env values with `ITER_` prefix overrides.
@@ -347,7 +338,7 @@ mod tests {
         BTreeMap::new()
     }
 
-    fn claude_decl(mode: AstAgentMode) -> AgentDef {
+    fn claude_def(mode: AstAgentMode) -> AgentDef {
         AgentDef::Claude {
             mode,
             command: "claude".into(),
@@ -357,82 +348,70 @@ mod tests {
         }
     }
 
-    fn codex_decl(mode: AstAgentMode) -> AgentDef {
-        AgentDef::Codex {
-            mode,
-            command: "codex".into(),
-            args: Vec::new(),
-            env: empty_env(),
-        }
-    }
-
-    fn gemini_decl(mode: AstAgentMode) -> AgentDef {
-        AgentDef::Gemini {
-            mode,
-            command: "gemini".into(),
-            args: Vec::new(),
-            env: empty_env(),
-        }
-    }
-
-    fn hermes_decl(mode: AstAgentMode) -> AgentDef {
-        AgentDef::Hermes {
-            mode,
-            command: "hermes".into(),
-            args: Vec::new(),
-            env: empty_env(),
-        }
-    }
-
-    fn antigravity_decl(mode: AstAgentMode) -> AgentDef {
-        AgentDef::Antigravity {
-            mode,
-            command: "agy".into(),
-            args: Vec::new(),
-            conversation_id: None,
-            env: empty_env(),
-        }
-    }
-
-    fn copilot_decl(mode: AstAgentMode) -> AgentDef {
-        AgentDef::Copilot {
-            mode,
-            command: "gh".into(),
-            subcommand: None,
-            args: Vec::new(),
-            env: empty_env(),
-        }
-    }
-
+    /// The translation fn selects the right concrete driver for every
+    /// definition variant. Identity is observed through the object-safe
+    /// [`Agent::name`] accessor since the concrete type is erased behind the
+    /// trait object — field-level bind coverage lives in each driver's own
+    /// tests.
     #[test]
-    fn maps_each_agent_decl_variant() {
-        type Check = fn(&AnyAgent) -> bool;
-        let cases: [(AgentDef, Check); 13] = [
-            (claude_decl(AstAgentMode::Print), |a| {
-                matches!(a, AnyAgent::Claude(_))
-            }),
-            (codex_decl(AstAgentMode::Print), |a| {
-                matches!(a, AnyAgent::Codex(_))
-            }),
-            (gemini_decl(AstAgentMode::Print), |a| {
-                matches!(a, AnyAgent::Gemini(_))
-            }),
-            (hermes_decl(AstAgentMode::Print), |a| {
-                matches!(a, AnyAgent::Hermes(_))
-            }),
-            (antigravity_decl(AstAgentMode::Print), |a| {
-                matches!(a, AnyAgent::Antigravity(_))
-            }),
-            (copilot_decl(AstAgentMode::Print), |a| {
-                matches!(a, AnyAgent::Copilot(_))
-            }),
+    #[allow(clippy::too_many_lines)]
+    fn agent_from_def_selects_each_variant() {
+        let cases: [(AgentDef, &str); 13] = [
+            (claude_def(AstAgentMode::Print), "claude"),
+            (
+                AgentDef::Codex {
+                    mode: AstAgentMode::Print,
+                    command: "codex".into(),
+                    args: Vec::new(),
+                    env: empty_env(),
+                },
+                "codex",
+            ),
+            (
+                AgentDef::Gemini {
+                    mode: AstAgentMode::Print,
+                    command: "gemini".into(),
+                    args: Vec::new(),
+                    env: empty_env(),
+                },
+                "gemini",
+            ),
+            (
+                AgentDef::Hermes {
+                    mode: AstAgentMode::Print,
+                    command: "hermes".into(),
+                    args: Vec::new(),
+                    env: empty_env(),
+                },
+                "hermes",
+            ),
+            (
+                AgentDef::Antigravity {
+                    mode: AstAgentMode::Print,
+                    command: "agy".into(),
+                    args: Vec::new(),
+                    conversation_id: None,
+                    env: empty_env(),
+                },
+                "antigravity",
+            ),
+            (
+                AgentDef::Copilot {
+                    mode: AstAgentMode::Print,
+                    command: "gh".into(),
+                    subcommand: None,
+                    args: Vec::new(),
+                    env: empty_env(),
+                },
+                "copilot",
+            ),
             (
                 AgentDef::Cursor {
                     command: "cursor-agent".into(),
                     args: Vec::new(),
                     env: empty_env(),
                 },
-                |a| matches!(a, AnyAgent::Cursor(_)),
+                "cursor",
             ),
             (
                 AgentDef::Cline {
@@ -440,7 +419,7 @@ mod tests {
                     args: Vec::new(),
                     env: empty_env(),
                 },
-                |a| matches!(a, AnyAgent::Cline(_)),
+                "cline",
             ),
             (
                 AgentDef::OpenCode {
@@ -448,7 +427,7 @@ mod tests {
                     args: Vec::new(),
                     env: empty_env(),
                 },
-                |a| matches!(a, AnyAgent::OpenCode(_)),
+                "opencode",
             ),
             (
                 AgentDef::Grok {
@@ -457,16 +436,16 @@ mod tests {
                     session_id_file: None,
                     env: empty_env(),
                 },
-                |a| matches!(a, AnyAgent::Grok(_)),
+                "grok",
             ),
             (
                 AgentDef::Generic {
                     command: vec!["echo".into(), "hi".into()],
                     env: empty_env(),
                 },
-                |a| matches!(a, AnyAgent::Generic(_)),
+                "generic",
             ),
-            (AgentDef::Noop, |a| matches!(a, AnyAgent::Noop(_))),
+            (AgentDef::Noop, "noop"),
             (
                 AgentDef::Fake {
                     exit_code: 0,
@@ -475,287 +454,190 @@ mod tests {
                     stderr: Vec::new(),
                     files: BTreeMap::new(),
                 },
-                |a| matches!(a, AnyAgent::Fake(_)),
+                "fake",
             ),
         ];
-        for (decl, check) in &cases {
-            let agent = build_agent(decl).expect("build");
-            assert!(check(&agent), "wrong variant for {decl:?}");
+        for (def, expected_name) in &cases {
+            let agent = agent_from_def(def).expect("build");
+            assert_eq!(agent.name(), *expected_name, "wrong driver for {def:?}");
         }
+    }
+
+    /// The Claude bind is a non-trivial field move: declaration `String`
+    /// session paths become core `PathBuf`s, the AST mode maps to the core
+    /// mode, and `args` pass through verbatim. `agent_from_def` erases the
+    /// concrete type behind `Box<dyn Agent>`, so the bind is exercised through
+    /// the shared `build_claude` constructor (which the `Claude` arm boxes).
+    #[test]
+    fn claude_def_binds_fields_including_session_path() {
+        let mut env = BTreeMap::new();
+        env.insert("BIND_TEST_KEY_ZZZ".to_string(), "v".to_string());
+        let agent = build_claude(
+            AstAgentMode::Interactive,
+            "/opt/bin/claude",
+            &["--model".to_string(), "opus".to_string()],
+            Some(&".iter/session-id".to_string()),
+            &env,
+        );
+        assert_eq!(agent.command, "/opt/bin/claude");
+        assert_eq!(agent.mode, ImplAgentMode::Interactive);
+        assert_eq!(agent.args, vec!["--model".to_string(), "opus".to_string()]);
+        // Declaration `String` → core `PathBuf`.
+        assert_eq!(
+            agent.session_id_file,
+            Some(PathBuf::from(".iter/session-id")),
+        );
+        // No `ITER_BIND_TEST_KEY_ZZZ` override is expected to exist, so the
+        // declared default flows through the resolved env container.
+        assert_eq!(
+            agent.env,
+            vec![("BIND_TEST_KEY_ZZZ".to_string(), "v".to_string())],
+        );
+
+        // Print mode and an absent session file bind to their counterparts.
+        let none = build_claude(AstAgentMode::Print, "claude", &[], None, &BTreeMap::new());
+        assert_eq!(none.mode, ImplAgentMode::Print);
+        assert!(none.session_id_file.is_none());
+    }
+
+    /// Same non-trivial `String` → `PathBuf` session-path bind for Grok.
+    #[test]
+    fn grok_def_binds_session_path() {
+        let with = build_grok(
+            "grok",
+            &["--output-format".to_string(), "json".to_string()],
+            Some(&".iter/session-id".to_string()),
+            &BTreeMap::new(),
+        );
+        assert_eq!(with.command, "grok");
+        assert_eq!(
+            with.args,
+            vec!["--output-format".to_string(), "json".to_string()],
+        );
+        assert_eq!(
+            with.session_id_file,
+            Some(PathBuf::from(".iter/session-id")),
+        );
+
+        let without = build_grok("grok", &[], None, &BTreeMap::new());
+        assert!(without.session_id_file.is_none());
     }
 
     #[test]
     fn generic_with_empty_command_errors() {
-        let err = build_agent(&AgentDef::Generic {
+        // `Box<dyn Agent>` is not `Debug`, so `expect_err` (which would format
+        // the `Ok` value) is unavailable; match the result explicitly instead.
+        let Err(err) = agent_from_def(&AgentDef::Generic {
             command: vec![],
             env: empty_env(),
-        })
-        .expect_err("must fail");
+        }) else {
+            panic!("empty generic command must fail to build");
+        };
         assert!(err.to_string().contains("non-empty"));
     }
 
     #[test]
-    fn agent_mode_passes_through_for_every_hook_capable_agent() {
-        let claude = build_agent(&claude_decl(AstAgentMode::Interactive)).expect("build");
-        match claude {
-            AnyAgent::Claude(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
-            other => panic!("expected Claude, got {other:?}"),
-        }
-
-        let codex = build_agent(&codex_decl(AstAgentMode::Interactive)).expect("build");
-        match codex {
-            AnyAgent::Codex(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
-            other => panic!("expected Codex, got {other:?}"),
-        }
-
-        let gemini = build_agent(&gemini_decl(AstAgentMode::Interactive)).expect("build");
-        match gemini {
-            AnyAgent::Gemini(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
-            other => panic!("expected Gemini, got {other:?}"),
-        }
-
-        let hermes = build_agent(&hermes_decl(AstAgentMode::Interactive)).expect("build");
-        match hermes {
-            AnyAgent::Hermes(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
-            other => panic!("expected Hermes, got {other:?}"),
-        }
-
-        let antigravity = build_agent(&antigravity_decl(AstAgentMode::Interactive)).expect("build");
-        match antigravity {
-            AnyAgent::Antigravity(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
-            other => panic!("expected Antigravity, got {other:?}"),
-        }
-
-        let copilot = build_agent(&copilot_decl(AstAgentMode::Interactive)).expect("build");
-        match copilot {
-            AnyAgent::Copilot(a) => assert_eq!(a.mode, ImplAgentMode::Interactive),
-            other => panic!("expected Copilot, got {other:?}"),
-        }
-    }
-
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    fn command_and_args_pass_through_to_every_agent() {
-        let claude = build_agent(&AgentDef::Claude {
-            mode: AstAgentMode::Print,
-            command: "/opt/bin/claude".into(),
-            args: vec!["--model".into(), "opus".into()],
-            session_id_file: None,
-            env: empty_env(),
-        })
-        .expect("build");
-        match claude {
-            AnyAgent::Claude(a) => {
-                assert_eq!(a.command, "/opt/bin/claude");
-                assert_eq!(a.args, vec!["--model".to_string(), "opus".into()]);
-            }
-            other => panic!("expected Claude, got {other:?}"),
-        }
-
-        let codex = build_agent(&AgentDef::Codex {
-            mode: AstAgentMode::Print,
-            command: "/opt/bin/codex".into(),
-            args: vec!["--model".into(), "o1".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match codex {
-            AnyAgent::Codex(a) => {
-                assert_eq!(a.command, "/opt/bin/codex");
-                assert_eq!(a.args, vec!["--model".to_string(), "o1".into()]);
-            }
-            other => panic!("expected Codex, got {other:?}"),
-        }
-
-        let gemini = build_agent(&AgentDef::Gemini {
-            mode: AstAgentMode::Print,
-            command: "/opt/bin/gemini".into(),
-            args: vec!["--sandbox".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match gemini {
-            AnyAgent::Gemini(a) => {
-                assert_eq!(a.command, "/opt/bin/gemini");
-                assert_eq!(a.args, vec!["--sandbox".to_string()]);
-            }
-            other => panic!("expected Gemini, got {other:?}"),
-        }
-
-        let hermes = build_agent(&AgentDef::Hermes {
-            mode: AstAgentMode::Print,
-            command: "/opt/bin/hermes".into(),
-            args: vec!["--yolo".into(), "--max-turns".into(), "30".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match hermes {
-            AnyAgent::Hermes(a) => {
-                assert_eq!(a.command, "/opt/bin/hermes");
-                assert_eq!(
-                    a.args,
-                    vec!["--yolo".to_string(), "--max-turns".into(), "30".into()]
-                );
-            }
-            other => panic!("expected Hermes, got {other:?}"),
-        }
-
-        let antigravity = build_agent(&AgentDef::Antigravity {
-            mode: AstAgentMode::Print,
-            command: "/opt/bin/agy".into(),
-            args: vec!["--print-timeout".into(), "600".into()],
-            conversation_id: None,
-            env: empty_env(),
-        })
-        .expect("build");
-        match antigravity {
-            AnyAgent::Antigravity(a) => {
-                assert_eq!(a.command, "/opt/bin/agy");
-                assert_eq!(a.args, vec!["--print-timeout".to_string(), "600".into()]);
-            }
-            other => panic!("expected Antigravity, got {other:?}"),
-        }
-
-        let copilot = build_agent(&AgentDef::Copilot {
-            mode: AstAgentMode::Print,
-            command: "/opt/bin/copilot".into(),
-            subcommand: Some(vec![]),
-            args: vec!["--no-color".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match copilot {
-            AnyAgent::Copilot(a) => {
-                assert_eq!(a.command, "/opt/bin/copilot");
-                assert_eq!(a.subcommand.as_deref(), Some(&[] as &[String]));
-                assert_eq!(a.args, vec!["--no-color".to_string()]);
-            }
-            other => panic!("expected Copilot, got {other:?}"),
-        }
-
-        let cursor = build_agent(&AgentDef::Cursor {
-            command: "/opt/bin/cursor".into(),
-            args: vec!["--foo".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match cursor {
-            AnyAgent::Cursor(a) => {
-                assert_eq!(a.command, "/opt/bin/cursor");
-                assert_eq!(a.args, vec!["--foo".to_string()]);
-            }
-            other => panic!("expected Cursor, got {other:?}"),
-        }
-
-        let cline = build_agent(&AgentDef::Cline {
-            command: "/opt/bin/cline".into(),
-            args: vec!["--bar".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match cline {
-            AnyAgent::Cline(a) => {
-                assert_eq!(a.command, "/opt/bin/cline");
-                assert_eq!(a.args, vec!["--bar".to_string()]);
-            }
-            other => panic!("expected Cline, got {other:?}"),
-        }
-
-        let opencode = build_agent(&AgentDef::OpenCode {
-            command: "/opt/bin/opencode".into(),
-            args: vec!["--baz".into()],
-            env: empty_env(),
-        })
-        .expect("build");
-        match opencode {
-            AnyAgent::OpenCode(a) => {
-                assert_eq!(a.command, "/opt/bin/opencode");
-                assert_eq!(a.args, vec!["--baz".to_string()]);
-            }
-            other => panic!("expected OpenCode, got {other:?}"),
-        }
-
-        let grok = build_agent(&AgentDef::Grok {
-            command: "/opt/bin/grok".into(),
-            args: vec!["--output-format".into(), "json".into()],
-            session_id_file: None,
-            env: empty_env(),
-        })
-        .expect("build");
-        match grok {
-            AnyAgent::Grok(a) => {
-                assert_eq!(a.command, "/opt/bin/grok");
-                assert_eq!(a.args, vec!["--output-format".to_string(), "json".into()]);
-            }
-            other => panic!("expected Grok, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn grok_session_id_file_is_forwarded() {
-        let without = build_agent(&AgentDef::Grok {
-            command: "grok".into(),
-            args: Vec::new(),
-            session_id_file: None,
-            env: empty_env(),
-        })
-        .expect("build");
-        match without {
-            AnyAgent::Grok(a) => assert!(a.session_id_file.is_none()),
-            other => panic!("expected Grok, got {other:?}"),
-        }
-
-        let with = build_agent(&AgentDef::Grok {
-            command: "grok".into(),
-            args: Vec::new(),
-            session_id_file: Some(".iter/session-id".into()),
-            env: empty_env(),
-        })
-        .expect("build");
-        match with {
-            AnyAgent::Grok(a) => assert_eq!(
-                a.session_id_file.as_deref(),
-                Some(std::path::Path::new(".iter/session-id")),
-            ),
-            other => panic!("expected Grok, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn env_is_passed_through_to_agent() {
-        let mut env = BTreeMap::new();
-        env.insert("MY_VAR".to_string(), "my_value".to_string());
-        let decl = AgentDef::Claude {
-            mode: AstAgentMode::Print,
-            command: "claude".into(),
-            args: Vec::new(),
-            session_id_file: None,
-            env,
+    fn router_selects_router_driver() {
+        use iter_language::RouterStrategy;
+        let def = AgentDef::Router {
+            agents: vec![
+                ("primary".into(), Box::new(claude_def(AstAgentMode::Print))),
+                (
+                    "secondary".into(),
+                    Box::new(AgentDef::Codex {
+                        mode: AstAgentMode::Print,
+                        command: "codex".into(),
+                        args: Vec::new(),
+                        env: empty_env(),
+                    }),
+                ),
+            ],
+            strategy: RouterStrategy::Fallback,
         };
-        let agent = build_agent(&decl).expect("build");
-        match agent {
-            AnyAgent::Claude(a) => {
-                assert_eq!(a.env, vec![("MY_VAR".to_string(), "my_value".to_string())]);
-            }
-            other => panic!("expected Claude, got {other:?}"),
-        }
+        let agent = agent_from_def(&def).expect("build");
+        assert_eq!(agent.name(), "router");
     }
 
     #[test]
-    fn env_is_passed_through_to_generic_agent() {
-        let mut env = BTreeMap::new();
-        env.insert("FOO".to_string(), "bar".to_string());
-        let decl = AgentDef::Generic {
-            command: vec!["echo".into()],
-            env,
+    fn router_rotate_builds() {
+        use iter_language::RouterStrategy;
+        let def = AgentDef::Router {
+            agents: vec![(
+                "only".into(),
+                Box::new(AgentDef::Generic {
+                    command: vec!["echo".into(), "hi".into()],
+                    env: empty_env(),
+                }),
+            )],
+            strategy: RouterStrategy::Rotate,
         };
-        let agent = build_agent(&decl).expect("build");
-        match agent {
-            AnyAgent::Generic(a) => {
-                assert_eq!(a.env, vec![("FOO".to_string(), "bar".to_string())]);
-            }
-            other => panic!("expected Generic, got {other:?}"),
-        }
+        let agent = agent_from_def(&def).expect("build");
+        assert_eq!(agent.name(), "router");
+    }
+
+    #[test]
+    fn router_empty_errors() {
+        use iter_language::RouterStrategy;
+        let def = AgentDef::Router {
+            agents: vec![],
+            strategy: RouterStrategy::Fallback,
+        };
+        let Err(err) = agent_from_def(&def) else {
+            panic!("empty router must fail to build");
+        };
+        assert!(err.to_string().contains("at least one"));
+    }
+
+    /// A `claude` definition carries the non-default sandbox profile (network
+    /// hosts, env passthrough) through the def-keyed selector; an agent with
+    /// no special requirements (`noop`) yields the default profile.
+    #[test]
+    fn sandbox_requirements_are_selected_per_variant() {
+        let claude = sandbox_requirements_for(&claude_def(AstAgentMode::Print));
+        assert!(
+            claude
+                .network_hosts
+                .iter()
+                .any(|h| h.starts_with("api.anthropic.com")),
+            "claude must request the inference host, got {:?}",
+            claude.network_hosts,
+        );
+
+        let noop = sandbox_requirements_for(&AgentDef::Noop);
+        assert_eq!(noop, SandboxRequirements::default());
+    }
+
+    /// A router's sandbox profile merges the profiles of its sub-agents, so a
+    /// router over `[claude, grok]` requests both backends' hosts.
+    #[test]
+    fn router_merges_sub_agent_sandbox_requirements() {
+        use iter_language::RouterStrategy;
+        let def = AgentDef::Router {
+            agents: vec![
+                ("c".into(), Box::new(claude_def(AstAgentMode::Print))),
+                (
+                    "g".into(),
+                    Box::new(AgentDef::Grok {
+                        command: "grok".into(),
+                        args: Vec::new(),
+                        session_id_file: None,
+                        env: empty_env(),
+                    }),
+                ),
+            ],
+            strategy: RouterStrategy::Fallback,
+        };
+        let reqs = sandbox_requirements_for(&def);
+        assert!(
+            reqs.network_hosts
+                .iter()
+                .any(|h| h.starts_with("api.anthropic.com")),
+            "merged profile must include claude's host",
+        );
+        assert!(
+            reqs.network_hosts.iter().any(|h| h.starts_with("api.x.ai")),
+            "merged profile must include grok's host",
+        );
     }
 
     #[test]
@@ -797,127 +679,5 @@ mod tests {
             resolved,
             vec![("UNIQUE_KEY_ZZZZ".to_string(), "default_val".to_string())],
         );
-    }
-
-    #[test]
-    fn claude_session_id_file_is_forwarded() {
-        let without = build_agent(&AgentDef::Claude {
-            mode: AstAgentMode::Print,
-            command: "claude".into(),
-            args: Vec::new(),
-            session_id_file: None,
-            env: empty_env(),
-        })
-        .expect("build");
-        match without {
-            AnyAgent::Claude(a) => assert!(a.session_id_file.is_none()),
-            other => panic!("expected Claude, got {other:?}"),
-        }
-
-        let with = build_agent(&AgentDef::Claude {
-            mode: AstAgentMode::Print,
-            command: "claude".into(),
-            args: Vec::new(),
-            session_id_file: Some(".iter/session-id".into()),
-            env: empty_env(),
-        })
-        .expect("build");
-        match with {
-            AnyAgent::Claude(a) => assert_eq!(
-                a.session_id_file.as_deref(),
-                Some(std::path::Path::new(".iter/session-id")),
-            ),
-            other => panic!("expected Claude, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn antigravity_conversation_id_is_forwarded() {
-        let without = build_agent(&AgentDef::Antigravity {
-            mode: AstAgentMode::Print,
-            command: "agy".into(),
-            args: Vec::new(),
-            conversation_id: None,
-            env: empty_env(),
-        })
-        .expect("build");
-        match without {
-            AnyAgent::Antigravity(a) => assert!(a.conversation_id.is_none()),
-            other => panic!("expected Antigravity, got {other:?}"),
-        }
-
-        let with = build_agent(&AgentDef::Antigravity {
-            mode: AstAgentMode::Print,
-            command: "agy".into(),
-            args: Vec::new(),
-            conversation_id: Some("my-session-id".into()),
-            env: empty_env(),
-        })
-        .expect("build");
-        match with {
-            AnyAgent::Antigravity(a) => {
-                assert_eq!(a.conversation_id.as_deref(), Some("my-session-id"));
-            }
-            other => panic!("expected Antigravity, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn build_agent_router_fallback() {
-        use iter_language::RouterStrategy;
-        let decl = AgentDef::Router {
-            agents: vec![
-                (
-                    "primary".into(),
-                    Box::new(AgentDef::Claude {
-                        mode: AstAgentMode::Print,
-                        command: "claude".into(),
-                        args: Vec::new(),
-                        session_id_file: None,
-                        env: empty_env(),
-                    }),
-                ),
-                (
-                    "secondary".into(),
-                    Box::new(AgentDef::Codex {
-                        mode: AstAgentMode::Print,
-                        command: "codex".into(),
-                        args: Vec::new(),
-                        env: empty_env(),
-                    }),
-                ),
-            ],
-            strategy: RouterStrategy::Fallback,
-        };
-        let agent = build_agent(&decl).expect("build");
-        assert!(matches!(agent, AnyAgent::Router(_)));
-    }
-
-    #[test]
-    fn build_agent_router_rotate() {
-        use iter_language::RouterStrategy;
-        let decl = AgentDef::Router {
-            agents: vec![(
-                "only".into(),
-                Box::new(AgentDef::Generic {
-                    command: vec!["echo".into(), "hi".into()],
-                    env: empty_env(),
-                }),
-            )],
-            strategy: RouterStrategy::Rotate,
-        };
-        let agent = build_agent(&decl).expect("build");
-        assert!(matches!(agent, AnyAgent::Router(_)));
-    }
-
-    #[test]
-    fn build_agent_router_empty_errors() {
-        use iter_language::RouterStrategy;
-        let decl = AgentDef::Router {
-            agents: vec![],
-            strategy: RouterStrategy::Fallback,
-        };
-        let err = build_agent(&decl).expect_err("must fail");
-        assert!(err.to_string().contains("at least one"));
     }
 }

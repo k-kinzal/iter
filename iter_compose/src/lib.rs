@@ -1,11 +1,11 @@
 //! Composition layer turning an [`iter_language::Iterfile`] into the concrete
 //! types fed to [`iter_core::Runner`].
 //!
-//! This crate turns the open-ended world of "implementation crates" into the
-//! [`Runner<A>`](iter_core::Runner) generic. The queue and workspace axes are
-//! trait objects (`Arc<dyn Queue>`, `Box<dyn Workspace>`); only the agent axis
-//! still uses an `AnyAgent` enum that wraps each concrete agent and forwards
-//! trait methods via match dispatch. The CLI instantiates `Runner<AnyAgent>`.
+//! This crate turns the open-ended world of "implementation crates" into a
+//! concrete [`Runner`](iter_core::Runner). All three runtime axes are trait
+//! objects — the queue (`Arc<dyn Queue>`), the workspace supply
+//! (`Box<dyn Workspace>`), and the agent (`Box<dyn Agent>`); [`agent_from_def`]
+//! selects and boxes the concrete driver for each agent definition.
 //!
 //! Trigger CLIs are separate binaries (`iter-cron`, `iter-watch`, etc.)
 //! that connect to queues through the [`iter_core::queue`] boundary and
@@ -33,7 +33,7 @@ pub mod telemetry;
 pub mod trigger_argv;
 pub mod workspace;
 
-pub use agent::{AnyAgent, build_agent};
+pub use agent::{agent_from_def, sandbox_requirements_for};
 pub use assembly::AssemblyError;
 pub use compose::{
     CompletedTask, ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,

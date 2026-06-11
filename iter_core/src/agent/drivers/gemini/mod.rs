@@ -39,14 +39,15 @@
 //!
 //! # Construction
 //!
-//! [`GeminiAgent`] exposes no defaults. Every field on [`GeminiSettings`]
-//! is required because the value is a project-shaped decision iter
-//! cannot honestly pick on the operator's behalf.
+//! [`GeminiAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use std::path::Path;
 use std::process::Stdio;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -100,23 +101,6 @@ impl From<GeminiError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`GeminiAgent`].
-///
-/// Every field is required; there is no `Default` impl.
-#[derive(Debug, Clone)]
-pub struct GeminiSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Print vs. interactive mode.
-    pub mode: AgentMode,
-    /// Additional arguments appended after the built-in flags (the
-    /// `-p <prompt> -o json` triple in print mode, or the prompt positional
-    /// in interactive mode). Empty is allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// Gemini CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct GeminiAgent {
@@ -133,24 +117,6 @@ pub struct GeminiAgent {
 }
 
 impl GeminiAgent {
-    /// Build a fully-specified Gemini agent. Every knob must be decided
-    /// by the caller; iter provides no implicit defaults.
-    #[must_use]
-    pub fn new(settings: GeminiSettings) -> Self {
-        let GeminiSettings {
-            command,
-            mode,
-            args,
-            env,
-        } = settings;
-        Self {
-            command,
-            mode,
-            args,
-            env,
-        }
-    }
-
     /// Build the interactive-mode command. Passes the prompt as the
     /// first positional argument so `gemini` seeds its initial user
     /// turn with it before dropping into the TUI; extras come after so
@@ -166,7 +132,12 @@ impl GeminiAgent {
     }
 }
 
+#[async_trait]
 impl Agent for GeminiAgent {
+    fn name(&self) -> &'static str {
+        "gemini"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -274,8 +245,8 @@ mod tests {
     use tempfile::TempDir;
     use tokio::fs;
 
-    fn settings(command: impl Into<String>, mode: AgentMode) -> GeminiSettings {
-        GeminiSettings {
+    fn gemini_agent(command: impl Into<String>, mode: AgentMode) -> GeminiAgent {
+        GeminiAgent {
             command: command.into(),
             mode,
             args: Vec::new(),
@@ -292,7 +263,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
     #[tokio::test]
     async fn emits_dash_p_prompt_and_json_format() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("hello-gemini");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -314,9 +285,9 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded_after_managed_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         s.args = vec!["--model".into(), "gemini-pro".into()];
-        let agent = GeminiAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -330,7 +301,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
     async fn print_mode_parses_session_id_when_present() {
         let script = r#"printf '%s' '{"response":"ok","session_id":"conv-9"}'"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -342,7 +313,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
         let script = r#"printf '%s' '{"error":{"type":"ApiError","message":"boom","code":7}}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("err");
@@ -355,7 +326,7 @@ exit 1"#;
     #[tokio::test]
     async fn print_mode_startup_exit_code_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("exit 41");
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("err");
@@ -367,7 +338,7 @@ exit 1"#;
         let script = r#"printf '%s' '{"error":{"type":"ContextLengthExceeded","message":"too big"}}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("err");
@@ -379,9 +350,9 @@ exit 1"#;
         let script =
             "printf 'ENV=%s\\n' \"$GEMINI_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"response\":\"ok\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("GEMINI_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = GeminiAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -414,7 +385,7 @@ exit 0
         .await
         .expect("write settings");
 
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Interactive);
 
         let prompt = Prompt::from("go");
         // The fake either exits 0 (`Ok`) or is SIGKILLed by the hook
@@ -443,7 +414,7 @@ exit 0
         // Fake gemini that exits nonzero without touching the hook.
         let (_guard, bin) = fake_binary_script("exit 7");
         let tmp = TempDir::new().expect("tmp");
-        let agent = GeminiAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("x");
         let result = agent.run(ctx(tmp.path(), &prompt)).await;
 

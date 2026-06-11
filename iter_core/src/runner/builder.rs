@@ -32,15 +32,16 @@ pub enum BuilderError {
 
 /// Fluent builder for [`Runner`].
 ///
-/// The runtime workspace axis is a trait object: the builder holds the
-/// per-iteration workspace supply as `Arc<dyn Fn() -> Box<dyn Workspace>>`
+/// All three runtime axes are trait objects: the builder holds the queue as
+/// `Arc<dyn Queue>`, the per-iteration workspace supply as
+/// `Arc<dyn Fn() -> Box<dyn Workspace>>`, and the agent as `Box<dyn Agent>`
 /// (R18 — a closed enum at the definition layer, a trait object at run time),
-/// so `RunnerBuilder` carries no workspace type parameter.
+/// so `RunnerBuilder` carries no type parameters.
 #[must_use = "call `build()` to produce a Runner"]
-pub struct RunnerBuilder<A: Agent> {
+pub struct RunnerBuilder {
     queue: Option<Arc<dyn Queue>>,
     workspaces: Option<Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>>,
-    agent: Option<A>,
+    agent: Option<Box<dyn Agent>>,
     prompt_selector: Option<PromptSelector>,
     events: EventEmitter,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
@@ -48,7 +49,7 @@ pub struct RunnerBuilder<A: Agent> {
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
 }
 
-impl<A: Agent> Default for RunnerBuilder<A> {
+impl Default for RunnerBuilder {
     fn default() -> Self {
         Self {
             queue: None,
@@ -63,7 +64,7 @@ impl<A: Agent> Default for RunnerBuilder<A> {
     }
 }
 
-impl<A: Agent> RunnerBuilder<A> {
+impl RunnerBuilder {
     /// Create a new empty builder.
     pub fn new() -> Self {
         Self::default()
@@ -96,7 +97,13 @@ impl<A: Agent> RunnerBuilder<A> {
     }
 
     /// Supply the [`Agent`] used for every iteration.
-    pub fn agent(mut self, agent: A) -> Self {
+    ///
+    /// The agent is a trait object (`Box<dyn Agent>`): the closed set of
+    /// agent kinds lives at the definition layer, and the runtime drives a
+    /// single boxed agent (R18). The `iter_compose` translation fn boxes the
+    /// concrete driver it selects from the agent definition; standalone
+    /// callers box the agent themselves.
+    pub fn agent(mut self, agent: Box<dyn Agent>) -> Self {
         self.agent = Some(agent);
         self
     }
@@ -209,9 +216,10 @@ impl<A: Agent> RunnerBuilder<A> {
     /// Returns an error if the operation fails.
     ///
     /// Every driver now uses [`AgentError`](crate::agent::AgentError)
-    /// directly — the `Agent` trait has no associated error type — so this
-    /// builder needs no extra bound beyond the struct's `A: Agent`.
-    pub fn build(self) -> Result<Runner<A>, BuilderError> {
+    /// directly — the `Agent` trait has no associated error type — and the
+    /// agent is a `Box<dyn Agent>`, so [`Runner`] is a concrete type with no
+    /// parameters.
+    pub fn build(self) -> Result<Runner, BuilderError> {
         let workspaces = self
             .workspaces
             .ok_or(BuilderError::MissingField("workspaces"))?;

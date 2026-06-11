@@ -17,7 +17,7 @@ use iter_language::{
 };
 use thiserror::Error;
 
-use crate::agent::{AgentBuildError, AnyAgent, build_agent};
+use crate::agent::{AgentBuildError, agent_from_def, sandbox_requirements_for};
 use crate::config::build_runner_config;
 use crate::events::register_event_handlers_from_events;
 use crate::prompt::{PromptBuildError, build_prompt_selector_from_prompts};
@@ -68,13 +68,14 @@ pub(crate) fn assemble_runner_builder(
     prompts: &[Spanned<PromptDef>],
     events: &[Spanned<EventHandlerDef>],
     once: bool,
-) -> Result<RunnerBuilder<AnyAgent>, AssemblyError> {
-    let agent = build_agent(agent_decl)?;
-    let workspaces = build_workspace_factory(workspace_decl, agent.sandbox_requirements());
+) -> Result<RunnerBuilder, AssemblyError> {
+    let agent = agent_from_def(agent_decl)?;
+    let workspaces =
+        build_workspace_factory(workspace_decl, sandbox_requirements_for(agent_decl));
     let prompt_selector = build_prompt_selector_from_prompts(prompts)?;
     let runner_config = build_runner_config(runner_decl, once);
 
-    let mut builder = Runner::<AnyAgent>::builder()
+    let mut builder = Runner::builder()
         .workspaces(workspaces)
         .agent(agent)
         .prompt_selector(prompt_selector)
@@ -98,7 +99,7 @@ pub(crate) fn assemble_from_root(
     runner: &RunnerDef,
     queue_override: Option<Arc<dyn Queue>>,
     once: bool,
-) -> Result<RunnerBuilder<AnyAgent>, AssemblyError> {
+) -> Result<RunnerBuilder, AssemblyError> {
     let agent_decl = root
         .agents
         .iter()
@@ -214,9 +215,9 @@ fn build_prompt_decls_from_expr(
 /// process), while compose in-process services skip it (multiple
 /// services would race on the global slot).
 pub(crate) fn wire_builder_runtime(
-    mut builder: RunnerBuilder<AnyAgent>,
+    mut builder: RunnerBuilder,
     runtime: &ProcessRuntime,
-) -> RunnerBuilder<AnyAgent> {
+) -> RunnerBuilder {
     builder = builder.observer(runtime.observer().clone());
     builder = builder.stdio_sink(runtime.sink());
     builder

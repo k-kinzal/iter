@@ -16,6 +16,7 @@ path = "src/lib.rs"
 iter_core.workspace = true
 iter_tracing.workspace = true
 iter_language.workspace = true
+async-trait.workspace = true
 iter_cron_cli.workspace = true
 iter_watch_cli.workspace = true
 iter_command_cli.workspace = true

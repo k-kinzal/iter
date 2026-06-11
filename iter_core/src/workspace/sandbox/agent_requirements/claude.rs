@@ -163,18 +163,18 @@ pub fn claude(agent: &ClaudeAgent) -> SandboxRequirements {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{AgentMode, ClaudeSettings};
+    use crate::agent::AgentMode;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn agent(command: impl Into<String>) -> ClaudeAgent {
-        ClaudeAgent::new(ClaudeSettings {
+        ClaudeAgent {
             command: command.into(),
             mode: AgentMode::Print,
             args: Vec::new(),
             session_id_file: None,
             env: Vec::new(),
-        })
+        }
     }
 
     #[test]

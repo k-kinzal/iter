@@ -32,7 +32,7 @@
 //! # Session persistence
 //!
 //! Unlike Gemini CLI, Antigravity has built-in session persistence via
-//! `--conversation <id>`. When [`AntigravitySettings::conversation_id`]
+//! `--conversation <id>`. When [`AntigravityAgent::conversation_id`]
 //! is set, iter passes `--conversation <id>` on every invocation so the
 //! agent resumes the same session. When unset, each iteration starts a
 //! fresh conversation. `agy` does not echo the conversation id back in a
@@ -40,15 +40,15 @@
 //!
 //! # Construction
 //!
-//! [`AntigravityAgent`] exposes no defaults. Every field on
-//! [`AntigravitySettings`] is required because the value is a
-//! project-shaped decision iter cannot honestly pick on the operator's
-//! behalf.
+//! [`AntigravityAgent`] exposes no defaults. Every field is required because
+//! the value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use std::path::Path;
 use std::process::Stdio;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -86,25 +86,6 @@ impl From<AntigravityError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`AntigravityAgent`].
-///
-/// Every field is required; there is no `Default` impl.
-#[derive(Debug, Clone)]
-pub struct AntigravitySettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Print vs. interactive mode.
-    pub mode: AgentMode,
-    /// Additional arguments appended after the built-in flags.
-    /// Empty is allowed.
-    pub args: Vec<String>,
-    /// Optional conversation ID for session persistence. When set,
-    /// `--conversation <id>` is passed to the binary.
-    pub conversation_id: Option<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// Antigravity CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct AntigravityAgent {
@@ -121,26 +102,6 @@ pub struct AntigravityAgent {
 }
 
 impl AntigravityAgent {
-    /// Build a fully-specified Antigravity agent. Every knob must be
-    /// decided by the caller; iter provides no implicit defaults.
-    #[must_use]
-    pub fn new(settings: AntigravitySettings) -> Self {
-        let AntigravitySettings {
-            command,
-            mode,
-            args,
-            conversation_id,
-            env,
-        } = settings;
-        Self {
-            command,
-            mode,
-            args,
-            conversation_id,
-            env,
-        }
-    }
-
     /// Build the interactive-mode command. Passes the prompt as the first
     /// positional argument so `agy` seeds its initial user turn with it
     /// before dropping into the TUI. Extra args come afterward so users can
@@ -159,7 +120,12 @@ impl AntigravityAgent {
     }
 }
 
+#[async_trait]
 impl Agent for AntigravityAgent {
+    fn name(&self) -> &'static str {
+        "antigravity"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -229,8 +195,8 @@ mod tests {
     use crate::agent::testutil::{ctx, ctx_capturing, fake_binary_script};
     use std::path::Path;
 
-    fn settings(command: impl Into<String>, mode: AgentMode) -> AntigravitySettings {
-        AntigravitySettings {
+    fn antigravity_agent(command: impl Into<String>, mode: AgentMode) -> AntigravityAgent {
+        AntigravityAgent {
             command: command.into(),
             mode,
             args: Vec::new(),
@@ -248,7 +214,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn emits_dash_p_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("hello-agy");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -265,9 +231,9 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn print_mode_env_is_forwarded_to_child() {
         let (_guard, bin) = fake_binary_script("printf '%s' \"$AGY_TEST_ENV_VAR\"");
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("AGY_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = AntigravityAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -277,9 +243,9 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn conversation_id_adds_flag_when_set() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         s.conversation_id = Some("test-session-42".into());
-        let agent = AntigravityAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -291,7 +257,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn conversation_id_absent_produces_no_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -304,10 +270,10 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn conversation_id_precedes_extra_args_in_print_mode() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         s.conversation_id = Some("sess-1".into());
         s.args = vec!["--print-timeout".into(), "600".into()];
-        let agent = AntigravityAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -320,7 +286,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn auth_marker_maps_to_launch_error() {
         let (_guard, bin) = fake_binary_script("printf 'Authentication required\\n' 1>&2\nexit 0");
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -333,7 +299,7 @@ printf 'final answer'"#;
     async fn token_limit_marker_maps_to_token_limit() {
         let (_guard, bin) =
             fake_binary_script("printf 'Error: context window exceeded\\n'\nexit 0");
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -345,7 +311,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn nonzero_exit_maps_to_failed() {
         let (_guard, bin) = fake_binary_script("exit 1");
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -363,7 +329,7 @@ printf 'final answer'"#;
         let argv_file = tmp.path().join("argv.txt");
         let script = format!("for a in \"$@\"; do printf '%s\\n' \"$a\"; done > {argv_file:?}");
         let (_guard, bin) = fake_binary_script(&script);
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("interactive-prompt");
         let run = agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
         assert_eq!(run.session_id, None);
@@ -378,7 +344,7 @@ printf 'final answer'"#;
     async fn interactive_nonzero_exit_is_failed() {
         let (_guard, bin) = fake_binary_script("exit 7");
         let tmp = tempfile::TempDir::new().expect("tmp");
-        let agent = AntigravityAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(tmp.path(), &prompt))

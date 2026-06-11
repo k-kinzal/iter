@@ -9,24 +9,11 @@ use std::time::Duration;
 
 use bytes::Bytes;
 
+use async_trait::async_trait;
+
 use crate::agent::error::AgentError;
 use crate::agent::run::AgentRun;
 use crate::{Agent, AgentRunContext};
-
-/// Configuration for a [`FakeAgent`].
-#[derive(Debug, Clone)]
-pub struct FakeSettings {
-    /// Process exit code. 0 = success, non-zero = failure.
-    pub exit_code: i32,
-    /// Simulated execution delay in seconds. 0 = immediate.
-    pub delay_secs: u64,
-    /// Lines to write to stdout via the [`OutputSink`](crate::log::OutputSink).
-    pub stdout: Vec<String>,
-    /// Lines to write to stderr via the [`OutputSink`](crate::log::OutputSink).
-    pub stderr: Vec<String>,
-    /// Files to create/overwrite in the workspace directory.
-    pub files: BTreeMap<String, String>,
-}
 
 /// Configurable fake agent for verification testing.
 ///
@@ -46,21 +33,12 @@ pub struct FakeAgent {
     pub files: BTreeMap<String, String>,
 }
 
-impl FakeAgent {
-    /// Construct a [`FakeAgent`] from the given settings.
-    #[must_use]
-    pub fn new(settings: FakeSettings) -> Self {
-        Self {
-            exit_code: settings.exit_code,
-            delay_secs: settings.delay_secs,
-            stdout: settings.stdout,
-            stderr: settings.stderr,
-            files: settings.files,
-        }
-    }
-}
-
+#[async_trait]
 impl Agent for FakeAgent {
+    fn name(&self) -> &'static str {
+        "fake"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         if ctx.cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
@@ -122,8 +100,8 @@ mod tests {
     use std::path::Path;
     use tokio_util::sync::CancellationToken;
 
-    fn default_settings() -> FakeSettings {
-        FakeSettings {
+    fn default_fake_agent() -> FakeAgent {
+        FakeAgent {
             exit_code: 0,
             delay_secs: 0,
             stdout: Vec::new(),
@@ -134,7 +112,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_config_behaves_like_noop() {
-        let agent = FakeAgent::new(default_settings());
+        let agent = default_fake_agent();
         let prompt = Prompt::from("ignored");
         let run = agent
             .run(ctx(Path::new("."), &prompt))
@@ -149,10 +127,10 @@ mod tests {
         let mut files = BTreeMap::new();
         files.insert("output/result.txt".to_string(), "content-a".to_string());
         files.insert("nested/deep/file.txt".to_string(), "content-b".to_string());
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             files,
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
         assert_eq!(
@@ -167,10 +145,10 @@ mod tests {
 
     #[tokio::test]
     async fn exit_code_zero_is_success() {
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             exit_code: 0,
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         agent
             .run(ctx(Path::new("."), &prompt))
@@ -180,10 +158,10 @@ mod tests {
 
     #[tokio::test]
     async fn exit_code_nonzero_is_failure() {
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             exit_code: 1,
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -198,10 +176,10 @@ mod tests {
     #[tokio::test]
     async fn delay_respects_cancellation() {
         let cancel = CancellationToken::new();
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             delay_secs: 3600,
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         let ctx = AgentRunContext::new(
             Path::new("."),
@@ -223,10 +201,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut files = BTreeMap::new();
         files.insert("/etc/passwd".to_string(), "bad".to_string());
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             files,
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         let err = agent
             .run(ctx(tmp.path(), &prompt))
@@ -240,10 +218,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut files = BTreeMap::new();
         files.insert("../../escape.txt".to_string(), "bad".to_string());
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             files,
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         let err = agent
             .run(ctx(tmp.path(), &prompt))
@@ -280,11 +258,11 @@ mod tests {
             stdout: Mutex::new(Vec::new()),
             stderr: Mutex::new(Vec::new()),
         });
-        let agent = FakeAgent::new(FakeSettings {
+        let agent = FakeAgent {
             stdout: vec!["hello".to_string(), "world".to_string()],
             stderr: vec!["warn".to_string()],
-            ..default_settings()
-        });
+            ..default_fake_agent()
+        };
         let prompt = Prompt::from("ignored");
         let run_ctx = AgentRunContext::new(
             Path::new("."),
@@ -309,7 +287,7 @@ mod tests {
     async fn already_cancelled_returns_error() {
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let agent = FakeAgent::new(default_settings());
+        let agent = default_fake_agent();
         let prompt = Prompt::from("ignored");
         let ctx = AgentRunContext::new(
             Path::new("."),

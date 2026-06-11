@@ -31,11 +31,12 @@
 //!
 //! # Construction
 //!
-//! [`ClineAgent`] exposes no defaults. Every field on [`ClineSettings`]
-//! is required because the value is a project-shaped decision iter
-//! cannot honestly pick on the operator's behalf.
+//! [`ClineAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use crate::{Agent, AgentRun, AgentRunContext};
+use async_trait::async_trait;
 
 mod command;
 
@@ -71,18 +72,6 @@ impl From<ClineError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`ClineAgent`].
-#[derive(Debug, Clone)]
-pub struct ClineSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Additional arguments appended after the built-in `--oneshot --json`
-    /// flags. Empty is allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// Cline CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct ClineAgent {
@@ -95,16 +84,12 @@ pub struct ClineAgent {
     pub env: Vec<(String, String)>,
 }
 
-impl ClineAgent {
-    /// Build a fully-specified Cline agent.
-    #[must_use]
-    pub fn new(settings: ClineSettings) -> Self {
-        let ClineSettings { command, args, env } = settings;
-        Self { command, args, env }
-    }
-}
-
+#[async_trait]
 impl Agent for ClineAgent {
+    fn name(&self) -> &'static str {
+        "cline"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -144,8 +129,8 @@ mod tests {
     use crate::agent::testutil::{ctx_capturing, fake_binary_script};
     use std::path::Path;
 
-    fn settings(command: impl Into<String>) -> ClineSettings {
-        ClineSettings {
+    fn cline_agent(command: impl Into<String>) -> ClineAgent {
+        ClineAgent {
             command: command.into(),
             args: Vec::new(),
             env: Vec::new(),
@@ -162,7 +147,7 @@ printf '%s' '{"type":"run_result","finishReason":"completed","sessionId":"sess-x
     #[tokio::test]
     async fn passes_oneshot_and_json_flags_and_stdin_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = ClineAgent::new(settings(bin.to_string_lossy()));
+        let agent = cline_agent(bin.to_string_lossy());
         let prompt = Prompt::from("hello-cline");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -176,9 +161,9 @@ printf '%s' '{"type":"run_result","finishReason":"completed","sessionId":"sess-x
     #[tokio::test]
     async fn extra_args_are_forwarded_after_managed_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = cline_agent(bin.to_string_lossy());
         s.args = vec!["--model".into(), "sonnet".into()];
-        let agent = ClineAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -193,9 +178,9 @@ printf '%s' '{"type":"run_result","finishReason":"completed","sessionId":"sess-x
     async fn env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$CLINE_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"run_result\",\"finishReason\":\"completed\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = cline_agent(bin.to_string_lossy());
         s.env = vec![("CLINE_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = ClineAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -207,7 +192,7 @@ printf '%s' '{"type":"run_result","finishReason":"completed","sessionId":"sess-x
         let script = r#"printf '%s' '{"type":"run_result","finishReason":"max_turns"}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = ClineAgent::new(settings(bin.to_string_lossy()));
+        let agent = cline_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("must fail");
@@ -220,7 +205,7 @@ exit 1"#;
     #[tokio::test]
     async fn no_result_on_nonzero_exit_is_an_error() {
         let (_guard, bin) = fake_binary_script("printf 'garbage\\n'\nexit 1");
-        let agent = ClineAgent::new(settings(bin.to_string_lossy()));
+        let agent = cline_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("must fail");

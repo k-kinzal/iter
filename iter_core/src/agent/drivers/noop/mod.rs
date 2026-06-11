@@ -1,5 +1,7 @@
 //! [`NoopAgent`] — does nothing, exits immediately with success.
 
+use async_trait::async_trait;
+
 use crate::agent::error::AgentError;
 use crate::agent::run::AgentRun;
 use crate::{Agent, AgentRunContext};
@@ -13,7 +15,12 @@ use crate::{Agent, AgentRunContext};
 #[derive(Debug, Clone)]
 pub struct NoopAgent;
 
+#[async_trait]
 impl Agent for NoopAgent {
+    fn name(&self) -> &'static str {
+        "noop"
+    }
+
     async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         Ok(AgentRun::empty())
     }

@@ -1,16 +1,20 @@
 //! [`Agent`] trait — the AI agent that runs inside a
 //! [`Workspace`](crate::workspace::Workspace).
 //!
-//! Uses Return-Position-Impl-Trait-In-Trait (RPITIT) so that implementors
-//! can write `async fn` bodies without paying for an extra allocation per
-//! call. The associated future is required to be `Send` so it can be
-//! polled by the multi-threaded `tokio` runtime.
+//! The trait is **dyn-compatible**: the runner drives a single agent through
+//! a `Box<dyn Agent>` trait object (R18 — a closed set of agent kinds at the
+//! definition layer, a trait object at run time, never both). To make `dyn
+//! Agent` legal, [`run`](Agent::run) returns a boxed future via
+//! [`async_trait`](async_trait::async_trait) — the same mechanism the
+//! [`Workspace`](crate::workspace::Workspace) axis uses. The per-call boxing
+//! allocation is irrelevant here: every `run` spawns a CLI subprocess that
+//! runs for minutes, dwarfing one heap allocation and one indirect call.
 
-use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::{AgentError, AgentRun};
@@ -158,16 +162,30 @@ impl<'a> AgentRunContext<'a> {
 /// [`AgentError::Cancelled`]. The runner itself does not wrap `run` in a
 /// `select!`, because cooperative cancellation is the only way to give the
 /// agent a chance to flush its output tail before exiting.
+#[async_trait]
 pub trait Agent: Send + Sync {
     /// Run the agent for one iteration with the given context.
     ///
     /// The context is moved into the call by value because it bundles a
     /// fresh [`CancellationToken`] (cloned per iteration by the runner)
     /// plus borrows that only live for the duration of one iteration.
-    fn run(
-        &self,
-        ctx: AgentRunContext<'_>,
-    ) -> impl Future<Output = Result<AgentRun, AgentError>> + Send;
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError>;
+
+    /// Stable, human-meaningful label for this agent driver.
+    ///
+    /// Surfaced as the `iter.agent.name` telemetry attribute so a span names
+    /// *which agent* ran (e.g. `"claude"`, `"codex"`, `"router"`) rather than
+    /// a Rust type path. This is a **label**, not a discriminant —
+    /// deliberately a `&'static str` on the `Agent` trait (mirroring
+    /// [`Workspace::name`](crate::workspace::Workspace::name)), distinct in
+    /// role from any agent-kind discriminant a later layer may add.
+    ///
+    /// The default returns a neutral placeholder and exists only so test-only
+    /// stub agents need not state a name; every concrete driver overrides it,
+    /// so the placeholder never reaches production telemetry.
+    fn name(&self) -> &'static str {
+        "agent"
+    }
 }
 
 /// Upper bound on how long the drain window waits for the agent future
@@ -194,13 +212,10 @@ const ITERATION_TIMEOUT_DRAIN_GRACE: Duration =
 ///
 /// Returns `AgentError` when the agent itself fails or when the
 /// iteration timeout fires.
-pub async fn run_with_timeout<A>(
-    agent: &A,
+pub async fn run_with_timeout(
+    agent: &dyn Agent,
     ctx: AgentRunContext<'_>,
-) -> Result<AgentRun, AgentError>
-where
-    A: Agent,
-{
+) -> Result<AgentRun, AgentError> {
     let timeout = ctx.iteration_timeout;
     let parent_cancel = ctx.cancel.clone();
     let iter_cancel = parent_cancel.child_token();

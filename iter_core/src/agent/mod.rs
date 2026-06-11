@@ -29,9 +29,10 @@
 //!
 //! # No implicit defaults
 //!
-//! Every agent in this module is constructed from a fully-populated
-//! `*Settings` struct. None of them exposes a `Default` impl or an
-//! implicit binary-name fallback.
+//! Every agent in this module is constructed directly from its fully
+//! specified fields — there is no intermediate `*Settings` struct, and the
+//! declaration → agent bind is a mechanical field move. None of them exposes
+//! a `Default` impl or an implicit binary-name fallback.
 //!
 //! # Example
 //!
@@ -71,19 +72,19 @@ pub(crate) mod session;
 #[cfg(test)]
 mod testutil;
 
-pub use drivers::antigravity::{AntigravityAgent, AntigravitySettings};
-pub use drivers::claude::{ClaudeAgent, ClaudeSettings};
-pub use drivers::cline::{ClineAgent, ClineSettings};
-pub use drivers::codex::{CodexAgent, CodexSettings};
-pub use drivers::copilot::{CopilotAgent, CopilotSettings};
-pub use drivers::cursor::{CursorAgent, CursorSettings};
-pub use drivers::fake::{FakeAgent, FakeSettings};
-pub use drivers::gemini::{GeminiAgent, GeminiSettings};
+pub use drivers::antigravity::AntigravityAgent;
+pub use drivers::claude::ClaudeAgent;
+pub use drivers::cline::ClineAgent;
+pub use drivers::codex::CodexAgent;
+pub use drivers::copilot::CopilotAgent;
+pub use drivers::cursor::CursorAgent;
+pub use drivers::fake::FakeAgent;
+pub use drivers::gemini::GeminiAgent;
 pub use drivers::generic::GenericAgent;
-pub use drivers::grok::{GrokAgent, GrokSettings};
-pub use drivers::hermes::{HermesAgent, HermesSettings};
+pub use drivers::grok::GrokAgent;
+pub use drivers::hermes::HermesAgent;
 pub use drivers::noop::NoopAgent;
-pub use drivers::opencode::{OpenCodeAgent, OpenCodeSettings};
+pub use drivers::opencode::OpenCodeAgent;
 pub use error::AgentError;
 pub use inner::{Agent, AgentRunContext, run_with_timeout};
 pub use mode::AgentMode;

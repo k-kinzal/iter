@@ -36,16 +36,17 @@
 //!
 //! # Construction
 //!
-//! [`ClaudeAgent`] exposes no defaults. Every field on [`ClaudeSettings`]
-//! is required because the value is a project-shaped decision (binary
-//! location, run mode, extra flags) iter cannot honestly pick on behalf
-//! of the operator. Call [`ClaudeAgent::new`] with a fully-populated
-//! settings struct. See [`ClaudeSettings`] for field-by-field semantics.
+//! [`ClaudeAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision (binary location, run mode, extra
+//! flags) iter cannot honestly pick on behalf of the operator. The agent is
+//! constructed directly from its fields; there is no separate settings
+//! struct.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -81,31 +82,6 @@ impl From<ClaudeCodeError> for AgentError {
             },
         }
     }
-}
-
-/// Fully-specified configuration for [`ClaudeAgent`].
-///
-/// Every field is required; there is no `Default` impl because every value
-/// is a project-shaped decision the Iterfile must spell out explicitly.
-#[derive(Debug, Clone)]
-pub struct ClaudeSettings {
-    /// Binary name or absolute path passed to
-    /// [`tokio::process::Command::new`]. Name-only strings are resolved
-    /// via `PATH`.
-    pub command: String,
-    /// Print vs. interactive mode. See [`AgentMode`].
-    pub mode: AgentMode,
-    /// Additional arguments appended after the built-in flags. Empty is
-    /// allowed and the common case; omit the knob entirely is not —
-    /// the field is required so callers always mean it.
-    pub args: Vec<String>,
-    /// Optional path (relative to the workspace cwd, unless absolute) of a
-    /// file that stores a stable Claude Code session id across iterations.
-    /// Genuinely optional: `None` means "no session persistence", `Some`
-    /// means "persist the session id at this path".
-    pub session_id_file: Option<PathBuf>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
 }
 
 /// Claude Code agent configuration.
@@ -149,26 +125,6 @@ fn home_subpath(leaf: &str) -> Option<PathBuf> {
 }
 
 impl ClaudeAgent {
-    /// Build a fully-specified Claude Code agent. Every knob must be
-    /// decided by the caller; iter provides no implicit defaults.
-    #[must_use]
-    pub fn new(settings: ClaudeSettings) -> Self {
-        let ClaudeSettings {
-            command,
-            mode,
-            args,
-            session_id_file,
-            env,
-        } = settings;
-        Self {
-            command,
-            mode,
-            args,
-            session_id_file,
-            env,
-        }
-    }
-
     /// Resolved on-disk location of the configured binary, or `None` when
     /// nothing on `$PATH` or the supplied path matches an existing file.
     ///
@@ -255,7 +211,12 @@ impl ClaudeAgent {
     }
 }
 
+#[async_trait]
 impl Agent for ClaudeAgent {
+    fn name(&self) -> &'static str {
+        "claude"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -378,8 +339,8 @@ mod tests {
     use tempfile::TempDir;
     use tokio::fs;
 
-    fn settings(command: impl Into<String>, mode: AgentMode) -> ClaudeSettings {
-        ClaudeSettings {
+    fn claude_agent(command: impl Into<String>, mode: AgentMode) -> ClaudeAgent {
+        ClaudeAgent {
             command: command.into(),
             mode,
             args: Vec::new(),
@@ -398,7 +359,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn print_mode_passes_through_flag_and_stdin() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = claude_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("hello-claude");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -411,7 +372,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn print_mode_emits_output_format_json_and_bypass_permissions() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = claude_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -427,9 +388,9 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     async fn print_mode_env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$ITER_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"s\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = claude_agent(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("ITER_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = ClaudeAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -439,9 +400,9 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded_after_print_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = claude_agent(bin.to_string_lossy(), AgentMode::Print);
         s.args = vec!["--model".into(), "opus".into()];
-        let agent = ClaudeAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -486,7 +447,7 @@ exit 0
         .await
         .expect("write settings");
 
-        let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = claude_agent(bin.to_string_lossy(), AgentMode::Interactive);
 
         let prompt = Prompt::from("go");
         // The fake either exits 0 (`Ok`) or is SIGKILLed by the hook
@@ -521,7 +482,7 @@ exit 0
 "#;
         let (_guard, bin) = fake_binary_script(script);
         let tmp = TempDir::new().expect("tmp");
-        let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = claude_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("go");
         let _report = agent.run(ctx(tmp.path(), &prompt)).await;
         let argv = fs::read_to_string(tmp.path().join(".iter-argv.log"))
@@ -537,7 +498,7 @@ exit 0
         // Fake claude that exits nonzero without touching the hook.
         let (_guard, bin) = fake_binary_script("exit 7");
         let tmp = TempDir::new().expect("tmp");
-        let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = claude_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("x");
         let result = agent.run(ctx(tmp.path(), &prompt)).await;
 
@@ -562,7 +523,7 @@ exit 0
     async fn print_mode_without_session_id_file_emits_no_session_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
-        let agent = ClaudeAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = claude_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -587,9 +548,9 @@ exit 0
     async fn print_mode_generates_and_writes_session_id_on_first_run() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = claude_agent(bin.to_string_lossy(), AgentMode::Print);
         s.session_id_file = Some(PathBuf::from(".iter/session-id"));
-        let agent = ClaudeAgent::new(s);
+        let agent = s;
 
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
@@ -617,14 +578,14 @@ exit 0
             .await
             .expect("seed session id");
 
-        let mut s = settings("placeholder", AgentMode::Print);
+        let mut s = claude_agent("placeholder", AgentMode::Print);
         s.session_id_file = Some(PathBuf::from(".iter/session-id"));
 
         let prompt = Prompt::from("x");
         for _ in 0..2 {
             let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
             s.command = bin.to_string_lossy().into_owned();
-            let agent = ClaudeAgent::new(s.clone());
+            let agent = s.clone();
             let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
             agent.run(ctx).await.expect("run ok");
             assert_eq!(

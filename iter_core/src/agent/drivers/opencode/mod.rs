@@ -17,11 +17,12 @@
 //!
 //! # Construction
 //!
-//! [`OpenCodeAgent`] exposes no defaults. Every field on
-//! [`OpenCodeSettings`] is required because the value is a project-shaped
-//! decision iter cannot honestly pick on the operator's behalf.
+//! [`OpenCodeAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use crate::{Agent, AgentRun, AgentRunContext};
+use async_trait::async_trait;
 
 use crate::agent::AgentError;
 use crate::agent::process::{
@@ -48,18 +49,6 @@ impl From<OpenCodeError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`OpenCodeAgent`].
-#[derive(Debug, Clone)]
-pub struct OpenCodeSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Additional arguments inserted between the `run` subcommand and the
-    /// managed `--format json` flag. Empty is allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// `OpenCode` CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct OpenCodeAgent {
@@ -73,13 +62,6 @@ pub struct OpenCodeAgent {
 }
 
 impl OpenCodeAgent {
-    /// Build a fully-specified `OpenCode` agent.
-    #[must_use]
-    pub fn new(settings: OpenCodeSettings) -> Self {
-        let OpenCodeSettings { command, args, env } = settings;
-        Self { command, args, env }
-    }
-
     /// Resolved on-disk location of the configured binary, or `None` when
     /// nothing on `$PATH` or the supplied path matches an existing file.
     #[must_use]
@@ -88,7 +70,12 @@ impl OpenCodeAgent {
     }
 }
 
+#[async_trait]
 impl Agent for OpenCodeAgent {
+    fn name(&self) -> &'static str {
+        "opencode"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -138,8 +125,8 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
 
-    fn settings(command: impl Into<String>) -> OpenCodeSettings {
-        OpenCodeSettings {
+    fn opencode_agent(command: impl Into<String>) -> OpenCodeAgent {
+        OpenCodeAgent {
             command: command.into(),
             args: Vec::new(),
             env: Vec::new(),
@@ -155,7 +142,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
     #[tokio::test]
     async fn passes_run_subcommand_and_inline_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = OpenCodeAgent::new(settings(bin.to_string_lossy()));
+        let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("hello-opencode");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -169,7 +156,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
     #[tokio::test]
     async fn requests_json_format() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = OpenCodeAgent::new(settings(bin.to_string_lossy()));
+        let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -182,9 +169,9 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
     #[tokio::test]
     async fn extra_args_are_forwarded_before_format_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = opencode_agent(bin.to_string_lossy());
         s.args = vec!["--model".into(), "sonnet".into()];
-        let agent = OpenCodeAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -198,9 +185,9 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
     async fn env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$OPENCODE_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"session\",\"id\":\"s\",\"status\":\"idle\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = opencode_agent(bin.to_string_lossy());
         s.env = vec![("OPENCODE_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = OpenCodeAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -213,7 +200,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
             "printf '%s' \"$OTEL_RESOURCE_ATTRIBUTES\" 1>&2\nprintf '%s' '{\"type\":\"session\",\"id\":\"s\",\"status\":\"idle\"}'",
         );
         let tmp = TempDir::new().expect("tmp");
-        let agent = OpenCodeAgent::new(settings(bin.to_string_lossy()));
+        let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -231,7 +218,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
         // `OpenCode` exits 0 even on failure — the error event is authoritative.
         let script = r#"printf '%s' '{"type":"session.error","error":{"message":"auth failed"}}'"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = OpenCodeAgent::new(settings(bin.to_string_lossy()));
+        let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("must fail");
@@ -245,7 +232,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
     async fn token_limit_error_event_maps_to_token_limit() {
         let script = r#"printf '%s' '{"type":"session.error","error":{"message":"context window exceeded"}}'"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = OpenCodeAgent::new(settings(bin.to_string_lossy()));
+        let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("must fail");

@@ -56,14 +56,15 @@
 //!
 //! # Construction
 //!
-//! [`CodexAgent`] exposes no defaults. Every field on [`CodexSettings`]
-//! is required because the value is a project-shaped decision iter
-//! cannot honestly pick on the operator's behalf.
+//! [`CodexAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use std::path::Path;
 use std::process::Stdio;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
@@ -112,25 +113,6 @@ impl From<CodexError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`CodexAgent`].
-///
-/// Every field is required; there is no `Default` impl because every
-/// value is a project-shaped decision the Iterfile must spell out
-/// explicitly.
-#[derive(Debug, Clone)]
-pub struct CodexSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Print vs. interactive mode.
-    pub mode: AgentMode,
-    /// Additional arguments inserted between the `exec` subcommand (or,
-    /// in interactive mode, between the `-c` feature flag pair) and the
-    /// positional prompt. Empty is allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// `OpenAI` Codex agent configuration.
 #[derive(Debug, Clone)]
 pub struct CodexAgent {
@@ -147,24 +129,6 @@ pub struct CodexAgent {
 }
 
 impl CodexAgent {
-    /// Build a fully-specified Codex agent. Every knob must be decided
-    /// by the caller; iter provides no implicit defaults.
-    #[must_use]
-    pub fn new(settings: CodexSettings) -> Self {
-        let CodexSettings {
-            command,
-            mode,
-            args,
-            env,
-        } = settings;
-        Self {
-            command,
-            mode,
-            args,
-            env,
-        }
-    }
-
     /// Build the interactive-mode command. Passes the Codex hooks
     /// feature flag via `-c` so the installed Stop hook actually fires,
     /// then any user-supplied extras, then the prompt as the final
@@ -182,7 +146,12 @@ impl CodexAgent {
     }
 }
 
+#[async_trait]
 impl Agent for CodexAgent {
+    fn name(&self) -> &'static str {
+        "codex"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -286,8 +255,8 @@ mod tests {
     use tempfile::TempDir;
     use tokio::fs;
 
-    fn settings(command: impl Into<String>, mode: AgentMode) -> CodexSettings {
-        CodexSettings {
+    fn codex_agent(command: impl Into<String>, mode: AgentMode) -> CodexAgent {
+        CodexAgent {
             command: command.into(),
             mode,
             args: Vec::new(),
@@ -306,7 +275,7 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
     #[tokio::test]
     async fn print_mode_passes_subcommand_and_inline_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("hello-codex");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -321,9 +290,9 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded_before_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = codex_agent(bin.to_string_lossy(), AgentMode::Print);
         s.args = vec!["--model".into(), "o1".into()];
-        let agent = CodexAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("the-prompt");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -346,9 +315,9 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
     async fn print_mode_env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$CODEX_TEST_ENV_VAR\" 1>&2\nprintf '%s\\n' '{\"type\":\"task_complete\",\"status\":\"completed\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = codex_agent(bin.to_string_lossy(), AgentMode::Print);
         s.env = vec![("CODEX_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = CodexAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -360,7 +329,7 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
         let script = r#"printf '%s\n' '{"type":"task_complete","status":"failed"}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -378,7 +347,7 @@ exit 1"#;
 printf '%s\n' '{"type":"task_complete","status":"failed"}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -390,7 +359,7 @@ exit 1"#;
     #[tokio::test]
     async fn print_mode_bad_args_exit_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("printf 'bad\\n' 1>&2\nexit 2");
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Print));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -424,7 +393,7 @@ exit 0
             .await
             .expect("write hooks.json");
 
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("go");
         // The fake either exits 0 (`Ok`) or is SIGKILLed by the hook
         // (`Err(TerminatedBySignal)`); the run result is racy and not what
@@ -452,7 +421,7 @@ exit 0
         // Fake codex that exits 0 without touching the hook.
         let (_guard, bin) = fake_binary_script("exit 0");
         let tmp = TempDir::new().expect("tmp");
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Interactive);
         // A clean exit with no hook fired → an empty `AgentRun` and the hook
         // bundle is torn down regardless.
         let prompt = Prompt::from("probe");
@@ -472,7 +441,7 @@ exit 0
         // Fake codex that exits nonzero without touching the hook.
         let (_guard, bin) = fake_binary_script("exit 7");
         let tmp = TempDir::new().expect("tmp");
-        let agent = CodexAgent::new(settings(bin.to_string_lossy(), AgentMode::Interactive));
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Interactive);
         let prompt = Prompt::from("x");
         let result = agent.run(ctx(tmp.path(), &prompt)).await;
 
@@ -494,9 +463,9 @@ exit 0
         // Unit-level assertion over the argv shape (run_command is not
         // involved here). We only inspect the Command's debug output
         // which includes argv in stable order.
-        let mut s = settings("codex", AgentMode::Interactive);
+        let mut s = codex_agent("codex", AgentMode::Interactive);
         s.args = vec!["--model".into(), "gpt-5".into()];
-        let agent = CodexAgent::new(s);
+        let agent = s;
         let cmd = agent.build_interactive_command(Path::new("."), &Prompt::from("the-prompt"));
         let dbg = format!("{cmd:?}");
         // Ordering: `-c` before the flag, feature flag before extras,

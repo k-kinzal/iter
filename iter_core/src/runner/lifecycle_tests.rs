@@ -142,6 +142,7 @@ impl Workspace for TransientWorkspace {
 #[derive(Default)]
 struct StubAgent;
 
+#[async_trait]
 impl Agent for StubAgent {
     async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Ok(AgentRun::empty())
@@ -154,6 +155,7 @@ impl Agent for StubAgent {
 /// events are suppressed for the failing iteration.
 struct FailingAgent;
 
+#[async_trait]
 impl Agent for FailingAgent {
     async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Err(crate::agent::AgentError::Cancelled)
@@ -194,6 +196,7 @@ struct SluggishCleanupAgent {
     post_cancel_sleep: Duration,
 }
 
+#[async_trait]
 impl Agent for SluggishCleanupAgent {
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         ctx.cancel.cancelled().await;
@@ -205,6 +208,7 @@ impl Agent for SluggishCleanupAgent {
     }
 }
 
+#[async_trait]
 impl Agent for SleepyAgent {
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         tokio::select! {
@@ -321,10 +325,10 @@ async fn once_path_emits_runner_starting_and_finished_exactly_once() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -363,10 +367,10 @@ async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
     // Pre-cancel so the runner short-circuits on the first
     // `cancel.is_cancelled()` check at the top of the loop.
     cancel.cancel();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: false,
@@ -401,10 +405,10 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
     // takes the QueueDrained exit branch.
     Queue::close(queue.as_ref()).await.unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: false,
@@ -446,10 +450,10 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: false,
@@ -499,10 +503,10 @@ async fn error_path_carries_handler_counts_in_exit_error() {
         calls: Arc::clone(&calls),
     };
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: false,
@@ -574,10 +578,10 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
         .unwrap();
     let handler = CapturingIterHandler::default();
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: false,
@@ -666,10 +670,10 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
         events: Arc::clone(&events_buf),
         calls: Arc::clone(&calls),
     };
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -705,10 +709,10 @@ async fn iteration_timeout_kills_long_running_agent() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<SleepyAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(SleepyAgent::new(Duration::from_secs(60)))
+        .agent(Box::new(SleepyAgent::new(Duration::from_secs(60))))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -754,10 +758,10 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -808,10 +812,10 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<SleepyAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(SleepyAgent::new(Duration::from_secs(60)))
+        .agent(Box::new(SleepyAgent::new(Duration::from_secs(60))))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -859,10 +863,10 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<SleepyAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(agent)
+        .agent(Box::new(agent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -901,14 +905,14 @@ async fn iteration_timeout_drain_yields_to_parent_cancel() {
         .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
-    let runner = Runner::<SluggishCleanupAgent>::builder()
+    let runner = Runner::builder()
             .queue(Arc::clone(&queue))
             .workspaces(make_provider())
             // Outlast DRAIN_GRACE comfortably so the only way the test
             // returns quickly is via the parent-cancel arm.
-            .agent(SluggishCleanupAgent {
+            .agent(Box::new(SluggishCleanupAgent {
                 post_cancel_sleep: Duration::from_secs(60),
-            })
+            }))
             .prompt_template(PromptTemplate::new("hello").unwrap())
             .config(RunnerConfig {
                 once: true,
@@ -964,10 +968,10 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FailingAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(FailingAgent)
+        .agent(Box::new(FailingAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -1049,10 +1053,10 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, teardown_calls) = make_failing_setup_provider();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -1136,10 +1140,10 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<FailingAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
-        .agent(FailingAgent)
+        .agent(Box::new(FailingAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -1230,10 +1234,10 @@ impl Queue for FailingQueue {
 async fn dequeue_failure_without_continue_on_error_exits_with_error() {
     let queue: Arc<dyn Queue> = Arc::new(FailingQueue::new(1));
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: false,
@@ -1290,10 +1294,10 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,
@@ -1340,10 +1344,10 @@ async fn terminate_signal_stops_runner_gracefully() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig::default())
         .on_all(handler.clone())
@@ -1378,10 +1382,10 @@ async fn work_signals_before_terminate_are_all_processed() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig::default())
         .on_all(handler.clone())
@@ -1410,10 +1414,10 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<StubAgent>::builder()
+    let runner = Runner::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
-        .agent(StubAgent)
+        .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerConfig {
             once: true,

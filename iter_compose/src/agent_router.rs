@@ -1,9 +1,11 @@
 //! `AgentRouter` — conditional agent dispatch per iteration.
 //!
-//! The router lives in `iter_compose` (not `iter_core`) because it holds
-//! `Vec<AnyAgent>` — heterogeneous concrete agents that only exist at the
-//! compose level where `AnyAgent` is defined. `iter_core` stays generic
-//! over `A: Agent` and has no knowledge of routing.
+//! The router is itself an [`Agent`]: it composes named sub-agents
+//! (`Vec<(String, Box<dyn Agent>)>`) and dispatches to one of them each
+//! iteration according to a [`RoutingStrategy`]. The named-pair enumeration is
+//! load-bearing — it backs routing and is kept un-flattened (never a bare
+//! `Vec<Box<dyn Agent>>`) so each sub-agent stays individually addressable for
+//! sandbox-profile introspection by name.
 //!
 //! # Limitations
 //!
@@ -14,14 +16,11 @@
 //! the router treats as a normal completion). Detection for additional
 //! drivers can be added incrementally in their respective modules.
 
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use async_trait::async_trait;
 use iter_core::agent::{AgentError, AgentRun};
 use iter_core::{Agent, AgentRunContext};
-
-use crate::AnyAgent;
 
 /// Strategy governing how the router selects an agent each iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,17 +33,24 @@ pub enum RoutingStrategy {
 
 /// A meta-agent that dispatches to one of several underlying agents based
 /// on a [`RoutingStrategy`].
-#[derive(Debug)]
 pub struct AgentRouter {
-    agents: Vec<(String, AnyAgent)>,
+    agents: Vec<(String, Box<dyn Agent>)>,
     strategy: RoutingStrategy,
     state: AtomicUsize,
 }
 
 impl AgentRouter {
     /// The named sub-agents this router dispatches to.
+    ///
+    /// Exposed as an object-safe `&[(String, Box<dyn Agent>)]`. The named-pair
+    /// enumeration backs routing and is deliberately kept un-flattened so each
+    /// sub-agent remains individually addressable for sandbox-profile
+    /// introspection by name. (Compose currently keys the sandbox merge off
+    /// the [`AgentDef`](iter_language::AgentDef) router definition, but the
+    /// runtime enumeration is preserved for callers that introspect a built
+    /// router.)
     #[must_use]
-    pub fn agents(&self) -> &[(String, AnyAgent)] {
+    pub fn agents(&self) -> &[(String, Box<dyn Agent>)] {
         &self.agents
     }
 
@@ -54,7 +60,7 @@ impl AgentRouter {
     ///
     /// Panics if `agents` is empty.
     #[must_use]
-    pub fn new(agents: Vec<(String, AnyAgent)>, strategy: RoutingStrategy) -> Self {
+    pub fn new(agents: Vec<(String, Box<dyn Agent>)>, strategy: RoutingStrategy) -> Self {
         assert!(
             !agents.is_empty(),
             "AgentRouter requires at least one agent"
@@ -64,22 +70,6 @@ impl AgentRouter {
             strategy,
             state: AtomicUsize::new(0),
         }
-    }
-
-    /// Run the router for one iteration.
-    ///
-    /// Returns a boxed future to break the recursive async type cycle
-    /// (`AnyAgent::run → AgentRouter::run → AnyAgent::run`).
-    pub fn run<'a>(
-        &'a self,
-        ctx: AgentRunContext<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<AgentRun, AgentError>> + Send + 'a>> {
-        Box::pin(async move {
-            match self.strategy {
-                RoutingStrategy::Fallback => self.run_fallback(ctx).await,
-                RoutingStrategy::Rotate => self.run_rotate(ctx).await,
-            }
-        })
     }
 
     /// Fallback triggers only on `AgentError::TokenLimit`. Any other failure
@@ -125,12 +115,16 @@ impl AgentRouter {
     }
 }
 
-impl Clone for AgentRouter {
-    fn clone(&self) -> Self {
-        Self {
-            agents: self.agents.clone(),
-            strategy: self.strategy,
-            state: AtomicUsize::new(self.state.load(Ordering::Relaxed)),
+#[async_trait]
+impl Agent for AgentRouter {
+    fn name(&self) -> &'static str {
+        "router"
+    }
+
+    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+        match self.strategy {
+            RoutingStrategy::Fallback => self.run_fallback(ctx).await,
+            RoutingStrategy::Rotate => self.run_rotate(ctx).await,
         }
     }
 }
@@ -139,7 +133,7 @@ impl Clone for AgentRouter {
 mod tests {
     use super::*;
     use iter_core::Prompt;
-    use iter_core::agent::{AgentMode, ClaudeAgent, ClaudeSettings, GenericAgent};
+    use iter_core::agent::{AgentMode, ClaudeAgent, GenericAgent};
     use iter_core::signal::SignalId;
     use std::io::Write;
     use std::path::Path;
@@ -152,6 +146,10 @@ mod tests {
             CancellationToken::new(),
             SignalId::new(),
         )
+    }
+
+    fn generic(argv: Vec<String>) -> Box<dyn Agent> {
+        Box::new(GenericAgent::new(argv))
     }
 
     fn token_limit_script(dir: &Path) -> std::path::PathBuf {
@@ -170,27 +168,21 @@ mod tests {
         path
     }
 
-    fn token_limit_agent(script: &Path) -> AnyAgent {
-        AnyAgent::Claude(ClaudeAgent::new(ClaudeSettings {
+    fn token_limit_agent(script: &Path) -> Box<dyn Agent> {
+        Box::new(ClaudeAgent {
             command: script.to_str().unwrap().to_string(),
             mode: AgentMode::Print,
             args: Vec::new(),
             session_id_file: None,
             env: Vec::new(),
-        }))
+        })
     }
 
     #[tokio::test]
     async fn rotate_cycles_through_agents() {
         let agents = vec![
-            (
-                "a".into(),
-                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
-            ),
-            (
-                "b".into(),
-                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
-            ),
+            ("a".into(), generic(vec!["true".into()])),
+            ("b".into(), generic(vec!["true".into()])),
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Rotate);
         let prompt = Prompt::from("x");
@@ -204,14 +196,8 @@ mod tests {
     #[tokio::test]
     async fn fallback_returns_first_success() {
         let agents = vec![
-            (
-                "a".into(),
-                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
-            ),
-            (
-                "b".into(),
-                AnyAgent::Generic(GenericAgent::new(vec!["false".into()])),
-            ),
+            ("a".into(), generic(vec!["true".into()])),
+            ("b".into(), generic(vec!["false".into()])),
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");
@@ -221,11 +207,8 @@ mod tests {
     #[tokio::test]
     async fn fallback_propagates_non_token_limit_errors() {
         let agents = vec![
-            ("a".into(), AnyAgent::Generic(GenericAgent::new(vec![]))),
-            (
-                "b".into(),
-                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
-            ),
+            ("a".into(), generic(vec![])),
+            ("b".into(), generic(vec!["true".into()])),
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");
@@ -238,7 +221,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let script = token_limit_script(tmp.path());
         let agent_a = token_limit_agent(&script);
-        let agent_b = AnyAgent::Generic(GenericAgent::new(vec!["true".into()]));
+        let agent_b = generic(vec!["true".into()]);
 
         let agents = vec![("a".into(), agent_a), ("b".into(), agent_b)];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);

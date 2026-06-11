@@ -21,7 +21,7 @@
 //!   waiting for an approval that can never arrive. It is emitted before
 //!   user `args` so a caller can still append their own `--permission-mode`
 //!   downstream if a future CLI revision prefers it.
-//! * `-s/--session-id <ID>` is emitted only when [`GrokSettings::session_id_file`]
+//! * `-s/--session-id <ID>` is emitted only when [`GrokAgent::session_id_file`]
 //!   is set. Grok's `-s` flag *creates or resumes* a named headless session,
 //!   so passing the same id across iterations gives the agent continuous
 //!   context — the narrowest exploration mode (see the field docs).
@@ -38,13 +38,14 @@
 //!
 //! # Construction
 //!
-//! [`GrokAgent`] exposes no defaults. Every field on [`GrokSettings`] is
-//! required because the value is a project-shaped decision iter cannot
-//! honestly pick on the operator's behalf.
+//! [`GrokAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use std::path::PathBuf;
 
 use crate::{Agent, AgentRun, AgentRunContext};
+use async_trait::async_trait;
 
 mod command;
 
@@ -72,28 +73,6 @@ impl From<GrokError> for AgentError {
             },
         }
     }
-}
-
-/// Fully-specified configuration for [`GrokAgent`].
-///
-/// Every field is required; there is no `Default` impl because every value
-/// is a project-shaped decision the Iterfile must spell out explicitly.
-#[derive(Debug, Clone)]
-pub struct GrokSettings {
-    /// Binary name or absolute path passed to
-    /// [`tokio::process::Command::new`]. Name-only strings are resolved
-    /// via `PATH`.
-    pub command: String,
-    /// Additional arguments appended after the iter-managed headless flags.
-    /// Empty is allowed and the common case.
-    pub args: Vec<String>,
-    /// Optional path (relative to the workspace cwd, unless absolute) of a
-    /// file that stores a stable Grok session id across iterations.
-    /// `None` means "no session persistence"; `Some` means "persist the
-    /// session id at this path".
-    pub session_id_file: Option<PathBuf>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
 }
 
 /// Grok Build CLI agent configuration.
@@ -134,24 +113,6 @@ fn home_subpath(leaf: &str) -> Option<PathBuf> {
 }
 
 impl GrokAgent {
-    /// Build a fully-specified Grok Build agent. Every knob must be decided
-    /// by the caller; iter provides no implicit defaults.
-    #[must_use]
-    pub fn new(settings: GrokSettings) -> Self {
-        let GrokSettings {
-            command,
-            args,
-            session_id_file,
-            env,
-        } = settings;
-        Self {
-            command,
-            args,
-            session_id_file,
-            env,
-        }
-    }
-
     /// Resolved on-disk location of the configured binary, or `None` when
     /// nothing on `$PATH` or the supplied path matches an existing file.
     ///
@@ -187,7 +148,12 @@ impl GrokAgent {
     }
 }
 
+#[async_trait]
 impl Agent for GrokAgent {
+    fn name(&self) -> &'static str {
+        "grok"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -243,8 +209,8 @@ mod tests {
     use tempfile::TempDir;
     use tokio::fs;
 
-    fn settings(command: impl Into<String>) -> GrokSettings {
-        GrokSettings {
+    fn grok_agent(command: impl Into<String>) -> GrokAgent {
+        GrokAgent {
             command: command.into(),
             args: Vec::new(),
             session_id_file: None,
@@ -262,7 +228,7 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
     #[tokio::test]
     async fn headless_passes_prompt_as_value_of_p_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = GrokAgent::new(settings(bin.to_string_lossy()));
+        let agent = grok_agent(bin.to_string_lossy());
         let prompt = Prompt::from("hello-grok");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -277,7 +243,7 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
     #[tokio::test]
     async fn headless_emits_always_approve_and_json_format() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = GrokAgent::new(settings(bin.to_string_lossy()));
+        let agent = grok_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -294,9 +260,9 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
     #[tokio::test]
     async fn extra_args_are_forwarded_after_managed_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = grok_agent(bin.to_string_lossy());
         s.args = vec!["--model".into(), "grok-2".into()];
-        let agent = GrokAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -312,9 +278,9 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
         let script =
             "printf 'ENV=%s\\n' \"$GROK_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"sessionId\":\"s\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = grok_agent(bin.to_string_lossy());
         s.env = vec![("GROK_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = GrokAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -329,7 +295,7 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
     async fn without_session_id_file_emits_no_session_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
-        let agent = GrokAgent::new(settings(bin.to_string_lossy()));
+        let agent = grok_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -354,9 +320,9 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
     async fn generates_and_writes_session_id_on_first_run() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = grok_agent(bin.to_string_lossy());
         s.session_id_file = Some(PathBuf::from(".iter/session-id"));
-        let agent = GrokAgent::new(s);
+        let agent = s;
 
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
@@ -384,14 +350,14 @@ printf '%s' '{"sessionId":"sess-x","response":"ok","finishReason":"stop"}'"#;
             .await
             .expect("seed session id");
 
-        let mut s = settings("placeholder");
+        let mut s = grok_agent("placeholder");
         s.session_id_file = Some(PathBuf::from(".iter/session-id"));
 
         let prompt = Prompt::from("x");
         for _ in 0..2 {
             let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
             s.command = bin.to_string_lossy().into_owned();
-            let agent = GrokAgent::new(s.clone());
+            let agent = s.clone();
             let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
             agent.run(ctx).await.expect("run ok");
             assert_eq!(

@@ -91,16 +91,15 @@ pub fn grok(agent: &GrokAgent) -> SandboxRequirements {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::GrokSettings;
     use tempfile::TempDir;
 
     fn agent(command: impl Into<String>) -> GrokAgent {
-        GrokAgent::new(GrokSettings {
+        GrokAgent {
             command: command.into(),
             args: Vec::new(),
             session_id_file: None,
             env: Vec::new(),
-        })
+        }
     }
 
     #[test]

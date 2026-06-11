@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use async_trait::async_trait;
 use tokio::process::Command;
 
 use crate::agent::AgentError;
@@ -101,7 +102,12 @@ impl GenericAgent {
     }
 }
 
+#[async_trait]
 impl Agent for GenericAgent {
+    fn name(&self) -> &'static str {
+        "generic"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let command = self.build_command(ctx.workspace_path, ctx.prompt)?;
         let delivery = if self.stdin_prompt {

@@ -25,7 +25,6 @@ use iter_language::{Diagnostic, Iterfile, parse};
 use thiserror::Error;
 use tracing::{error, info};
 
-use crate::agent::AnyAgent;
 use crate::arg::{ArgError, resolve_args};
 use crate::assembly::{self, AssemblyError};
 use crate::compose::{ComposeError, build_single_service, load_compose};
@@ -312,7 +311,7 @@ fn build_iterfile_builder(
     arg_overrides: &BTreeMap<String, String>,
 ) -> Result<
     (
-        iter_core::RunnerBuilder<AnyAgent>,
+        iter_core::RunnerBuilder,
         PathBuf,
     ),
     IterfileError,
@@ -357,7 +356,7 @@ fn build_compose_service_builder(
     once: bool,
 ) -> Result<
     (
-        iter_core::RunnerBuilder<AnyAgent>,
+        iter_core::RunnerBuilder,
         PathBuf,
     ),
     IterfileError,

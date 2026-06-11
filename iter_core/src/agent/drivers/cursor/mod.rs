@@ -24,11 +24,12 @@
 //!
 //! # Construction
 //!
-//! [`CursorAgent`] exposes no defaults. Every field on [`CursorSettings`] is
-//! required because the value is a project-shaped decision iter cannot
-//! honestly pick on the operator's behalf.
+//! [`CursorAgent`] exposes no defaults. Every field is required because the
+//! value is a project-shaped decision iter cannot honestly pick on the
+//! operator's behalf. The agent is constructed directly from its fields.
 
 use crate::{Agent, AgentRun, AgentRunContext};
+use async_trait::async_trait;
 
 mod command;
 
@@ -58,18 +59,6 @@ impl From<CursorError> for AgentError {
     }
 }
 
-/// Fully-specified configuration for [`CursorAgent`].
-#[derive(Debug, Clone)]
-pub struct CursorSettings {
-    /// Binary name or absolute path.
-    pub command: String,
-    /// Additional arguments appended after the built-in print flags. Empty is
-    /// allowed.
-    pub args: Vec<String>,
-    /// User-declared environment variables passed to the child process.
-    pub env: Vec<(String, String)>,
-}
-
 /// Cursor `cursor-agent` CLI agent configuration.
 #[derive(Debug, Clone)]
 pub struct CursorAgent {
@@ -82,13 +71,6 @@ pub struct CursorAgent {
 }
 
 impl CursorAgent {
-    /// Build a fully-specified Cursor agent.
-    #[must_use]
-    pub fn new(settings: CursorSettings) -> Self {
-        let CursorSettings { command, args, env } = settings;
-        Self { command, args, env }
-    }
-
     /// Resolved on-disk location of the configured binary, or `None` when
     /// nothing on `$PATH` or the supplied path matches an existing file.
     #[must_use]
@@ -97,7 +79,12 @@ impl CursorAgent {
     }
 }
 
+#[async_trait]
 impl Agent for CursorAgent {
+    fn name(&self) -> &'static str {
+        "cursor"
+    }
+
     async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
         let AgentRunContext {
             workspace_path,
@@ -142,8 +129,8 @@ mod tests {
     use crate::agent::testutil::{ctx_capturing, fake_binary_script};
     use std::path::Path;
 
-    fn settings(command: impl Into<String>) -> CursorSettings {
-        CursorSettings {
+    fn cursor_agent(command: impl Into<String>) -> CursorAgent {
+        CursorAgent {
             command: command.into(),
             args: Vec::new(),
             env: Vec::new(),
@@ -161,7 +148,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn passes_print_flag_and_stdin_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = CursorAgent::new(settings(bin.to_string_lossy()));
+        let agent = cursor_agent(bin.to_string_lossy());
         let prompt = Prompt::from("hello-cursor");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -174,7 +161,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn emits_output_format_json() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = CursorAgent::new(settings(bin.to_string_lossy()));
+        let agent = cursor_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -187,9 +174,9 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn extra_args_are_forwarded_after_print_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = cursor_agent(bin.to_string_lossy());
         s.args = vec!["--model".into(), "sonnet".into()];
-        let agent = CursorAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -204,9 +191,9 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     async fn env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$CURSOR_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"is_error\":false,\"session_id\":\"s\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = settings(bin.to_string_lossy());
+        let mut s = cursor_agent(bin.to_string_lossy());
         s.env = vec![("CURSOR_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = CursorAgent::new(s);
+        let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -218,7 +205,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         // Exits non-zero and emits no `result` record → Adapter maps the
         // Command's `NoResult` onto `AgentError::Failed`.
         let (_guard, bin) = fake_binary_script("printf 'boom\\n' 1>&2; exit 1");
-        let agent = CursorAgent::new(settings(bin.to_string_lossy()));
+        let agent = cursor_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent
@@ -234,7 +221,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn token_limit_maps_to_token_limit() {
         let (_guard, bin) = fake_binary_script("printf 'context window exceeded\\n' 1>&2; exit 1");
-        let agent = CursorAgent::new(settings(bin.to_string_lossy()));
+        let agent = cursor_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("token limit is an error");
@@ -244,7 +231,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
     #[tokio::test]
     async fn below_min_version_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("exit 2");
-        let agent = CursorAgent::new(settings(bin.to_string_lossy()));
+        let agent = cursor_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("exit 2 is an error");
