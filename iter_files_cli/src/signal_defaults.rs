@@ -1,26 +1,20 @@
-//! `--priority` and `--metadata` — the two flags that shape every
-//! signal this trigger publishes.
+//! `--priority` and `--metadata` — the two flags that shape every signal this
+//! trigger publishes: the operator (clap) surface for the core
+//! [`iter_core::signal::defaults`] helper.
 //!
 //! `--priority` is a closed enum mapped to [`iter_core::Priority`].
-//! `--metadata KEY=VALUE` accepts repeated entries and parses into a
-//! [`Metadata`] map (or a `Vec<(MetadataKey, String)>` when the caller
-//! needs the pairs directly).
+//! `--metadata KEY=VALUE` accepts repeated entries; the `KEY=VALUE` parsing
+//! lives in core ([`base_metadata`]/[`parse_metadata_pairs`]) so the five
+//! trigger binaries do not re-spell it.
 
 use clap::{Args, ValueEnum};
-use iter_core::{Metadata, MetadataKey, MetadataValue, Priority};
-use thiserror::Error;
+use iter_core::Priority;
+use iter_core::signal::defaults::{MetadataPairError, base_metadata, parse_metadata_pairs};
+use iter_core::{Metadata, MetadataKey};
 
 use crate::error::{IntoExitCode, exit_codes};
 
-#[derive(Debug, Error)]
-pub(crate) enum MetadataParseError {
-    #[error("--metadata expects KEY=VALUE, got `{0}`")]
-    MissingEquals(String),
-    #[error("invalid metadata key `{0}`")]
-    InvalidKey(String),
-}
-
-impl IntoExitCode for MetadataParseError {
+impl IntoExitCode for MetadataPairError {
     fn exit_code(&self) -> i32 {
         exit_codes::USER_INPUT
     }
@@ -47,7 +41,7 @@ impl PriorityArg {
 }
 
 #[derive(Debug, Args)]
-pub(crate) struct SignalShapeArgs {
+pub(crate) struct SignalDefaultsArgs {
     /// Priority assigned to every emitted signal.
     #[arg(long, value_enum, default_value_t = PriorityArg::Normal)]
     pub(crate) priority: PriorityArg,
@@ -58,7 +52,7 @@ pub(crate) struct SignalShapeArgs {
     pub(crate) metadata: Vec<String>,
 }
 
-impl SignalShapeArgs {
+impl SignalDefaultsArgs {
     #[allow(dead_code)]
     #[must_use]
     pub(crate) fn priority_value(&self) -> Priority {
@@ -66,27 +60,15 @@ impl SignalShapeArgs {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn base_metadata(&self) -> Result<Metadata, MetadataParseError> {
-        let mut out = Metadata::new();
-        for (key, value) in self.base_metadata_pairs()? {
-            out.insert(key, MetadataValue::String(value));
-        }
-        Ok(out)
+    pub(crate) fn base_metadata(&self) -> Result<Metadata, MetadataPairError> {
+        base_metadata(&self.metadata)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn base_metadata_pairs(
         &self,
-    ) -> Result<Vec<(MetadataKey, String)>, MetadataParseError> {
-        let mut out = Vec::with_capacity(self.metadata.len());
-        for entry in &self.metadata {
-            let (k, v) = entry
-                .split_once('=')
-                .ok_or_else(|| MetadataParseError::MissingEquals(entry.clone()))?;
-            let key =
-                MetadataKey::new(k).map_err(|_| MetadataParseError::InvalidKey(k.to_owned()))?;
-            out.push((key, v.to_owned()));
-        }
-        Ok(out)
+    ) -> Result<Vec<(MetadataKey, String)>, MetadataPairError> {
+        parse_metadata_pairs(&self.metadata)
     }
 }
 
@@ -94,11 +76,12 @@ impl SignalShapeArgs {
 mod tests {
     use super::*;
     use clap::Parser;
+    use iter_core::MetadataValue;
 
     #[derive(Debug, Parser)]
     struct Probe {
         #[command(flatten)]
-        args: SignalShapeArgs,
+        args: SignalDefaultsArgs,
     }
 
     #[test]
@@ -112,10 +95,7 @@ mod tests {
         ]);
         let meta = probe.args.base_metadata().expect("metadata");
         let key = MetadataKey::new("source").expect("key");
-        assert_eq!(
-            meta.get(&key),
-            Some(&MetadataValue::String("manual".into()))
-        );
+        assert_eq!(meta.get(&key), Some(&MetadataValue::String("manual".into())));
     }
 
     #[test]

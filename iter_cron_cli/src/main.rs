@@ -5,7 +5,7 @@
 //! SIGTERM (or until the `--max-signals` budget is exhausted).
 //!
 //! Trigger flags are decomposed across [`queue_source`], [`logging`],
-//! [`signal_shape`], [`termination`], and [`banner`]. Startup and
+//! [`signal_defaults`], [`termination`], and [`banner`]. Startup and
 //! shutdown banners go to stderr; stdout is reserved.
 
 #![deny(rust_2018_idioms)]
@@ -16,7 +16,7 @@ mod cron_trigger;
 mod error;
 mod logging;
 mod queue_source;
-mod signal_shape;
+mod signal_defaults;
 mod stream;
 mod termination;
 
@@ -25,9 +25,9 @@ use std::time::Duration;
 
 use crate::cron_trigger::{CronTrigger, CronTriggerError};
 use clap::Parser;
-use iter_core::Queue;
-use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, install_shutdown_handler};
+use iter_core::process::interrupt::install_signal_handlers;
+use iter_core::queue::BudgetedQueue;
+use iter_core::signal::defaults::MetadataPairError;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -36,7 +36,7 @@ use crate::banner::BannerArgs;
 use crate::error::{IntoExitCode, exit_codes, run_main};
 use crate::logging::LoggingArgs;
 use crate::queue_source::{QueueSourceArgs, QueueSourceError};
-use crate::signal_shape::{MetadataParseError, SignalShapeArgs};
+use crate::signal_defaults::SignalDefaultsArgs;
 use crate::stream::cli_eprintln;
 use crate::termination::TerminationArgs;
 
@@ -49,9 +49,9 @@ enum CronCliError {
     #[error(transparent)]
     QueueSource(#[from] QueueSourceError),
     #[error(transparent)]
-    Metadata(#[from] MetadataParseError),
-    #[error(transparent)]
-    Shutdown(#[from] ShutdownError),
+    Metadata(#[from] MetadataPairError),
+    #[error("installing interrupt handler: {0}")]
+    Shutdown(#[source] std::io::Error),
     #[error(transparent)]
     Cron(#[from] CronTriggerError<iter_core::queue::QueueError>),
 }
@@ -114,7 +114,7 @@ struct Args {
     logging: LoggingArgs,
 
     #[command(flatten)]
-    signal_shape: SignalShapeArgs,
+    signal_defaults: SignalDefaultsArgs,
 
     #[command(flatten)]
     termination: TerminationArgs,
@@ -139,9 +139,10 @@ async fn run() -> Result<(), CronCliError> {
     let args = Args::parse();
     let _telemetry_guard = args.logging.init();
 
-    let inner_queue = Arc::new(args.queue_source.resolve().await?);
-    let cancel = install_shutdown_handler(CancellationToken::new())?;
-    let queue = Arc::new(CountingQueue::new(
+    let inner_queue = args.queue_source.resolve().await?;
+    let cancel =
+        install_signal_handlers(CancellationToken::new()).map_err(CronCliError::Shutdown)?;
+    let queue = Arc::new(BudgetedQueue::new(
         inner_queue.clone(),
         args.termination.max_signals,
         cancel.clone(),
@@ -157,8 +158,8 @@ async fn run() -> Result<(), CronCliError> {
         );
     }
 
-    let metadata = args.signal_shape.base_metadata()?;
-    let priority = args.signal_shape.priority_value();
+    let metadata = args.signal_defaults.base_metadata()?;
+    let priority = args.signal_defaults.priority_value();
     let mut trigger = CronTrigger::new(queue.clone(), &args.schedule)?
         .with_base_metadata(metadata)
         .with_priority(priority)

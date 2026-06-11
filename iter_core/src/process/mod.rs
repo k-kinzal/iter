@@ -37,6 +37,7 @@ pub(crate) mod status_file;
 pub mod error;
 pub mod handle;
 pub mod id;
+pub mod interrupt;
 pub mod lifecycle;
 pub mod log;
 pub mod metadata;
@@ -60,6 +61,7 @@ pub use error::{
 };
 pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
+pub use interrupt::{Interrupt, install_signal_handlers};
 pub use log::{
     DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,
     install_global_log_sender, open_output,

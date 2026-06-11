@@ -4,9 +4,9 @@
 
 ## Overview
 
-Reads a queue declaration from `--config <Iterfile>` or `--queue-url`, parses
-`--schedule` as a cron expression (5-field standard or 6-field with seconds),
-and emits one signal per scheduled tick.
+Connects to a queue via `--queue-url`, parses `--schedule` as a cron
+expression (5-field standard or 6-field with seconds), and emits one signal
+per scheduled tick.
 
 Features:
 
@@ -21,7 +21,7 @@ stderr; stdout is reserved.
 
 ## Workspace dependencies
 
-`iter_trigger`, `iter_core`.
+`iter_core`.
 
 ## Non-dependencies (explicit)
 

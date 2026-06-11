@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 use iter_compose::iterfile::RunRecordMetadata;
 use iter_compose::{
     OrchestratorContext, ProjectLockError, ProjectMember, acquire_project_lock, build,
-    find_active_orchestrator, install_shutdown_handler, list_project_members, load_compose,
-    project_slug, run,
+    find_active_orchestrator, list_project_members, load_compose, project_slug, run,
 };
+use iter_core::process::interrupt::install_signal_handlers;
 use iter_core::process::{
     UnmanagedChild, current_identity, pid_in_process_table, signal_pid_kill, signal_pid_term,
     spawn_unmanaged_detached,
@@ -165,7 +165,8 @@ async fn run_compose_up_inline(args: ComposeUpArgs) -> Result<(), ComposeUpError
         current_identity().map_err(|e| ComposeUpError::OrchestratorIdentity(Box::new(e)))?;
     let orchestrator = OrchestratorContext { project, identity };
 
-    let cancel = install_shutdown_handler(CancellationToken::new())?;
+    let cancel =
+        install_signal_handlers(CancellationToken::new()).map_err(ComposeUpError::Signals)?;
     let policy = match args.on_failure {
         ComposeFailure::Abort => iter_compose::FailurePolicy::AbortAll,
         ComposeFailure::Continue => iter_compose::FailurePolicy::Continue,

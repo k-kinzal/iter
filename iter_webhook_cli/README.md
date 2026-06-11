@@ -18,7 +18,7 @@ Features:
 
 ## Workspace dependencies
 
-`iter_trigger`, `iter_core`.
+`iter_core`.
 
 ## Non-dependencies (explicit)
 

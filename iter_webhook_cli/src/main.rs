@@ -14,7 +14,7 @@ mod banner;
 mod error;
 mod logging;
 mod queue_source;
-mod signal_shape;
+mod signal_defaults;
 mod stream;
 mod termination;
 mod trigger_util;
@@ -28,9 +28,10 @@ use std::sync::Arc;
 
 use crate::webhook::{Subscription, WebhookConfig, WebhookTrigger, WebhookTriggerError};
 use clap::Parser;
-use iter_core::{Priority, Queue};
-use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, install_shutdown_handler};
+use iter_core::process::interrupt::install_signal_handlers;
+use iter_core::queue::BudgetedQueue;
+use iter_core::signal::defaults::MetadataPairError;
+use iter_core::Priority;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -39,7 +40,7 @@ use crate::banner::BannerArgs;
 use crate::error::{IntoExitCode, exit_codes, run_main};
 use crate::logging::LoggingArgs;
 use crate::queue_source::{QueueSourceArgs, QueueSourceError};
-use crate::signal_shape::{MetadataParseError, SignalShapeArgs};
+use crate::signal_defaults::SignalDefaultsArgs;
 use crate::stream::cli_eprintln;
 use crate::termination::TerminationArgs;
 
@@ -68,9 +69,9 @@ enum WebhookCliError {
     #[error(transparent)]
     QueueSource(#[from] QueueSourceError),
     #[error(transparent)]
-    Metadata(#[from] MetadataParseError),
-    #[error(transparent)]
-    Shutdown(#[from] ShutdownError),
+    Metadata(#[from] MetadataPairError),
+    #[error("installing interrupt handler: {0}")]
+    Shutdown(#[source] std::io::Error),
     #[error(transparent)]
     Webhook(#[from] WebhookTriggerError<iter_core::queue::QueueError>),
 }
@@ -155,7 +156,7 @@ struct Args {
     logging: LoggingArgs,
 
     #[command(flatten)]
-    signal_shape: SignalShapeArgs,
+    signal_defaults: SignalDefaultsArgs,
 
     #[command(flatten)]
     termination: TerminationArgs,
@@ -182,16 +183,17 @@ async fn run() -> Result<(), WebhookCliError> {
 
     let secret = resolve_secret(&args)?;
     let metadata_pairs: Vec<(String, String)> = args
-        .signal_shape
+        .signal_defaults
         .base_metadata_pairs()?
         .into_iter()
         .map(|(k, v)| (k.into(), v))
         .collect();
     let routes = parse_routes(&args.route, &metadata_pairs)?;
 
-    let inner_queue = Arc::new(args.queue_source.resolve().await?);
-    let cancel = install_shutdown_handler(CancellationToken::new())?;
-    let queue = Arc::new(CountingQueue::new(
+    let inner_queue = args.queue_source.resolve().await?;
+    let cancel =
+        install_signal_handlers(CancellationToken::new()).map_err(WebhookCliError::Shutdown)?;
+    let queue = Arc::new(BudgetedQueue::new(
         inner_queue.clone(),
         args.termination.max_signals,
         cancel.clone(),

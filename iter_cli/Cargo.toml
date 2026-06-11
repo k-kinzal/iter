@@ -28,7 +28,6 @@ tabwriter.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono = { workspace = true }
-percent-encoding.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

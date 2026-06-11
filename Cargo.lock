@@ -1934,7 +1934,6 @@ dependencies = [
  "iter_language",
  "iter_tracing",
  "nix",
- "percent-encoding",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1954,7 +1953,6 @@ dependencies = [
  "clap",
  "iter_core",
  "iter_tracing",
- "iter_trigger",
  "nix",
  "regex",
  "serde",
@@ -2047,7 +2045,6 @@ dependencies = [
  "cron",
  "iter_core",
  "iter_tracing",
- "iter_trigger",
  "nix",
  "rand 0.8.6",
  "serde_json",
@@ -2066,7 +2063,6 @@ dependencies = [
  "clap",
  "iter_core",
  "iter_tracing",
- "iter_trigger",
  "serde",
  "serde_json",
  "tempfile",
@@ -2106,21 +2102,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iter_trigger"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "iter_core",
- "percent-encoding",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
 name = "iter_watch_cli"
 version = "0.1.0"
 dependencies = [
@@ -2129,7 +2110,6 @@ dependencies = [
  "globset",
  "iter_core",
  "iter_tracing",
- "iter_trigger",
  "notify",
  "serde",
  "serde_json",
@@ -2152,7 +2132,6 @@ dependencies = [
  "http-body-util",
  "iter_core",
  "iter_tracing",
- "iter_trigger",
  "libc",
  "serde_json",
  "sha2",

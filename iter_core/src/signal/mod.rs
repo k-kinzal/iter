@@ -9,11 +9,13 @@
 //! * a [`Metadata`] map of validated keys to scalar values that prompt
 //!   templates and guards read from.
 
+pub mod defaults;
 pub mod id;
 pub mod inner;
 pub mod kind;
 pub mod metadata;
 
+pub use defaults::{MetadataPairError, base_metadata, parse_metadata_pair, parse_metadata_pairs};
 pub use id::SignalId;
 pub use inner::Signal;
 pub use kind::SignalKind;

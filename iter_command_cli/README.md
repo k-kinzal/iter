@@ -19,7 +19,7 @@ records across polls, and configurable error handling (`--on-error`).
 
 ## Workspace dependencies
 
-`iter_trigger`, `iter_core`.
+`iter_core`.
 
 ## Non-dependencies (explicit)
 

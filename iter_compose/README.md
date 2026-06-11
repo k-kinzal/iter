@@ -31,7 +31,9 @@ Key responsibilities:
 
 ## Non-dependencies (explicit)
 
-`iter_trigger` — separated by subprocess boundary.
+The trigger binaries (`iter-cron`, `iter-watch`, …) — separated by the
+subprocess boundary; they connect to queues through the `iter_core::queue`
+boundary contract.
 
 ## Public API
 

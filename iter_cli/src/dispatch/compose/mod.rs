@@ -38,9 +38,9 @@ pub enum ComposeUpError {
     /// Loading or building the compose file failed.
     #[error(transparent)]
     Compose(Box<ComposeError>),
-    /// Installing the shutdown signal handler failed.
-    #[error(transparent)]
-    Signals(#[from] iter_compose::signals::SignalsError),
+    /// Installing the interrupt (`SIGINT`/`SIGTERM`) handler failed.
+    #[error("installing interrupt handler: {0}")]
+    Signals(#[source] std::io::Error),
     /// At least one spawned task ended in an error.
     #[error("one or more compose tasks failed")]
     TaskFailed,

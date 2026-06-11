@@ -1,4 +1,4 @@
-//! `ShutdownController` — the single source of cancellation for the
+//! `ShutdownController` — the reason-recording source of cancellation for the
 //! Runner and observers.
 //!
 //! Per rev17 §A2/§J1, the Process runtime composes four orchestrator
@@ -9,9 +9,10 @@
 //! - a one-shot record of *why* shutdown happened
 //!   ([`ProcessTerminationReason`]) so `finalize` can write the right
 //!   terminal status;
-//! - an optional background task that mirrors `SIGINT`/`SIGTERM` (the
-//!   responsibility moved here from `iter_compose::install_shutdown_handler`,
-//!   which is removed in this refactor).
+//! - an optional background task that mirrors `SIGINT`/`SIGTERM`. The signal
+//!   listening itself lives in [`crate::process::interrupt`] — the single home
+//!   for the OS-signal mirror; this controller layers the terminal-status
+//!   reason on top of it.
 //!
 //! The controller never writes to `~/.iter/proc/<id>/`. It only records
 //! intent. The runtime reads [`ShutdownController::reason`] (or awaits
@@ -23,9 +24,10 @@
 use std::error::Error;
 use std::sync::{Arc, Mutex};
 
-use tokio::signal;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info, warn};
+use tracing::warn;
+
+use crate::process::interrupt::{Interrupt, spawn_interrupt_listener};
 
 /// Boxed error trait object carried inside
 /// [`ProcessTerminationReason::RunnerError`].
@@ -187,27 +189,31 @@ impl ShutdownController {
     }
 
     /// Mirror `SIGINT`/`SIGTERM` onto this controller.
+    ///
+    /// Spawns the [`crate::process::interrupt`] listener and records
+    /// [`SignalTerm`] or [`SignalInt`] when a signal fires, triggering the
+    /// [`CancellationToken`]. The task self-terminates if the token fires for
+    /// any other reason. On non-unix targets only `Ctrl-C` is wired and it
+    /// records [`SignalInt`].
+    ///
     /// # Errors
     ///
-    /// Returns an error if the operation fails.
-    ///
-    /// Spawns a background task that records [`SignalTerm`] or
-    /// [`SignalInt`] and triggers the [`CancellationToken`]. The task
-    /// self-terminates if the token fires for any other reason.
-    ///
-    /// On non-unix targets, only `Ctrl-C` is wired and it records
-    /// [`SignalInt`].
-    ///
-    /// Returns an error if the unix signal listeners cannot be installed.
-    /// On non-unix targets the listener is installed lazily inside the
-    /// spawned task and any failure is logged at `debug!` rather than
-    /// propagated (matching the legacy `iter_compose::install_shutdown_handler`
-    /// behaviour).
+    /// Returns the underlying [`std::io::Error`] if the unix signal listeners
+    /// cannot be installed. On non-unix targets the listener is installed
+    /// lazily inside the spawned task and any failure is logged at `debug!`
+    /// rather than propagated.
     ///
     /// [`SignalTerm`]: ProcessTerminationReason::SignalTerm
     /// [`SignalInt`]: ProcessTerminationReason::SignalInt
     pub fn install_signal_handlers(&self) -> std::io::Result<()> {
-        spawn_handler(self.clone())
+        let controller = self.clone();
+        spawn_interrupt_listener(self.cancel.clone(), move |which| {
+            let reason = match which {
+                Interrupt::Terminate => ProcessTerminationReason::SignalTerm,
+                Interrupt::Interrupt => ProcessTerminationReason::SignalInt,
+            };
+            controller.cancel(reason);
+        })
     }
 }
 
@@ -215,62 +221,6 @@ impl Default for ShutdownController {
     fn default() -> Self {
         Self::new()
     }
-}
-
-#[cfg(unix)]
-fn spawn_handler(controller: ShutdownController) -> std::io::Result<()> {
-    use signal::unix::{SignalKind, signal as unix_signal};
-
-    let mut sigterm = unix_signal(SignalKind::terminate())?;
-    let mut sigint = unix_signal(SignalKind::interrupt())?;
-
-    let cancel_clone = controller.cancel.clone();
-    tokio::spawn(async move {
-        tokio::select! {
-            _ = sigterm.recv() => {
-                info!("received SIGTERM, requesting shutdown");
-                controller.cancel(ProcessTerminationReason::SignalTerm);
-            }
-            _ = sigint.recv() => {
-                info!("received SIGINT, requesting shutdown");
-                controller.cancel(ProcessTerminationReason::SignalInt);
-            }
-            () = cancel_clone.cancelled() => {
-                debug!(
-                    "shutdown handler exiting because the controller was cancelled \
-                     externally"
-                );
-            }
-        }
-    });
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn spawn_handler(controller: ShutdownController) -> std::io::Result<()> {
-    let cancel_clone = controller.cancel.clone();
-    tokio::spawn(async move {
-        tokio::select! {
-            res = signal::ctrl_c() => {
-                match res {
-                    Ok(()) => {
-                        info!("received Ctrl-C, requesting shutdown");
-                        controller.cancel(ProcessTerminationReason::SignalInt);
-                    }
-                    Err(err) => {
-                        debug!(error = %err, "ctrl_c listener failed");
-                    }
-                }
-            }
-            () = cancel_clone.cancelled() => {
-                debug!(
-                    "shutdown handler exiting because the controller was cancelled \
-                     externally"
-                );
-            }
-        }
-    });
-    Ok(())
 }
 
 #[cfg(test)]

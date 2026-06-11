@@ -13,9 +13,9 @@
 //! process lifecycle, registry, and shutdown management used by the CLI
 //! and compose layers.
 //!
-//! Signal sources (triggers) live in `iter_trigger` and the per-trigger
-//! CLI crates (`iter-cron`, `iter-watch`, etc.); they connect to
-//! runners through the queue abstraction.
+//! Signal sources (triggers) live in the per-trigger CLI crates
+//! (`iter-cron`, `iter-watch`, etc.); they connect to runners through the
+//! Queue boundary contract (see [`queue`]).
 //!
 //! The runtime model is intentionally small: triggers produce signals,
 //! queues carry them across a boundary, and runners apply each signal to an

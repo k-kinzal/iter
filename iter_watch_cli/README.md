@@ -18,7 +18,7 @@ Merged signals carry `files` (unique paths), `events` (ordered detail),
 
 ## Workspace dependencies
 
-`iter_trigger`, `iter_core`.
+`iter_core`.
 
 ## Non-dependencies (explicit)
 

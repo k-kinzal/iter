@@ -2,8 +2,9 @@
 //!
 //! Resolves a queue from one of three sources, in this priority:
 //!
-//! 1. `--queue-url URL` — scheme-dispatched to a [`QueueDef`] variant and
-//!    built via [`build_queue`].
+//! 1. `--queue-url URL` — parsed into a [`QueueDescriptor`] and connected
+//!    through the core [`connect`] boundary (the one place queue URLs are
+//!    resolved).
 //! 2. `-f PATH` (or auto-detected `./compose.iter`/`./Iterfile`) — built
 //!    from the file's queue declaration. Compose files with multiple
 //!    queues require `--queue NAME` to disambiguate.
@@ -16,11 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iter_compose::{ComposeError, build_queue, is_compose_filename, load_compose};
-use iter_core::queue::Priority;
+use iter_core::queue::{Priority, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
 use iter_core::{Config, Queue};
 use iter_language::{Compose, NamedQueue, QueueDef};
-use percent_encoding::percent_decode_str;
 use thiserror::Error;
 
 use crate::cli::{EnqueueArgs, EnqueuePriority};
@@ -74,14 +74,10 @@ pub enum EnqueueCmdError {
     /// Pushing the signal onto the queue failed.
     #[error("queueing signal: {0}")]
     Queue(String),
-    /// The `--queue-url` scheme is not supported.
-    #[error(
-        "unsupported queue url `{0}`; expected one of memory://, file:///path, redis://..., rediss://..."
-    )]
-    UnsupportedQueueUrl(String),
-    /// `file://` URL with no path component.
-    #[error("file:// queue url is missing a path")]
-    FileUrlMissingPath,
+    /// The `--queue-url` could not be parsed as a queue address (unknown
+    /// scheme, missing `file://` path, or empty redis `?key=`).
+    #[error(transparent)]
+    QueueUrl(#[from] QueueAddressError),
     /// Iterfile loaded via `-f` had no `queue` section.
     #[error("iterfile {} has no `queue` section", path.display())]
     IterfileMissingQueue {
@@ -103,8 +99,7 @@ impl IntoExitCode for EnqueueCmdError {
             | Self::UnknownQueue { .. }
             | Self::NoQueuesInCompose { .. }
             | Self::QueueFlagNotApplicable
-            | Self::UnsupportedQueueUrl(_)
-            | Self::FileUrlMissingPath
+            | Self::QueueUrl(_)
             | Self::IterfileMissingQueue { .. } => exit_codes::USER_INPUT,
             Self::Load(e) => e.exit_code(),
             Self::Compose(e) => compose_error_exit_code(e),
@@ -124,7 +119,7 @@ impl IntoExitCode for EnqueueCmdError {
 pub async fn run_enqueue(args: EnqueueArgs, config: Config) -> Result<(), EnqueueCmdError> {
     let _telemetry_guard = telemetry::init(false, &config);
 
-    let queue = resolve_queue(&args)?;
+    let queue = resolve_queue(&args).await?;
     let metadata = parse_metadata(&args.metadata)?;
     let priority = map_priority(args.priority);
     let signal = Signal::new(metadata);
@@ -160,12 +155,12 @@ fn parse_metadata(items: &[String]) -> Result<Metadata, EnqueueCmdError> {
     Ok(metadata)
 }
 
-fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
+async fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
     if let Some(url) = args.queue_url.as_deref() {
         if args.queue.is_some() {
             return Err(EnqueueCmdError::QueueFlagNotApplicable);
         }
-        return queue_from_url(url);
+        return queue_from_url(url).await;
     }
 
     let path = match args.file.as_deref() {
@@ -187,43 +182,16 @@ fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdError> 
     }
 }
 
-fn queue_from_url(url: &str) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
-    if url == "memory://" || url == "memory:" {
-        return Ok(build_queue(&QueueDef::Memory).map_err(ComposeError::from)?);
-    }
-    if let Some(rest) = url.strip_prefix("file://") {
-        if rest.is_empty() {
-            return Err(EnqueueCmdError::FileUrlMissingPath);
-        }
-        return Ok(build_queue(&QueueDef::File {
-            path: rest.to_string(),
-        })
-        .map_err(ComposeError::from)?);
-    }
-    if url.starts_with("redis://") || url.starts_with("rediss://") {
-        let (url_part, key) = split_redis_url(url);
-        return Ok(
-            build_queue(&QueueDef::Redis { url: url_part, key }).map_err(ComposeError::from)?
-        );
-    }
-    Err(EnqueueCmdError::UnsupportedQueueUrl(url.to_owned()))
-}
-
-fn split_redis_url(url: &str) -> (String, String) {
-    match url.split_once('?') {
-        Some((base, query)) => {
-            let mut key = "iter".to_string();
-            for pair in query.split('&') {
-                if let Some((k, v)) = pair.split_once('=')
-                    && k == "key"
-                {
-                    key = percent_decode_str(v).decode_utf8_lossy().into_owned();
-                }
-            }
-            (base.to_string(), key)
-        }
-        None => (url.to_string(), "iter".to_string()),
-    }
+/// Connect to the queue named by a `--queue-url` through the core
+/// [`connect`] boundary — the one place queue URLs are resolved.
+///
+/// `memory://` builds a fresh in-process queue for this single enqueue;
+/// `file://` / `redis://` connect to the addressable backend.
+async fn queue_from_url(url: &str) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
+    let descriptor = QueueDescriptor::from_url(url)?;
+    connect(&descriptor)
+        .await
+        .map_err(|e| EnqueueCmdError::Queue(e.to_string()))
 }
 
 fn load_iterfile_queue(path: &Path) -> Result<QueueDef, EnqueueCmdError> {
@@ -374,62 +342,46 @@ mod tests {
         assert_eq!(Priority::from_keyword("bogus"), None);
     }
 
-    #[test]
-    fn queue_from_url_memory_colon_alias() {
-        let q = queue_from_url("memory:").expect("memory: alias");
+    #[tokio::test]
+    async fn queue_from_url_memory_colon_alias() {
+        let q = queue_from_url("memory:").await.expect("memory: alias");
         drop(q);
     }
 
-    #[test]
-    fn queue_from_url_memory_scheme() {
-        let q = queue_from_url("memory://").expect("memory://");
+    #[tokio::test]
+    async fn queue_from_url_memory_scheme() {
+        let q = queue_from_url("memory://").await.expect("memory://");
         drop(q);
     }
 
-    #[test]
-    fn queue_from_url_file_requires_path() {
-        let err = queue_from_url("file://").err().expect("must fail");
-        assert!(matches!(err, EnqueueCmdError::FileUrlMissingPath));
+    #[tokio::test]
+    async fn queue_from_url_file_requires_path() {
+        let err = queue_from_url("file://").await.err().expect("must fail");
+        assert!(matches!(
+            err,
+            EnqueueCmdError::QueueUrl(QueueAddressError::FileUrlMissingPath)
+        ));
     }
 
-    #[test]
-    fn queue_from_url_file_absolute() {
+    #[tokio::test]
+    async fn queue_from_url_file_absolute() {
         let tmp = tempfile::tempdir().expect("tmp");
         let path = tmp.path().join("queue");
         let url = format!("file://{}", path.display());
-        let q = queue_from_url(&url).expect("file queue");
+        let q = queue_from_url(&url).await.expect("file queue");
         drop(q);
     }
 
-    #[test]
-    fn queue_from_url_unknown_scheme_errors() {
-        let err = queue_from_url("amqp://x").err().expect("must fail");
-        assert!(matches!(err, EnqueueCmdError::UnsupportedQueueUrl(_)));
+    #[tokio::test]
+    async fn queue_from_url_unknown_scheme_errors() {
+        let err = queue_from_url("amqp://x").await.err().expect("must fail");
+        assert!(matches!(
+            err,
+            EnqueueCmdError::QueueUrl(QueueAddressError::UnsupportedScheme(_))
+        ));
     }
 
-    #[test]
-    fn split_redis_url_extracts_percent_decoded_key() {
-        let (base, key) = split_redis_url("redis://host:6379/0?key=my%20queue");
-        assert_eq!(base, "redis://host:6379/0");
-        assert_eq!(key, "my queue");
-    }
-
-    #[test]
-    fn split_redis_url_defaults_key_to_iter() {
-        let (base, key) = split_redis_url("redis://host:6379/0");
-        assert_eq!(base, "redis://host:6379/0");
-        assert_eq!(key, "iter");
-    }
-
-    #[test]
-    fn split_redis_url_handles_special_chars_in_key() {
-        let (_, key) = split_redis_url("rediss://h?key=main%26aux");
-        assert_eq!(key, "main&aux");
-    }
-
-    #[test]
-    fn split_redis_url_ignores_non_key_params() {
-        let (_, key) = split_redis_url("redis://h?other=x");
-        assert_eq!(key, "iter");
-    }
+    // The redis `?key=` parsing / percent-decoding that `split_redis_url`
+    // used to do here now lives in `iter_core::queue::QueueAddress` and is
+    // tested there — `queue_from_url` is the thin connector over it.
 }

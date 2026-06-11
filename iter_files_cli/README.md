@@ -15,7 +15,7 @@ Use `--no-exit-on-eof` to keep the process alive after draining all sources
 
 ## Workspace dependencies
 
-`iter_trigger`, `iter_core`.
+`iter_core`.
 
 ## Non-dependencies (explicit)
 

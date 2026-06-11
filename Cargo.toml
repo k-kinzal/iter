@@ -4,7 +4,6 @@ members = [
     "iter_core",
     "iter_tracing",
     "iter_language",
-    "iter_trigger",
     "iter_compose",
     "iter_cli",
     "iter_command_cli",
@@ -35,7 +34,6 @@ authors = ["iter contributors"]
 iter_core = { path = "iter_core", version = "0.1.0" }
 iter_tracing = { path = "iter_tracing", version = "0.1.0" }
 iter_language = { path = "iter_language", version = "0.1.0" }
-iter_trigger = { path = "iter_trigger", version = "0.1.0" }
 iter_compose = { path = "iter_compose", version = "0.1.0" }
 iter_cron_cli = { path = "iter_cron_cli", version = "0.1.0" }
 iter_watch_cli = { path = "iter_watch_cli", version = "0.1.0" }

@@ -8,8 +8,8 @@
 //! dispatch. The CLI instantiates `Runner<AnyWorkspace, AnyAgent>`.
 //!
 //! Trigger CLIs are separate binaries (`iter-cron`, `iter-watch`, etc.)
-//! that depend on [`iter_trigger`] for queue connection and signal
-//! emission infrastructure.
+//! that connect to queues through the [`iter_core::queue`] boundary and
+//! publish signals into them.
 
 #![warn(missing_docs)]
 #![deny(rust_2018_idioms)]
@@ -29,7 +29,6 @@ pub mod project_lock;
 pub mod prompt;
 pub mod queue;
 pub mod secrets;
-pub mod signals;
 pub mod telemetry;
 pub mod trigger_argv;
 pub mod workspace;
@@ -58,6 +57,5 @@ pub use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
 pub use prompt::{build_prompt_selector, build_prompt_selector_from_prompts};
 pub use queue::{QueueBuildError, build_queue};
 pub use secrets::resolve_secret;
-pub use signals::install_shutdown_handler;
 pub use trigger_argv::queue_to_url;
 pub use workspace::{AnyWorkspace, AnyWorkspaceError, build_workspace_factory};

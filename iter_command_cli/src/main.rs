@@ -3,11 +3,11 @@
 //! Runs `--run` under `--shell` on a fixed `--poll-secs` interval, applies
 //! `--extract` to the captured stdout, and publishes one signal per
 //! extracted record into the queue identified by `--queue-url`. Lives
-//! until SIGTERM (or until the `--max-signals` budget is exhausted via
-//! [`iter_trigger::CountingQueue`]).
+//! until SIGTERM (or until the `--max-signals` emission budget is exhausted
+//! via [`iter_core::queue::BudgetedQueue`]).
 //!
 //! Trigger flags are decomposed across [`queue_source`], [`logging`],
-//! [`signal_shape`], [`termination`], and [`banner`]. Startup and
+//! [`signal_defaults`], [`termination`], and [`banner`]. Startup and
 //! shutdown banners go to stderr; stdout is reserved.
 
 #![deny(rust_2018_idioms)]
@@ -18,7 +18,7 @@ mod command;
 mod error;
 mod logging;
 mod queue_source;
-mod signal_shape;
+mod signal_defaults;
 mod stream;
 mod termination;
 
@@ -27,9 +27,9 @@ use std::time::Duration;
 
 use crate::command::{CommandTrigger, CommandTriggerError, ExtractMode, OnError};
 use clap::{Parser, ValueEnum};
-use iter_core::Queue;
-use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, install_shutdown_handler};
+use iter_core::process::interrupt::install_signal_handlers;
+use iter_core::queue::BudgetedQueue;
+use iter_core::signal::defaults::MetadataPairError;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -38,7 +38,7 @@ use crate::banner::BannerArgs;
 use crate::error::{IntoExitCode, exit_codes, run_main};
 use crate::logging::LoggingArgs;
 use crate::queue_source::{QueueSourceArgs, QueueSourceError};
-use crate::signal_shape::{MetadataParseError, SignalShapeArgs};
+use crate::signal_defaults::SignalDefaultsArgs;
 use crate::stream::cli_eprintln;
 use crate::termination::TerminationArgs;
 
@@ -51,9 +51,9 @@ enum CommandCliError {
     #[error(transparent)]
     QueueSource(#[from] QueueSourceError),
     #[error(transparent)]
-    Metadata(#[from] MetadataParseError),
-    #[error(transparent)]
-    Shutdown(#[from] ShutdownError),
+    Metadata(#[from] MetadataPairError),
+    #[error("installing interrupt handler: {0}")]
+    Shutdown(#[source] std::io::Error),
     #[error(transparent)]
     Command(#[from] CommandTriggerError<iter_core::queue::QueueError>),
     #[error("--extract `{0}`: expected `lines` or `regex:PATTERN`")]
@@ -143,7 +143,7 @@ struct Args {
     logging: LoggingArgs,
 
     #[command(flatten)]
-    signal_shape: SignalShapeArgs,
+    signal_defaults: SignalDefaultsArgs,
 
     #[command(flatten)]
     termination: TerminationArgs,
@@ -169,9 +169,10 @@ async fn run() -> Result<(), CommandCliError> {
     let _telemetry_guard = args.logging.init();
 
     let extract = parse_extract(&args.extract)?;
-    let inner_queue = Arc::new(args.queue_source.resolve().await?);
-    let cancel = install_shutdown_handler(CancellationToken::new())?;
-    let queue = Arc::new(CountingQueue::new(
+    let inner_queue = args.queue_source.resolve().await?;
+    let cancel =
+        install_signal_handlers(CancellationToken::new()).map_err(CommandCliError::Shutdown)?;
+    let queue = Arc::new(BudgetedQueue::new(
         inner_queue.clone(),
         args.termination.max_signals,
         cancel.clone(),
@@ -187,8 +188,8 @@ async fn run() -> Result<(), CommandCliError> {
         );
     }
 
-    let metadata = args.signal_shape.base_metadata()?;
-    let priority = args.signal_shape.priority_value();
+    let metadata = args.signal_defaults.base_metadata()?;
+    let priority = args.signal_defaults.priority_value();
     let trigger = CommandTrigger::new(
         queue.clone(),
         args.run.clone(),
