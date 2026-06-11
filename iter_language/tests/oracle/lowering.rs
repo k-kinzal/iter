@@ -1,5 +1,5 @@
 //! Lower the oracle parser's `Pairs<Rule>` tree into the same
-//! `iter_language::RawFile` shape the hand-written parser produces.
+//! `iter_language::CstFile` shape the hand-written parser produces.
 //!
 //! The transformation is intentionally mechanical; any cleverness here
 //! would weaken the differential guarantee. Where a choice had to be made
@@ -8,14 +8,14 @@
 //! each call site.
 
 use iter_language::{
-    RawAction, RawBlock, RawCmpOp, RawEventHandler, RawField, RawFile, RawGuard, RawIdent,
-    RawPromptMatchArm, RawRoute, RawSection, RawValue, Span,
+    CstAction, CstBlock, CstCmpOp, CstEventHandler, CstField, CstFile, CstGuard, CstIdent,
+    CstPromptMatchArm, CstRoute, CstSection, CstValue, Span,
 };
 use pest::iterators::Pair;
 
 use super::parser::Rule;
 
-pub(crate) fn lower_file(pair: Pair<Rule>) -> RawFile {
+pub(crate) fn lower_file(pair: Pair<Rule>) -> CstFile {
     assert_eq!(pair.as_rule(), Rule::file);
     let mut sections = Vec::new();
     for inner in pair.into_inner() {
@@ -25,10 +25,10 @@ pub(crate) fn lower_file(pair: Pair<Rule>) -> RawFile {
             other => panic!("unexpected rule under `file`: {other:?}"),
         }
     }
-    RawFile { sections }
+    CstFile { sections }
 }
 
-fn lower_section(pair: Pair<Rule>) -> RawSection {
+fn lower_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::section);
     let inner = first_child(pair);
     match inner.as_rule() {
@@ -40,7 +40,7 @@ fn lower_section(pair: Pair<Rule>) -> RawSection {
     }
 }
 
-fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
+fn lower_arg_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::arg_section);
     let span = pair_span(&pair);
     let mut children = pair.into_inner();
@@ -57,13 +57,13 @@ fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
         let value = lower_string_literal(val_pair.clone());
         let value_span = pair_span(&val_pair);
         let field_span = name.span.start..value_span.end;
-        RawBlock {
-            fields: vec![RawField {
-                name: RawIdent {
+        CstBlock {
+            fields: vec![CstField {
+                name: CstIdent {
                     name: "default".to_string(),
                     span: value_span.clone(),
                 },
-                value: RawValue::String(value, value_span),
+                value: CstValue::String(value, value_span),
                 span: field_span,
             }],
             routes: Vec::new(),
@@ -74,7 +74,7 @@ fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
         }
     });
 
-    RawSection::Block {
+    CstSection::Block {
         keyword: "arg".to_string(),
         keyword_span: keyword_span.clone(),
         kind: Some(name),
@@ -89,7 +89,7 @@ fn lower_arg_section(pair: Pair<Rule>) -> RawSection {
 // Block-style sections
 // ---------------------------------------------------------------------------
 
-fn lower_block_section(pair: Pair<Rule>) -> RawSection {
+fn lower_block_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::block_section);
     let inner = first_child(pair);
     match inner.as_rule() {
@@ -99,14 +99,14 @@ fn lower_block_section(pair: Pair<Rule>) -> RawSection {
     }
 }
 
-fn lower_runner_section(pair: Pair<Rule>) -> RawSection {
+fn lower_runner_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::runner_section);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
     let kw_pair = inner.next().expect("runner keyword");
     let keyword_span = pair_span(&kw_pair);
     let body = inner.next().map(lower_block);
-    RawSection::Block {
+    CstSection::Block {
         keyword: "runner".into(),
         keyword_span,
         kind: None,
@@ -117,7 +117,7 @@ fn lower_runner_section(pair: Pair<Rule>) -> RawSection {
     }
 }
 
-fn lower_kinded_section(pair: Pair<Rule>) -> RawSection {
+fn lower_kinded_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::kinded_section);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
@@ -126,9 +126,9 @@ fn lower_kinded_section(pair: Pair<Rule>) -> RawSection {
     let keyword = keyword_text(&kw_pair);
     let kind_pair = inner.next().expect("kinded section kind ident");
     let kind = Some(lower_ident(&kind_pair));
-    let mut kind2: Option<RawIdent> = None;
-    let mut alias: Option<RawIdent> = None;
-    let mut body: Option<RawBlock> = None;
+    let mut kind2: Option<CstIdent> = None;
+    let mut alias: Option<CstIdent> = None;
+    let mut body: Option<CstBlock> = None;
     for tail in inner {
         match tail.as_rule() {
             Rule::as_alias => {
@@ -149,7 +149,7 @@ fn lower_kinded_section(pair: Pair<Rule>) -> RawSection {
             other => panic!("unexpected kinded_section tail child: {other:?}"),
         }
     }
-    RawSection::Block {
+    CstSection::Block {
         keyword,
         keyword_span,
         kind,
@@ -175,15 +175,15 @@ fn keyword_text(pair: &Pair<Rule>) -> String {
 // Prompt
 // ---------------------------------------------------------------------------
 
-fn lower_prompt_section(pair: Pair<Rule>) -> RawSection {
+fn lower_prompt_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::prompt_section);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
     let kw_pair = inner.next().expect("prompt keyword");
     let keyword_span = pair_span(&kw_pair);
 
-    let mut name: Option<RawIdent> = None;
-    let mut guard: Option<RawGuard> = None;
+    let mut name: Option<CstIdent> = None;
+    let mut guard: Option<CstGuard> = None;
     let mut body_pair: Option<Pair<Rule>> = None;
 
     for p in inner {
@@ -213,7 +213,7 @@ fn lower_prompt_section(pair: Pair<Rule>) -> RawSection {
     let body_pair = body_pair.expect("prompt body");
     let body_span = pair_span(&body_pair);
     let body = lower_string_literal(body_pair);
-    RawSection::Prompt {
+    CstSection::Prompt {
         keyword_span,
         name,
         guard,
@@ -223,12 +223,12 @@ fn lower_prompt_section(pair: Pair<Rule>) -> RawSection {
     }
 }
 
-fn lower_guard(pair: Pair<Rule>) -> RawGuard {
+fn lower_guard(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard);
     lower_guard_or(first_child(pair))
 }
 
-fn lower_guard_or(pair: Pair<Rule>) -> RawGuard {
+fn lower_guard_or(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard_or);
     let mut inner = pair.into_inner();
     let first = inner.next().expect("guard_or: left operand");
@@ -236,12 +236,12 @@ fn lower_guard_or(pair: Pair<Rule>) -> RawGuard {
     for next in inner {
         let right = lower_guard_and(next);
         let span = acc.span().start..right.span().end;
-        acc = RawGuard::Or(Box::new(acc), Box::new(right), span);
+        acc = CstGuard::Or(Box::new(acc), Box::new(right), span);
     }
     acc
 }
 
-fn lower_guard_and(pair: Pair<Rule>) -> RawGuard {
+fn lower_guard_and(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard_and);
     let mut inner = pair.into_inner();
     let first = inner.next().expect("guard_and: left operand");
@@ -249,12 +249,12 @@ fn lower_guard_and(pair: Pair<Rule>) -> RawGuard {
     for next in inner {
         let right = lower_guard_atom(next);
         let span = acc.span().start..right.span().end;
-        acc = RawGuard::And(Box::new(acc), Box::new(right), span);
+        acc = CstGuard::And(Box::new(acc), Box::new(right), span);
     }
     acc
 }
 
-fn lower_guard_atom(pair: Pair<Rule>) -> RawGuard {
+fn lower_guard_atom(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard_atom);
     let inner = first_child(pair);
     match inner.as_rule() {
@@ -271,7 +271,7 @@ fn lower_guard_atom(pair: Pair<Rule>) -> RawGuard {
     }
 }
 
-fn lower_guard_meta(pair: Pair<Rule>) -> RawGuard {
+fn lower_guard_meta(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard_meta);
     let span = pair_span(&pair);
     let mut key: Option<String> = None;
@@ -289,13 +289,13 @@ fn lower_guard_meta(pair: Pair<Rule>) -> RawGuard {
     let key = key.expect("guard key");
     let value = value.expect("guard value");
     match op.as_str() {
-        "==" => RawGuard::MetadataEq { key, value, span },
-        "!=" => RawGuard::MetadataNeq { key, value, span },
+        "==" => CstGuard::MetadataEq { key, value, span },
+        "!=" => CstGuard::MetadataNeq { key, value, span },
         other => panic!("unexpected guard op {other:?}"),
     }
 }
 
-fn lower_guard_iter(pair: Pair<Rule>) -> RawGuard {
+fn lower_guard_iter(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard_iter);
     let span = pair_span(&pair);
     let mut field: Option<String> = None;
@@ -348,16 +348,16 @@ fn lower_guard_iter(pair: Pair<Rule>) -> RawGuard {
     let field = field.expect("iteration field");
     let rhs = rhs.expect("iteration rhs");
     let op = match op_str.as_str() {
-        "==" => RawCmpOp::Eq,
-        "!=" => RawCmpOp::Neq,
-        "<" => RawCmpOp::Lt,
-        "<=" => RawCmpOp::Le,
-        ">" => RawCmpOp::Gt,
-        ">=" => RawCmpOp::Ge,
+        "==" => CstCmpOp::Eq,
+        "!=" => CstCmpOp::Neq,
+        "<" => CstCmpOp::Lt,
+        "<=" => CstCmpOp::Le,
+        ">" => CstCmpOp::Gt,
+        ">=" => CstCmpOp::Ge,
         other => panic!("unexpected iteration op {other:?}"),
     };
     match rhs {
-        RhsLiteral::Int(rhs, rhs_span) => RawGuard::IterationCmp {
+        RhsLiteral::Int(rhs, rhs_span) => CstGuard::IterationCmp {
             field,
             field_span,
             modulus,
@@ -369,14 +369,14 @@ fn lower_guard_iter(pair: Pair<Rule>) -> RawGuard {
             span,
         },
         RhsLiteral::Str(value, value_span) => match op {
-            RawCmpOp::Eq => RawGuard::IterationResultEq {
+            CstCmpOp::Eq => CstGuard::IterationResultEq {
                 field,
                 field_span,
                 value,
                 value_span,
                 span,
             },
-            RawCmpOp::Neq => RawGuard::IterationResultNeq {
+            CstCmpOp::Neq => CstGuard::IterationResultNeq {
                 field,
                 field_span,
                 value,
@@ -405,7 +405,7 @@ enum RhsLiteral {
 // Top-level `on <event>` handler
 // ---------------------------------------------------------------------------
 
-fn lower_top_on_section(pair: Pair<Rule>) -> RawSection {
+fn lower_top_on_section(pair: Pair<Rule>) -> CstSection {
     assert_eq!(pair.as_rule(), Rule::on_section);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
@@ -415,7 +415,7 @@ fn lower_top_on_section(pair: Pair<Rule>) -> RawSection {
     let event = lower_ident(&event_pair);
     let block_pair = inner.next().expect("event handler block");
     let body = lower_block(block_pair);
-    RawSection::On {
+    CstSection::On {
         keyword_span,
         event,
         body,
@@ -427,7 +427,7 @@ fn lower_top_on_section(pair: Pair<Rule>) -> RawSection {
 // Blocks
 // ---------------------------------------------------------------------------
 
-fn lower_block(pair: Pair<Rule>) -> RawBlock {
+fn lower_block(pair: Pair<Rule>) -> CstBlock {
     assert_eq!(pair.as_rule(), Rule::block);
     let span = pair_span(&pair);
     let mut fields = Vec::new();
@@ -458,7 +458,7 @@ fn lower_block(pair: Pair<Rule>) -> RawBlock {
             other => panic!("unexpected rule inside block: {other:?}"),
         }
     }
-    RawBlock {
+    CstBlock {
         fields,
         routes,
         actions,
@@ -468,7 +468,7 @@ fn lower_block(pair: Pair<Rule>) -> RawBlock {
     }
 }
 
-fn lower_prompt_match_default_arm(pair: Pair<Rule>) -> RawPromptMatchArm {
+fn lower_prompt_match_default_arm(pair: Pair<Rule>) -> CstPromptMatchArm {
     assert_eq!(pair.as_rule(), Rule::prompt_match_default_arm);
     let span = pair_span(&pair);
     let value_pair = pair
@@ -476,18 +476,18 @@ fn lower_prompt_match_default_arm(pair: Pair<Rule>) -> RawPromptMatchArm {
         .find(|c| c.as_rule() == Rule::prompt_arm_value)
         .expect("prompt_match_default_arm contains prompt_arm_value");
     let value = lower_prompt_arm_value(value_pair);
-    RawPromptMatchArm {
+    CstPromptMatchArm {
         guard: None,
         value,
         span,
     }
 }
 
-fn lower_prompt_match_guard_arm(pair: Pair<Rule>) -> RawPromptMatchArm {
+fn lower_prompt_match_guard_arm(pair: Pair<Rule>) -> CstPromptMatchArm {
     assert_eq!(pair.as_rule(), Rule::prompt_match_guard_arm);
     let span = pair_span(&pair);
-    let mut guard_out: Option<RawGuard> = None;
-    let mut value_out: Option<RawValue> = None;
+    let mut guard_out: Option<CstGuard> = None;
+    let mut value_out: Option<CstValue> = None;
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::guard => guard_out = Some(lower_guard(p)),
@@ -495,29 +495,29 @@ fn lower_prompt_match_guard_arm(pair: Pair<Rule>) -> RawPromptMatchArm {
             other => panic!("unexpected prompt_match_guard_arm child: {other:?}"),
         }
     }
-    RawPromptMatchArm {
+    CstPromptMatchArm {
         guard: guard_out,
         value: value_out.expect("prompt_match_guard_arm value"),
         span,
     }
 }
 
-fn lower_prompt_arm_value(pair: Pair<Rule>) -> RawValue {
+fn lower_prompt_arm_value(pair: Pair<Rule>) -> CstValue {
     assert_eq!(pair.as_rule(), Rule::prompt_arm_value);
     let inner = first_child(pair);
     let span = pair_span(&inner);
     match inner.as_rule() {
-        Rule::string_literal => RawValue::String(lower_string_literal(inner), span),
-        Rule::ident => RawValue::Ident(inner.as_str().to_string(), span),
+        Rule::string_literal => CstValue::String(lower_string_literal(inner), span),
+        Rule::ident => CstValue::Ident(inner.as_str().to_string(), span),
         other => panic!("unexpected prompt_arm_value child: {other:?}"),
     }
 }
 
-fn lower_nested_event_handler(pair: Pair<Rule>) -> RawEventHandler {
+fn lower_nested_event_handler(pair: Pair<Rule>) -> CstEventHandler {
     assert_eq!(pair.as_rule(), Rule::nested_event_handler);
     let span = pair_span(&pair);
-    let mut event: Option<RawIdent> = None;
-    let mut body: Option<RawBlock> = None;
+    let mut event: Option<CstIdent> = None;
+    let mut body: Option<CstBlock> = None;
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::kw_on => {}
@@ -526,20 +526,20 @@ fn lower_nested_event_handler(pair: Pair<Rule>) -> RawEventHandler {
             other => panic!("unexpected nested_event_handler child: {other:?}"),
         }
     }
-    RawEventHandler {
+    CstEventHandler {
         event: event.expect("nested_event_handler event"),
         body: body.expect("nested_event_handler body"),
         span,
     }
 }
 
-fn lower_nested_route(pair: Pair<Rule>) -> RawRoute {
+fn lower_nested_route(pair: Pair<Rule>) -> CstRoute {
     assert_eq!(pair.as_rule(), Rule::nested_route);
     let span = pair_span(&pair);
     let mut event_pattern: Option<String> = None;
     let mut when: Option<String> = None;
     let mut when_span: Option<Span> = None;
-    let mut body: Option<RawBlock> = None;
+    let mut body: Option<CstBlock> = None;
     for p in pair.into_inner() {
         match p.as_rule() {
             Rule::kw_on => {}
@@ -558,7 +558,7 @@ fn lower_nested_route(pair: Pair<Rule>) -> RawRoute {
             other => panic!("unexpected nested_route child: {other:?}"),
         }
     }
-    RawRoute {
+    CstRoute {
         event_pattern: event_pattern.expect("route event pattern"),
         when,
         when_span,
@@ -567,7 +567,7 @@ fn lower_nested_route(pair: Pair<Rule>) -> RawRoute {
     }
 }
 
-fn lower_action(pair: Pair<Rule>) -> RawAction {
+fn lower_action(pair: Pair<Rule>) -> CstAction {
     assert_eq!(pair.as_rule(), Rule::action);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
@@ -575,14 +575,14 @@ fn lower_action(pair: Pair<Rule>) -> RawAction {
     let keyword_span = pair_span(&kw_pair);
     let cmd_pair = inner.next().expect("action command string");
     let command = lower_string_raw(&cmd_pair);
-    RawAction {
+    CstAction {
         keyword_span,
         command,
         span,
     }
 }
 
-fn lower_field(pair: Pair<Rule>) -> RawField {
+fn lower_field(pair: Pair<Rule>) -> CstField {
     assert_eq!(pair.as_rule(), Rule::field);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
@@ -590,10 +590,10 @@ fn lower_field(pair: Pair<Rule>) -> RawField {
     let name = lower_field_name(name_pair);
     let rhs = inner.next().expect("field rhs");
     let value = lower_field_rhs(rhs);
-    RawField { name, value, span }
+    CstField { name, value, span }
 }
 
-fn lower_field_name(pair: Pair<Rule>) -> RawIdent {
+fn lower_field_name(pair: Pair<Rule>) -> CstIdent {
     assert_eq!(pair.as_rule(), Rule::field_name);
     let span = pair_span(&pair);
     let inner = pair
@@ -602,7 +602,7 @@ fn lower_field_name(pair: Pair<Rule>) -> RawIdent {
         .expect("field_name wraps an ident or string");
     match inner.as_rule() {
         Rule::ident => lower_ident(&inner),
-        Rule::string => RawIdent {
+        Rule::string => CstIdent {
             name: lower_string_raw(&inner),
             span,
         },
@@ -610,11 +610,11 @@ fn lower_field_name(pair: Pair<Rule>) -> RawIdent {
     }
 }
 
-fn lower_field_rhs(pair: Pair<Rule>) -> RawValue {
+fn lower_field_rhs(pair: Pair<Rule>) -> CstValue {
     assert_eq!(pair.as_rule(), Rule::field_rhs);
     let inner = first_child(pair);
     match inner.as_rule() {
-        Rule::block => RawValue::Block(lower_block(inner)),
+        Rule::block => CstValue::Block(lower_block(inner)),
         Rule::value => lower_value(inner),
         other => panic!("unexpected field_rhs child: {other:?}"),
     }
@@ -624,25 +624,25 @@ fn lower_field_rhs(pair: Pair<Rule>) -> RawValue {
 // Values
 // ---------------------------------------------------------------------------
 
-fn lower_value(pair: Pair<Rule>) -> RawValue {
+fn lower_value(pair: Pair<Rule>) -> CstValue {
     assert_eq!(pair.as_rule(), Rule::value);
     let inner = first_child(pair);
     let span = pair_span(&inner);
     match inner.as_rule() {
         Rule::call => lower_call(inner),
         Rule::list => lower_list(inner),
-        Rule::block => RawValue::Block(lower_block(inner)),
-        Rule::string_literal => RawValue::String(lower_string_literal(inner), span),
-        Rule::duration => RawValue::Duration(lower_duration(&inner), span),
-        Rule::integer => RawValue::Integer(lower_integer(&inner), span),
-        Rule::boolean => RawValue::Bool(inner.as_str() == "true", span),
-        Rule::null => RawValue::Null(span),
-        Rule::ident => RawValue::Ident(inner.as_str().to_string(), span),
+        Rule::block => CstValue::Block(lower_block(inner)),
+        Rule::string_literal => CstValue::String(lower_string_literal(inner), span),
+        Rule::duration => CstValue::Duration(lower_duration(&inner), span),
+        Rule::integer => CstValue::Integer(lower_integer(&inner), span),
+        Rule::boolean => CstValue::Bool(inner.as_str() == "true", span),
+        Rule::null => CstValue::Null(span),
+        Rule::ident => CstValue::Ident(inner.as_str().to_string(), span),
         other => panic!("unexpected value child: {other:?}"),
     }
 }
 
-fn lower_call(pair: Pair<Rule>) -> RawValue {
+fn lower_call(pair: Pair<Rule>) -> CstValue {
     assert_eq!(pair.as_rule(), Rule::call);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
@@ -658,10 +658,10 @@ fn lower_call(pair: Pair<Rule>) -> RawValue {
             }
         }
     }
-    RawValue::Call { name, args, span }
+    CstValue::Call { name, args, span }
 }
 
-fn lower_list(pair: Pair<Rule>) -> RawValue {
+fn lower_list(pair: Pair<Rule>) -> CstValue {
     assert_eq!(pair.as_rule(), Rule::list);
     let span = pair_span(&pair);
     let mut items = Vec::new();
@@ -674,7 +674,7 @@ fn lower_list(pair: Pair<Rule>) -> RawValue {
             }
         }
     }
-    RawValue::List(items, span)
+    CstValue::List(items, span)
 }
 
 fn lower_integer(pair: &Pair<Rule>) -> i64 {
@@ -815,10 +815,10 @@ fn dedent_triple(raw: &str) -> String {
 // Identifiers / utilities
 // ---------------------------------------------------------------------------
 
-fn lower_ident(pair: &Pair<Rule>) -> RawIdent {
+fn lower_ident(pair: &Pair<Rule>) -> CstIdent {
     assert_eq!(pair.as_rule(), Rule::ident);
     let span = pair_span(pair);
-    RawIdent {
+    CstIdent {
         name: pair.as_str().to_string(),
         span,
     }

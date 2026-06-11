@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: queue-servicebus.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -120,7 +120,7 @@ Root {
                                     1,
                                 ),
                                 retry: Some(
-                                    RetryPolicyDecl {
+                                    RetryPolicyDef {
                                         mode: Some(
                                             "exponential",
                                         ),
@@ -168,7 +168,7 @@ Root {
                                     "{{error.message}}",
                                 ),
                                 retry: Some(
-                                    RetryPolicyDecl {
+                                    RetryPolicyDef {
                                         mode: Some(
                                             "exponential",
                                         ),
@@ -195,7 +195,7 @@ Root {
                             },
                         ),
                         retry: Some(
-                            RetryPolicyDecl {
+                            RetryPolicyDef {
                                 mode: Some(
                                     "exponential",
                                 ),
@@ -209,7 +209,7 @@ Root {
                             },
                         ),
                         dlq: Some(
-                            DlqPolicyDecl {
+                            DlqPolicyDef {
                                 kind: Some(
                                     "native",
                                 ),
@@ -254,7 +254,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

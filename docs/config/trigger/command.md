@@ -2,7 +2,7 @@
 
 Runs an external command on a polling interval and emits Signals from its output.
 
-AST: `TriggerDecl::Command`, `ExtractExpr`, and `OnErrorKeyword` in `iter_language/src/ast/trigger.rs`.
+AST: `TriggerDef::Command`, `ExtractExpr`, and `OnErrorKeyword` in `iter_language/src/ast/trigger.rs`.
 
 Standalone binary: `iter-command`.
 

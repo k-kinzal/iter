@@ -1,7 +1,7 @@
 # compose.iter `trigger` — full reference
 
 AST: `NamedTrigger` in `iter_language/src/ast/compose.rs`; bodies reuse
-`TriggerDecl` in `iter_language/src/ast/trigger.rs`.
+`TriggerDef` in `iter_language/src/ast/trigger.rs`.
 
 ## Shared Arguments
 

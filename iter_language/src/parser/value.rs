@@ -1,20 +1,20 @@
 //! Value-position parsing: fields, scalar/composite values, lists, and calls.
 
 use super::Parser;
-use super::cst::{RawField, RawValue};
+use super::cst::{CstField, CstValue};
 use crate::ast::Span;
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
 impl Parser<'_> {
-    pub(super) fn parse_field(&mut self) -> Option<RawField> {
+    pub(super) fn parse_field(&mut self) -> Option<CstField> {
         let name = self.expect_field_name()?;
         // Two forms:
         //   <name> = value
         //   <name> { ... }    // shorthand for nested block (e.g. metadata { kind = "x" })
         let value = if matches!(self.peek(), Some(Token::LBrace)) {
             let block = self.parse_block();
-            RawValue::Block(block)
+            CstValue::Block(block)
         } else {
             if !self.expect(&Token::Equals, "`=`") {
                 return None;
@@ -22,44 +22,44 @@ impl Parser<'_> {
             self.parse_value()?
         };
         let span = name.span.start..value.span().end;
-        Some(RawField { name, value, span })
+        Some(CstField { name, value, span })
     }
 
-    pub(super) fn parse_value(&mut self) -> Option<RawValue> {
+    pub(super) fn parse_value(&mut self) -> Option<CstValue> {
         let tok = self.tokens.get(self.pos)?.clone();
         match tok.token {
             Token::String(s) => {
                 self.bump();
-                Some(RawValue::String(s, tok.span))
+                Some(CstValue::String(s, tok.span))
             }
             Token::Integer(n) => {
                 self.bump();
-                Some(RawValue::Integer(n, tok.span))
+                Some(CstValue::Integer(n, tok.span))
             }
             Token::Duration(secs) => {
                 self.bump();
-                Some(RawValue::Duration(secs, tok.span))
+                Some(CstValue::Duration(secs, tok.span))
             }
             Token::True => {
                 self.bump();
-                Some(RawValue::Bool(true, tok.span))
+                Some(CstValue::Bool(true, tok.span))
             }
             Token::False => {
                 self.bump();
-                Some(RawValue::Bool(false, tok.span))
+                Some(CstValue::Bool(false, tok.span))
             }
             Token::Null => {
                 self.bump();
-                Some(RawValue::Null(tok.span))
+                Some(CstValue::Null(tok.span))
             }
             Token::LBracket => self.parse_list(),
-            Token::LBrace => Some(RawValue::Block(self.parse_block())),
+            Token::LBrace => Some(CstValue::Block(self.parse_block())),
             Token::Ident(name) => {
                 if matches!(self.peek_at(1), Some(Token::LParen)) {
                     self.parse_call(name, tok.span)
                 } else {
                     self.bump();
-                    Some(RawValue::Ident(name, tok.span))
+                    Some(CstValue::Ident(name, tok.span))
                 }
             }
             _ => {
@@ -73,7 +73,7 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn parse_list(&mut self) -> Option<RawValue> {
+    pub(super) fn parse_list(&mut self) -> Option<CstValue> {
         let lspan = self.peek_span();
         if !self.expect(&Token::LBracket, "`[`") {
             return None;
@@ -84,14 +84,14 @@ impl Parser<'_> {
                 Some(Token::RBracket) => {
                     let end = self.peek_span().end;
                     self.bump();
-                    return Some(RawValue::List(items, lspan.start..end));
+                    return Some(CstValue::List(items, lspan.start..end));
                 }
                 None => {
                     self.errors.push(Diagnostic::error(
                         self.eof_span(),
                         "unexpected end of file inside list; expected `]`",
                     ));
-                    return Some(RawValue::List(items, lspan.start..self.source_len));
+                    return Some(CstValue::List(items, lspan.start..self.source_len));
                 }
                 _ => {
                     if let Some(v) = self.parse_value() {
@@ -124,7 +124,7 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn parse_call(&mut self, name: String, name_span: Span) -> Option<RawValue> {
+    pub(super) fn parse_call(&mut self, name: String, name_span: Span) -> Option<CstValue> {
         // Consume name + (
         self.bump();
         self.bump();
@@ -134,7 +134,7 @@ impl Parser<'_> {
                 Some(Token::RParen) => {
                     let end = self.peek_span().end;
                     self.bump();
-                    return Some(RawValue::Call {
+                    return Some(CstValue::Call {
                         name,
                         args,
                         span: name_span.start..end,
@@ -145,7 +145,7 @@ impl Parser<'_> {
                         self.eof_span(),
                         "unexpected end of file inside call; expected `)`",
                     ));
-                    return Some(RawValue::Call {
+                    return Some(CstValue::Call {
                         name,
                         args,
                         span: name_span.start..self.source_len,

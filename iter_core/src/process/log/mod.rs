@@ -90,9 +90,7 @@ mod tests {
 
     #[tokio::test]
     async fn open_output_passthrough_uses_noop_sink() {
-        let output = open_output(&OutputPolicy::Passthrough)
-            .await
-            .expect("open");
+        let output = open_output(&OutputPolicy::Passthrough).await.expect("open");
         assert!(output.log_sender.is_none());
         output.sink.write_stdout(Bytes::new()).await.expect("ok");
     }

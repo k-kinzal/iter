@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use iter_core::RunnerBuilder;
 use iter_language::{
-    ComposeRoot, NamedQueue, NamedService, QueueDecl, QueueRef, ServiceSource, TelemetryDecl,
+    Compose, NamedQueue, NamedService, QueueDef, QueueRef, ServiceSource, TelemetryDef,
 };
 
 use super::error::ComposeError;
@@ -21,7 +21,7 @@ use crate::workspace::AnyWorkspace;
 pub(crate) struct ComposeService {
     pub(crate) name: String,
     pub(crate) iterfile_path: PathBuf,
-    pub(crate) queue_decl: QueueDecl,
+    pub(crate) queue_decl: QueueDef,
     pub(crate) builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
 }
 
@@ -34,7 +34,7 @@ pub struct ComposePlan {
     pub(crate) queues: BTreeMap<String, Arc<AnyQueue>>,
     pub(crate) services: Vec<ComposeService>,
     pub(crate) triggers: Vec<ComposeTrigger>,
-    pub(crate) telemetry: Option<TelemetryDecl>,
+    pub(crate) telemetry: Option<TelemetryDef>,
     pub(crate) compose_path: PathBuf,
     pub(crate) sources: BTreeMap<String, PathBuf>,
 }
@@ -116,7 +116,7 @@ impl ComposePlan {
 
     /// Borrow the project-wide telemetry declaration, when present.
     #[must_use]
-    pub fn telemetry(&self) -> Option<&TelemetryDecl> {
+    pub fn telemetry(&self) -> Option<&TelemetryDef> {
         self.telemetry.as_ref()
     }
 
@@ -143,7 +143,7 @@ impl ComposePlan {
 ///   (compose-managed services must inherit the queue from
 ///   `compose.iter`).
 /// * A queue reference points at a name not declared in the file.
-pub fn build(root: &ComposeRoot, compose_path: &Path) -> Result<ComposePlan, ComposeError> {
+pub fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, ComposeError> {
     let compose_dir = compose_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -236,7 +236,7 @@ pub struct SingleServiceBuild {
 /// * The named service's referenced queue cannot be built.
 /// * Building the service itself fails.
 pub fn build_single_service(
-    root: &ComposeRoot,
+    root: &Compose,
     compose_path: &Path,
     service_name: &str,
     once: bool,
@@ -328,7 +328,7 @@ pub(super) fn lookup_queue(
     }
 }
 
-fn lookup_queue_decl(queue_ref: &QueueRef, root: &ComposeRoot) -> Result<QueueDecl, ComposeError> {
+fn lookup_queue_decl(queue_ref: &QueueRef, root: &Compose) -> Result<QueueDef, ComposeError> {
     match queue_ref {
         QueueRef::Named(name) => root
             .queues

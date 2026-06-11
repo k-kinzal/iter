@@ -276,11 +276,11 @@ mod tests {
 
     use iter_core::Queue;
     use iter_core::queue::InMemoryQueue;
-    use iter_language::TriggerDecl;
+    use iter_language::TriggerDef;
 
     use crate::queue::AnyQueue;
 
-    fn make_trigger(name: &str, decl: TriggerDecl) -> ComposeTrigger {
+    fn make_trigger(name: &str, decl: TriggerDef) -> ComposeTrigger {
         let queue = Arc::new(AnyQueue::InMemory(InMemoryQueue::new()));
         ComposeTrigger {
             name: name.to_string(),
@@ -291,8 +291,8 @@ mod tests {
         }
     }
 
-    fn finite_files_decl(path: &str) -> TriggerDecl {
-        TriggerDecl::Files {
+    fn finite_files_decl(path: &str) -> TriggerDef {
+        TriggerDef::Files {
             sources: vec![iter_language::FilesSource::Path(path.to_string())],
             no_exit_on_eof: false,
             base_metadata: vec![],
@@ -364,7 +364,7 @@ mod tests {
 
         let infinite = make_trigger(
             "inf",
-            TriggerDecl::Files {
+            TriggerDef::Files {
                 sources: vec![],
                 no_exit_on_eof: true,
                 base_metadata: vec![],
@@ -376,7 +376,7 @@ mod tests {
 
         let cron = make_trigger(
             "c",
-            TriggerDecl::Cron {
+            TriggerDef::Cron {
                 schedule: "* * * * *".into(),
                 timezone: None,
                 at_startup: false,
@@ -397,7 +397,10 @@ mod tests {
         std::fs::write(&input_file, "line1\nline2\n").unwrap();
 
         let state_dir = dir.path().join("state");
-        let trigger = make_trigger("finite_test", finite_files_decl(input_file.to_str().unwrap()));
+        let trigger = make_trigger(
+            "finite_test",
+            finite_files_decl(input_file.to_str().unwrap()),
+        );
 
         let cancel = CancellationToken::new();
         let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
@@ -457,7 +460,7 @@ mod tests {
 
         let trigger = make_trigger(
             "cancel_test",
-            TriggerDecl::Cron {
+            TriggerDef::Cron {
                 schedule: "0 0 1 1 *".into(),
                 timezone: None,
                 at_startup: false,

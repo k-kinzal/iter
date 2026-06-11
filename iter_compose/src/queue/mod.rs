@@ -21,11 +21,11 @@ use iter_core::queue::{
     ShellQueue, ShellQueueConfig, ShellQueueError,
 };
 use iter_core::{Priority, Queue, Signal};
-use iter_language::{DlqPolicyDecl, DlqTargetDecl, QueueDecl, RetryPolicyDecl, TemplatedString};
+use iter_language::{DlqPolicyDef, DlqTargetDef, MetadataSource, QueueDef, RetryPolicyDef};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use iter_core::queue::sqs::TemplatedString as CoreTemplatedString;
+use iter_core::queue::sqs::MetadataSource as CoreMetadataSource;
 
 use crate::secrets::SecretsError;
 
@@ -86,7 +86,7 @@ pub enum AnyQueueError {
 }
 
 /// Errors produced while constructing a concrete [`AnyQueue`] from a
-/// [`QueueDecl`].
+/// [`QueueDef`].
 ///
 /// This is the **build-time** counterpart to [`AnyQueueError`], which carries
 /// runtime queue failures.
@@ -138,7 +138,7 @@ pub enum QueueBuildError {
         #[source]
         source: SecretsError,
     },
-    /// The [`QueueDecl`] is structurally invalid — the lowerer should have
+    /// The [`QueueDef`] is structurally invalid — the lowerer should have
     /// caught it before reaching here, or the user supplied an unsupported
     /// enum variant value.
     #[error("{0}")]
@@ -231,23 +231,23 @@ impl Queue for AnyQueue {
     }
 }
 
-/// Build an [`AnyQueue`] from a [`QueueDecl`].
+/// Build an [`AnyQueue`] from a [`QueueDef`].
 ///
 /// # Errors
 ///
 /// Returns [`QueueBuildError`] when the underlying constructor fails (e.g. an
 /// invalid queue directory or a malformed Redis URL).
-pub fn build_queue(decl: &QueueDecl) -> Result<AnyQueue, QueueBuildError> {
+pub fn build_queue(decl: &QueueDef) -> Result<AnyQueue, QueueBuildError> {
     match decl {
-        QueueDecl::Memory => Ok(AnyQueue::InMemory(InMemoryQueue::new())),
-        QueueDecl::File { path } => {
+        QueueDef::Memory => Ok(AnyQueue::InMemory(InMemoryQueue::new())),
+        QueueDef::File { path } => {
             let q = FileQueue::open(path).map_err(|source| QueueBuildError::OpenFile {
                 path: path.clone(),
                 source,
             })?;
             Ok(AnyQueue::File(q))
         }
-        QueueDecl::Redis { url, key } => {
+        QueueDef::Redis { url, key } => {
             let url = url.clone();
             let key = key.clone();
             let q = run_async(RedisQueue::connect(&url, key)).map_err(|source| {
@@ -258,7 +258,7 @@ pub fn build_queue(decl: &QueueDecl) -> Result<AnyQueue, QueueBuildError> {
             })?;
             Ok(AnyQueue::Redis(q))
         }
-        QueueDecl::Shell {
+        QueueDef::Shell {
             enqueue,
             dequeue,
             close,
@@ -281,27 +281,27 @@ pub fn build_queue(decl: &QueueDecl) -> Result<AnyQueue, QueueBuildError> {
             let q = ShellQueue::new(config)?;
             Ok(AnyQueue::Shell(q))
         }
-        QueueDecl::Sqs(cfg) => {
+        QueueDef::Sqs(cfg) => {
             let core_cfg = sqs::build_sqs_config(cfg)?;
             let q = run_async(SqsQueue::new(core_cfg))?;
             Ok(AnyQueue::Sqs(q))
         }
-        QueueDecl::PubSub(cfg) => {
+        QueueDef::PubSub(cfg) => {
             let core_cfg = pubsub::build_pubsub_config(cfg)?;
             let q = PubSubQueue::new(core_cfg)?;
             Ok(AnyQueue::PubSub(q))
         }
-        QueueDecl::Kafka(cfg) => {
+        QueueDef::Kafka(cfg) => {
             let core_cfg = kafka::build_kafka_config(cfg)?;
             let q = KafkaQueue::new(core_cfg)?;
             Ok(AnyQueue::Kafka(q))
         }
-        QueueDecl::Kinesis(cfg) => {
+        QueueDef::Kinesis(cfg) => {
             let core_cfg = kinesis::build_kinesis_config(cfg)?;
             let q = KinesisQueue::new(core_cfg)?;
             Ok(AnyQueue::Kinesis(q))
         }
-        QueueDecl::ServiceBus(cfg) => {
+        QueueDef::ServiceBus(cfg) => {
             let core_cfg = servicebus::build_servicebus_config(cfg)?;
             let q = ServiceBusQueue::new(core_cfg)?;
             Ok(AnyQueue::ServiceBus(q))
@@ -309,14 +309,14 @@ pub fn build_queue(decl: &QueueDecl) -> Result<AnyQueue, QueueBuildError> {
     }
 }
 
-pub(super) fn translate_template(t: &TemplatedString) -> CoreTemplatedString {
+pub(super) fn translate_template(t: &MetadataSource) -> CoreMetadataSource {
     match t {
-        TemplatedString::Literal(s) => CoreTemplatedString::Literal(s.clone()),
-        TemplatedString::FromMetadata(k) => CoreTemplatedString::FromMetadata(k.clone()),
+        MetadataSource::Literal(s) => CoreMetadataSource::Literal(s.clone()),
+        MetadataSource::FromMetadata(k) => CoreMetadataSource::FromMetadata(k.clone()),
     }
 }
 
-pub(super) fn translate_retry(decl: &RetryPolicyDecl) -> Result<RetryPolicy, QueueBuildError> {
+pub(super) fn translate_retry(decl: &RetryPolicyDef) -> Result<RetryPolicy, QueueBuildError> {
     let mut p = RetryPolicy::default();
     if let Some(mode) = decl.mode.as_deref() {
         p.mode = match mode {
@@ -347,7 +347,7 @@ pub(super) fn translate_retry(decl: &RetryPolicyDecl) -> Result<RetryPolicy, Que
     Ok(p)
 }
 
-pub(super) fn translate_dlq(decl: &DlqPolicyDecl) -> Result<DlqPolicy, QueueBuildError> {
+pub(super) fn translate_dlq(decl: &DlqPolicyDef) -> Result<DlqPolicy, QueueBuildError> {
     let kind = decl.kind.as_deref().unwrap_or("none");
     match kind {
         "none" => Ok(DlqPolicy::None),
@@ -378,25 +378,25 @@ pub(super) fn translate_dlq(decl: &DlqPolicyDecl) -> Result<DlqPolicy, QueueBuil
     }
 }
 
-fn translate_dlq_target(target: &DlqTargetDecl) -> Result<DlqTarget, QueueBuildError> {
+fn translate_dlq_target(target: &DlqTargetDef) -> Result<DlqTarget, QueueBuildError> {
     Ok(match target {
-        DlqTargetDecl::Sqs { queue_url, region } => DlqTarget::Sqs {
+        DlqTargetDef::Sqs { queue_url, region } => DlqTarget::Sqs {
             queue_url: queue_url.clone(),
             region: region
                 .clone()
                 .ok_or_else(|| QueueBuildError::invalid("dlq.target = sqs requires `region`"))?,
         },
-        DlqTargetDecl::Kinesis { stream_arn, region } => DlqTarget::Kinesis {
+        DlqTargetDef::Kinesis { stream_arn, region } => DlqTarget::Kinesis {
             stream_arn: stream_arn.clone(),
             region: region.clone().ok_or_else(|| {
                 QueueBuildError::invalid("dlq.target = kinesis requires `region`")
             })?,
         },
-        DlqTargetDecl::Kafka { brokers, topic } => DlqTarget::Kafka {
+        DlqTargetDef::Kafka { brokers, topic } => DlqTarget::Kafka {
             brokers: brokers.clone(),
             topic: topic.clone(),
         },
-        DlqTargetDecl::S3 {
+        DlqTargetDef::S3 {
             bucket,
             prefix,
             region,
@@ -407,12 +407,12 @@ fn translate_dlq_target(target: &DlqTargetDecl) -> Result<DlqTarget, QueueBuildE
                 .clone()
                 .ok_or_else(|| QueueBuildError::invalid("dlq.target = s3 requires `region`"))?,
         },
-        DlqTargetDecl::File { path } => DlqTarget::File { path: path.clone() },
-        DlqTargetDecl::PubSub { project, topic } => DlqTarget::PubSub {
+        DlqTargetDef::File { path } => DlqTarget::File { path: path.clone() },
+        DlqTargetDef::PubSub { project, topic } => DlqTarget::PubSub {
             project: project.clone(),
             topic: topic.clone(),
         },
-        DlqTargetDecl::ServiceBus { namespace, entity } => DlqTarget::ServiceBus {
+        DlqTargetDef::ServiceBus { namespace, entity } => DlqTarget::ServiceBus {
             namespace: namespace.clone(),
             queue: entity.clone(),
         },
@@ -460,13 +460,13 @@ mod tests {
 
     #[test]
     fn build_queue_memory_returns_inmemory() {
-        let q = build_queue(&QueueDecl::Memory).expect("memory");
+        let q = build_queue(&QueueDef::Memory).expect("memory");
         assert!(matches!(q, AnyQueue::InMemory(_)));
     }
 
     #[test]
     fn build_queue_redis_invalid_url_errors() {
-        let err = build_queue(&QueueDecl::Redis {
+        let err = build_queue(&QueueDef::Redis {
             url: "not-a-real-url".into(),
             key: "iter:test".into(),
         })

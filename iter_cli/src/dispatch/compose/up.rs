@@ -17,9 +17,7 @@ use crate::cli::{ComposeFailure, ComposeUpArgs};
 use crate::output::cli_eprintln;
 use crate::telemetry;
 
-use super::{
-    ComposeUpError, canonical_compose_path, resolve_compose_path,
-};
+use super::{ComposeUpError, canonical_compose_path, resolve_compose_path};
 
 /// Handle `iter compose up`.
 ///
@@ -139,10 +137,8 @@ async fn run_compose_up_targeted(args: ComposeUpArgs) -> Result<(), ComposeUpErr
 }
 
 fn parse_target_name_for_up(target: &str) -> Result<&str, ComposeUpError> {
-    super::parse_target_name_raw(target).map_err(|target| {
-        ComposeUpError::UnsupportedResourceType {
-            target: target.to_owned(),
-        }
+    super::parse_target_name_raw(target).map_err(|target| ComposeUpError::UnsupportedResourceType {
+        target: target.to_owned(),
     })
 }
 
@@ -190,10 +186,7 @@ async fn run_compose_up_inline(args: ComposeUpArgs) -> Result<(), ComposeUpError
         return Err(ComposeUpError::TaskFailed);
     }
 
-    info!(
-        completed = report.results.len(),
-        "compose finished cleanly"
-    );
+    info!(completed = report.results.len(), "compose finished cleanly");
     Ok(())
 }
 

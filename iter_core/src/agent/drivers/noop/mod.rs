@@ -40,21 +40,14 @@ mod tests {
     #[tokio::test]
     async fn workspace_is_untouched() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let before: Vec<_> = std::fs::read_dir(tmp.path())
-            .expect("read_dir")
-            .collect();
+        let before: Vec<_> = std::fs::read_dir(tmp.path()).expect("read_dir").collect();
         assert!(before.is_empty());
 
         let agent = NoopAgent;
         let prompt = Prompt::from("ignored");
-        agent
-            .run(ctx(tmp.path(), &prompt))
-            .await
-            .expect("run ok");
+        agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
 
-        let after: Vec<_> = std::fs::read_dir(tmp.path())
-            .expect("read_dir")
-            .collect();
+        let after: Vec<_> = std::fs::read_dir(tmp.path()).expect("read_dir").collect();
         assert!(after.is_empty());
     }
 }

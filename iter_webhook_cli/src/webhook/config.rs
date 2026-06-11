@@ -17,7 +17,7 @@ pub struct WebhookConfig {
     /// `X-Hub-Signature-256` header computed over the raw body.
     pub secret: Option<String>,
     /// Routes evaluated against each incoming event.
-    pub routes: Vec<WebhookRoute>,
+    pub routes: Vec<Subscription>,
 }
 
 /// One routing rule attached to a [`WebhookConfig`].
@@ -27,7 +27,7 @@ pub struct WebhookConfig {
 /// compiles them once into [`Template`] instances held in the internal
 /// [`CompiledRoute`].
 #[derive(Debug, Clone)]
-pub struct WebhookRoute {
+pub struct Subscription {
     /// Pattern matched against `<event>.<action>` (e.g. `"issues.opened"`).
     /// `*` is a wildcard for either side, e.g. `"issues.*"`.
     pub event_pattern: String,
@@ -42,7 +42,7 @@ pub struct WebhookRoute {
     pub metadata: Vec<(String, String)>,
 }
 
-/// Internal form of a [`WebhookRoute`] with metadata templates compiled.
+/// Internal form of a [`Subscription`] with metadata templates compiled.
 ///
 /// Built once by [`WebhookTrigger::new`](super::WebhookTrigger::new) and
 /// shared read-only via the axum [`WebhookState`](super::router::WebhookState).
@@ -55,7 +55,7 @@ pub(super) struct CompiledRoute {
 }
 
 impl CompiledRoute {
-    pub(super) fn from_route(route: &WebhookRoute) -> Result<Self, CompileRouteError> {
+    pub(super) fn from_route(route: &Subscription) -> Result<Self, CompileRouteError> {
         let mut metadata = Vec::with_capacity(route.metadata.len());
         for (key, template_source) in &route.metadata {
             let key = MetadataKey::new(key.as_str())?;
@@ -71,7 +71,7 @@ impl CompiledRoute {
     }
 }
 
-/// Errors produced while compiling a [`WebhookRoute`] into a
+/// Errors produced while compiling a [`Subscription`] into a
 /// [`CompiledRoute`].
 #[derive(Debug, Error)]
 pub(super) enum CompileRouteError {

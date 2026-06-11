@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: agent-passthrough.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -50,7 +50,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "copilot",
                 workspace: "local",

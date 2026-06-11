@@ -1,9 +1,9 @@
 //! Duration normalisation: units `s`, `m`, `h`, `d` normalise to seconds
 //! with the canonical conversion factors (1m = 60s, 1h = 3600s, 1d =
 //! 86400s). Equivalent durations expressed in different units must
-//! produce equal `RawValue::Duration` values in the CST.
+//! produce equal `CstValue::Duration` values in the CST.
 
-use iter_language::{RawSection, RawValue, parse_to_cst};
+use iter_language::{CstSection, CstValue, parse_to_cst};
 use pretty_assertions::assert_eq;
 
 use crate::oracle::{canonicalize, oracle_parse};
@@ -12,11 +12,11 @@ fn duration_field(source: &str) -> i64 {
     let (cst, _) = parse_to_cst(source);
     let file = cst.expect("cst");
     let body = match &file.sections[0] {
-        RawSection::Block { body, .. } => body.as_ref().expect("body"),
+        CstSection::Block { body, .. } => body.as_ref().expect("body"),
         _ => panic!("expected block section"),
     };
     match &body.fields[0].value {
-        RawValue::Duration(secs, _) => *secs,
+        CstValue::Duration(secs, _) => *secs,
         other => panic!("expected duration, got {other:?}"),
     }
 }

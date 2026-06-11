@@ -114,8 +114,8 @@ impl Agent for GenericAgent {
         // the output is still surfaced so the router can fall back.
         let output = spawn_capture(command, delivery, ctx.cancel, ctx.stdio_sink).await?;
         if let Some(err) = output.exit.into_failure() {
-            if let Some(detail) =
-                detect_token_limit(&output.stdout_str()).or_else(|| detect_token_limit(&output.stderr_str()))
+            if let Some(detail) = detect_token_limit(&output.stdout_str())
+                .or_else(|| detect_token_limit(&output.stderr_str()))
             {
                 return Err(AgentError::TokenLimit(detail));
             }
@@ -147,7 +147,10 @@ mod tests {
             .run(ctx(Path::new("."), &prompt))
             .await
             .expect_err("nonzero exit is an error");
-        assert!(matches!(err, AgentError::Failed { code: Some(7), .. }), "got {err:?}");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(7), .. }),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]
@@ -230,7 +233,10 @@ mod tests {
             .run(ctx(Path::new("."), &prompt))
             .await
             .expect_err("signal is an error");
-        assert!(matches!(err, AgentError::TerminatedBySignal(9)), "got {err:?}");
+        assert!(
+            matches!(err, AgentError::TerminatedBySignal(9)),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]

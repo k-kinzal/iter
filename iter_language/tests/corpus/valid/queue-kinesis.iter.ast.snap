@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: queue-kinesis.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -111,7 +111,7 @@ Root {
                             },
                         ),
                         retry: Some(
-                            RetryPolicyDecl {
+                            RetryPolicyDef {
                                 mode: Some(
                                     "adaptive",
                                 ),
@@ -125,7 +125,7 @@ Root {
                             },
                         ),
                         dlq: Some(
-                            DlqPolicyDecl {
+                            DlqPolicyDef {
                                 kind: Some(
                                     "iter_republish",
                                 ),
@@ -182,7 +182,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

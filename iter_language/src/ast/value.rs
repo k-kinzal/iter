@@ -1,9 +1,9 @@
-//! Generic [`Value`] used inside [`super::TriggerDecl::External`] and other
+//! Generic [`Value`] used inside [`super::TriggerDef::External`] and other
 //! field bags.
 
 use std::collections::BTreeMap;
 
-/// Generic value used inside [`super::TriggerDecl::External`] and other field bags.
+/// Generic value used inside [`super::TriggerDef::External`] and other field bags.
 ///
 /// This is a side AST that mirrors the surface field grammar (strings,
 /// integers, booleans, durations, identifiers, lists, blocks, function calls).

@@ -2,7 +2,7 @@
 
 Central queue backed by a Redis list. Suitable for multi-host deployments where all workers can reach the same Redis endpoint.
 
-AST: `QueueDecl::Redis` in `iter_language/src/ast/queue/mod.rs`.
+AST: `QueueDef::Redis` in `iter_language/src/ast/queue/mod.rs`.
 
 ## Syntax
 

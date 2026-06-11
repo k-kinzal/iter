@@ -406,7 +406,13 @@ exit 1"#;
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("auth is an error");
         assert!(
-            matches!(err, AgentError::Failed { code: Some(401), .. }),
+            matches!(
+                err,
+                AgentError::Failed {
+                    code: Some(401),
+                    ..
+                }
+            ),
             "got {err:?}",
         );
     }

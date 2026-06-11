@@ -1,4 +1,4 @@
-//! Translate a [`QueueDecl`] into the `--queue-url` form consumed by service
+//! Translate a [`QueueDef`] into the `--queue-url` form consumed by service
 //! runners (`iter run --service <name> --queue-url <url>`).
 //!
 //! Only queues with a stable, cross-process URL form are eligible:
@@ -11,18 +11,18 @@
 //! `ServiceBus`, `Shell`) require the full Iterfile to reconstruct, so they
 //! return `None`; the caller is expected to fall back to the in-process path.
 
-use iter_language::QueueDecl;
+use iter_language::QueueDef;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
-/// Translate a `QueueDecl` into a `--queue-url` value.
+/// Translate a `QueueDef` into a `--queue-url` value.
 ///
 /// Returns `None` for queues that have no cross-process URL form (memory,
 /// cloud backends, shell).
 #[must_use]
-pub fn queue_to_url(decl: &QueueDecl) -> Option<String> {
+pub fn queue_to_url(decl: &QueueDef) -> Option<String> {
     match decl {
-        QueueDecl::File { path } => Some(format!("file://{path}")),
-        QueueDecl::Redis { url, key } => {
+        QueueDef::File { path } => Some(format!("file://{path}")),
+        QueueDef::Redis { url, key } => {
             if key.is_empty() {
                 Some(url.clone())
             } else {
@@ -33,13 +33,13 @@ pub fn queue_to_url(decl: &QueueDecl) -> Option<String> {
         }
         // Memory is in-process only; cloud and shell backends require the
         // full Iterfile to reconstruct (no single-URL form).
-        QueueDecl::Memory
-        | QueueDecl::Shell { .. }
-        | QueueDecl::Sqs(_)
-        | QueueDecl::PubSub(_)
-        | QueueDecl::Kafka(_)
-        | QueueDecl::Kinesis(_)
-        | QueueDecl::ServiceBus(_) => None,
+        QueueDef::Memory
+        | QueueDef::Shell { .. }
+        | QueueDef::Sqs(_)
+        | QueueDef::PubSub(_)
+        | QueueDef::Kafka(_)
+        | QueueDef::Kinesis(_)
+        | QueueDef::ServiceBus(_) => None,
     }
 }
 
@@ -49,12 +49,12 @@ mod tests {
 
     #[test]
     fn queue_to_url_memory_returns_none() {
-        assert!(queue_to_url(&QueueDecl::Memory).is_none());
+        assert!(queue_to_url(&QueueDef::Memory).is_none());
     }
 
     #[test]
     fn queue_to_url_file_emits_file_scheme() {
-        let url = queue_to_url(&QueueDecl::File {
+        let url = queue_to_url(&QueueDef::File {
             path: "/tmp/q".into(),
         })
         .expect("file");
@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn queue_to_url_redis_appends_key_query_param() {
-        let url = queue_to_url(&QueueDecl::Redis {
+        let url = queue_to_url(&QueueDef::Redis {
             url: "redis://h:6379".into(),
             key: "main".into(),
         })
@@ -73,7 +73,7 @@ mod tests {
 
     #[test]
     fn queue_to_url_redis_merges_existing_query() {
-        let url = queue_to_url(&QueueDecl::Redis {
+        let url = queue_to_url(&QueueDef::Redis {
             url: "redis://h:6379?db=0".into(),
             key: "main".into(),
         })
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn queue_to_url_redis_encodes_special_chars_in_key() {
-        let url = queue_to_url(&QueueDecl::Redis {
+        let url = queue_to_url(&QueueDef::Redis {
             url: "redis://h:6379".into(),
             key: "main&aux".into(),
         })
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn queue_to_url_redis_empty_key_omitted() {
-        let url = queue_to_url(&QueueDecl::Redis {
+        let url = queue_to_url(&QueueDef::Redis {
             url: "redis://h:6379".into(),
             key: String::new(),
         })

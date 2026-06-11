@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use iter_language::{Diagnostic, Root, parse};
+use iter_language::{Diagnostic, Iterfile, parse};
 
 use crate::output::{IntoExitCode, exit_codes};
 use thiserror::Error;
@@ -15,7 +15,7 @@ pub(crate) const DEFAULT_ITERFILE: &str = "Iterfile";
 #[derive(Debug, Clone)]
 pub(crate) struct LoadedIterfile {
     /// Validated AST.
-    pub(crate) iterfile: Root,
+    pub(crate) iterfile: Iterfile,
 }
 
 /// Errors produced by [`load_iterfile`].

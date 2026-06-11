@@ -13,7 +13,7 @@ use crate::ast::{
     ServiceBusSender, ServiceBusSession, Span,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::RawField;
+use crate::parser::CstField;
 
 const SERVICEBUS_FIELDS: &[&str] = &[
     "fully_qualified_namespace",
@@ -88,7 +88,7 @@ const SB_AUTH_WI: &[&str] = &["kind", "tenant_id", "client_id", "token_file"];
 impl Analyzer {
     pub(super) fn lower_servicebus(
         &mut self,
-        body: BTreeMap<String, RawField>,
+        body: BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> ServiceBusConfig {
         let mut fields = body;
@@ -185,7 +185,7 @@ impl Analyzer {
 
     fn lower_servicebus_proxy(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<ServiceBusProxy> {
         let mut block = self.take_optional_block(fields, "web_proxy")?;
         let Some(url) = self.take_optional_string(&mut block, "url") else {
@@ -209,7 +209,7 @@ impl Analyzer {
 
     fn lower_servicebus_auth(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusAuth> {
         let mut block = self.take_optional_block(fields, "auth")?;
@@ -252,7 +252,7 @@ impl Analyzer {
 
     fn lower_sb_auth_connection_string(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusAuthKind> {
         let value = self.take_required_secret(
@@ -267,7 +267,7 @@ impl Analyzer {
 
     fn lower_sb_auth_sas(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusAuthKind> {
         let sas_token = self.take_required_secret(
@@ -284,7 +284,7 @@ impl Analyzer {
 
     fn lower_sb_auth_client_secret(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusAuthKind> {
         let tenant_id =
@@ -303,7 +303,7 @@ impl Analyzer {
 
     fn lower_sb_auth_client_cert(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusAuthKind> {
         let tenant_id =
@@ -324,7 +324,7 @@ impl Analyzer {
 
     fn lower_sb_auth_workload(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusAuthKind> {
         let tenant_id =
@@ -343,7 +343,7 @@ impl Analyzer {
 
     fn lower_servicebus_sender(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<ServiceBusSender> {
         let mut block = self.take_optional_block(fields, "sender")?;
         let message_id = self.take_optional_templated_string(&mut block, "message_id");
@@ -387,7 +387,7 @@ impl Analyzer {
 
     fn lower_servicebus_receiver(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<ServiceBusReceiver> {
         let mut block = self.take_optional_block(fields, "receiver")?;
         let receive_mode = self.take_optional_string(&mut block, "receive_mode");
@@ -426,7 +426,7 @@ impl Analyzer {
 
     fn lower_servicebus_session(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<ServiceBusSession> {
         let mut block = self.take_optional_block(fields, "session")?;

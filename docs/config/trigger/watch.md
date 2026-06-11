@@ -2,7 +2,7 @@
 
 Emits a Signal on filesystem changes inside a directory.
 
-AST: `TriggerDecl::Watch` in `iter_language/src/ast/trigger.rs`.
+AST: `TriggerDef::Watch` in `iter_language/src/ast/trigger.rs`.
 
 Standalone binary: `iter-watch`.
 

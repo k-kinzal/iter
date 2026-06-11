@@ -2,7 +2,7 @@
 
 /// A top-level `on <event-name> { <actions> }` declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EventHandlerDecl {
+pub struct EventHandlerDef {
     /// Lifecycle event the handler subscribes to.
     pub event: EventName,
     /// Actions to execute, in source order.

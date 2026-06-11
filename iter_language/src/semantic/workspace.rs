@@ -8,18 +8,18 @@ use super::{
     NETWORK_HINT, POLICY_HINT, PRESERVE_MTIME_HINT,
 };
 use crate::ast::{
-    ApplyBackDecl, CloneApplyBackMode, SandboxNetworkDecl, SandboxPolicyDecl, Span, WorkspaceDecl,
+    ApplyBackDef, CloneApplyBackMode, SandboxNetworkDef, SandboxPolicyDef, Span, WorkspaceDef,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
 
 impl Analyzer {
     pub(super) fn lower_workspace(
         &mut self,
-        kind: Option<RawIdent>,
-        body: Option<RawBlock>,
+        kind: Option<CstIdent>,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<WorkspaceDecl> {
+    ) -> Option<WorkspaceDef> {
         let kind = self.require_kind(
             kind,
             keyword_span,
@@ -43,19 +43,19 @@ impl Analyzer {
 
     fn lower_workspace_local(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<WorkspaceDecl> {
+    ) -> Option<WorkspaceDef> {
         let base = self.take_required_string(fields, "base", kind_span, "workspace local")?;
         self.reject_unknown_fields(fields, &["base"], "workspace local");
-        Some(WorkspaceDecl::Local { base })
+        Some(WorkspaceDef::Local { base })
     }
 
     fn lower_workspace_clone(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<WorkspaceDecl> {
+    ) -> Option<WorkspaceDef> {
         let base = self.take_required_string(fields, "base", kind_span, "workspace clone")?;
         let remote = self.take_optional_string(fields, "remote");
         let excludes = self.take_required_string_list_explicit(
@@ -88,7 +88,7 @@ impl Analyzer {
             ],
             "workspace clone",
         );
-        Some(WorkspaceDecl::Clone {
+        Some(WorkspaceDef::Clone {
             base,
             remote,
             excludes: excludes?,
@@ -100,9 +100,9 @@ impl Analyzer {
 
     fn lower_workspace_sandbox(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<WorkspaceDecl> {
+    ) -> Option<WorkspaceDef> {
         let base = self.take_required_string(fields, "base", kind_span, "workspace sandbox")?;
         let excludes = self.take_required_string_list_explicit(
             fields,
@@ -136,7 +136,7 @@ impl Analyzer {
             ],
             "workspace sandbox",
         );
-        Some(WorkspaceDecl::Sandbox {
+        Some(WorkspaceDef::Sandbox {
             base,
             excludes: excludes?,
             includes,
@@ -154,10 +154,10 @@ impl Analyzer {
     /// would have nowhere to apply.
     pub(super) fn take_required_apply_back_block(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
         context: &str,
-    ) -> Option<ApplyBackDecl> {
+    ) -> Option<ApplyBackDef> {
         let Some(field) = fields.remove("apply_back") else {
             self.errors.push(
                 Diagnostic::error(
@@ -169,7 +169,7 @@ impl Analyzer {
             return None;
         };
         let block = match field.value {
-            RawValue::Block(block) => block,
+            CstValue::Block(block) => block,
             other => {
                 self.errors.push(
                     Diagnostic::error(other.span(), "`apply_back` must be a block")
@@ -219,7 +219,7 @@ impl Analyzer {
             }
         }
 
-        Some(ApplyBackDecl {
+        Some(ApplyBackDef {
             mode: mode?,
             excludes: excludes_vec,
             includes: includes_vec,
@@ -228,7 +228,7 @@ impl Analyzer {
 
     fn take_required_apply_back_mode(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         block_span: &Span,
     ) -> Option<CloneApplyBackMode> {
         let Some(field) = fields.remove("mode") else {
@@ -239,7 +239,7 @@ impl Analyzer {
             return None;
         };
         match field.value {
-            RawValue::Ident(ident, span) => self.parse_clone_apply_back(&ident, span),
+            CstValue::Ident(ident, span) => self.parse_clone_apply_back(&ident, span),
             other => {
                 self.errors.push(
                     Diagnostic::error(other.span(), "`mode` must be an identifier")
@@ -255,7 +255,7 @@ impl Analyzer {
     /// exact list literal.
     fn take_optional_string_list_with_span(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> (Option<Vec<String>>, Option<Span>) {
         let Some(field) = fields.remove(name) else {
@@ -263,11 +263,11 @@ impl Analyzer {
         };
         let span = field.value.span();
         match field.value {
-            RawValue::List(items, _) => {
+            CstValue::List(items, _) => {
                 let mut out = Vec::new();
                 for item in items {
                     match item {
-                        RawValue::String(s, _) => out.push(s),
+                        CstValue::String(s, _) => out.push(s),
                         other => self.errors.push(Diagnostic::error(
                             other.span(),
                             format!("`{name}` list elements must be strings"),
@@ -288,9 +288,9 @@ impl Analyzer {
 
     pub(super) fn take_required_sandbox_policy(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<SandboxPolicyDecl> {
+    ) -> Option<SandboxPolicyDef> {
         let Some(field) = fields.remove("policy") else {
             self.errors.push(
                 Diagnostic::error(
@@ -302,7 +302,7 @@ impl Analyzer {
             return None;
         };
         let block = match field.value {
-            RawValue::Block(block) => block,
+            CstValue::Block(block) => block,
             other => {
                 self.errors
                     .push(Diagnostic::error(other.span(), "`policy` must be a block"));
@@ -335,7 +335,7 @@ impl Analyzer {
             ],
             "workspace sandbox policy",
         );
-        Some(SandboxPolicyDecl {
+        Some(SandboxPolicyDef {
             network: network?,
             allow_read_outside,
             allow_write_outside,
@@ -346,9 +346,9 @@ impl Analyzer {
 
     pub(super) fn take_required_sandbox_network(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         policy_span: &Span,
-    ) -> Option<SandboxNetworkDecl> {
+    ) -> Option<SandboxNetworkDef> {
         let Some(field) = fields.remove("network") else {
             self.errors.push(
                 Diagnostic::error(policy_span.clone(), "`policy` block requires `network`")
@@ -357,9 +357,9 @@ impl Analyzer {
             return None;
         };
         match field.value {
-            RawValue::Ident(name, span) => match name.as_str() {
-                "off" => Some(SandboxNetworkDecl::Off),
-                "all" => Some(SandboxNetworkDecl::All),
+            CstValue::Ident(name, span) => match name.as_str() {
+                "off" => Some(SandboxNetworkDef::Off),
+                "all" => Some(SandboxNetworkDef::All),
                 other => {
                     self.errors.push(
                         Diagnostic::error(span, format!("unknown network mode `{other}`"))
@@ -368,18 +368,18 @@ impl Analyzer {
                     None
                 }
             },
-            RawValue::List(items, _) => {
+            CstValue::List(items, _) => {
                 let mut hosts = Vec::new();
                 for item in items {
                     match item {
-                        RawValue::String(s, _) => hosts.push(s),
+                        CstValue::String(s, _) => hosts.push(s),
                         other => self.errors.push(Diagnostic::error(
                             other.span(),
                             "`network` host entries must be strings",
                         )),
                     }
                 }
-                Some(SandboxNetworkDecl::Hosts(hosts))
+                Some(SandboxNetworkDef::Hosts(hosts))
             }
             other => {
                 self.errors.push(Diagnostic::error(

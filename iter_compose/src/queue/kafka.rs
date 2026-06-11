@@ -4,7 +4,7 @@ use iter_core::queue::kafka::{
     KafkaConsumerConfig as CoreKafkaConsumer, KafkaProducerConfig as CoreKafkaProducer,
     KafkaQueueConfig, KafkaSecurityConfig as CoreKafkaSecurity,
 };
-use iter_language::{KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity, TemplatedString};
+use iter_language::{KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity, MetadataSource};
 
 use super::{QueueBuildError, opt_u32, opt_u64, translate_dlq};
 use crate::secrets::resolve_secret;
@@ -141,10 +141,10 @@ fn translate_kafka_security(s: &KafkaSecurity) -> Result<CoreKafkaSecurity, Queu
 
 fn translate_kafka_producer(p: &KafkaProducer) -> Result<CoreKafkaProducer, QueueBuildError> {
     let (key_strategy_metadata, key_from_signal_id) = match p.key_strategy.as_ref() {
-        Some(TemplatedString::FromMetadata(k)) => (Some(k.clone()), false),
-        Some(TemplatedString::Literal(s)) if s == "signal_id" => (None, true),
-        Some(TemplatedString::Literal(s)) if s == "none" => (None, false),
-        Some(TemplatedString::Literal(other)) => {
+        Some(MetadataSource::FromMetadata(k)) => (Some(k.clone()), false),
+        Some(MetadataSource::Literal(s)) if s == "signal_id" => (None, true),
+        Some(MetadataSource::Literal(s)) if s == "none" => (None, false),
+        Some(MetadataSource::Literal(other)) => {
             return Err(QueueBuildError::invalid(format!(
                 "producer.key_strategy literal must be `none` or `signal_id`; got `{other}`"
             )));
@@ -152,9 +152,9 @@ fn translate_kafka_producer(p: &KafkaProducer) -> Result<CoreKafkaProducer, Queu
         None => (None, false),
     };
     let partition_strategy_metadata = match p.partition_strategy.as_ref() {
-        Some(TemplatedString::FromMetadata(k)) => Some(k.clone()),
-        Some(TemplatedString::Literal(s)) if s == "partitioner_default" => None,
-        Some(TemplatedString::Literal(other)) => {
+        Some(MetadataSource::FromMetadata(k)) => Some(k.clone()),
+        Some(MetadataSource::Literal(s)) if s == "partitioner_default" => None,
+        Some(MetadataSource::Literal(other)) => {
             return Err(QueueBuildError::invalid(format!(
                 "producer.partition_strategy literal must be `partitioner_default`; got `{other}`"
             )));

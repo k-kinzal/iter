@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: queue-kafka.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -281,7 +281,7 @@ Root {
                             ],
                         ),
                         dlq: Some(
-                            DlqPolicyDecl {
+                            DlqPolicyDef {
                                 kind: Some(
                                     "iter_republish",
                                 ),
@@ -333,7 +333,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

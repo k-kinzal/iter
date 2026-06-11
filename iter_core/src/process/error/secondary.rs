@@ -68,19 +68,15 @@ mod tests {
         let oks = SecondaryStatusWriteResult::from_write_and_fsync(Ok(()), Ok(()));
         assert!(matches!(oks, SecondaryStatusWriteResult::Wrote));
 
-        let fsync_only = SecondaryStatusWriteResult::from_write_and_fsync(
-            Ok(()),
-            Err(io::Error::other("nope")),
-        );
+        let fsync_only =
+            SecondaryStatusWriteResult::from_write_and_fsync(Ok(()), Err(io::Error::other("nope")));
         assert!(matches!(
             fsync_only,
             SecondaryStatusWriteResult::WroteButFsyncFailed { .. }
         ));
 
-        let write_only = SecondaryStatusWriteResult::from_write_and_fsync(
-            Err(io::Error::other("nope")),
-            Ok(()),
-        );
+        let write_only =
+            SecondaryStatusWriteResult::from_write_and_fsync(Err(io::Error::other("nope")), Ok(()));
         assert!(matches!(
             write_only,
             SecondaryStatusWriteResult::WriteFailed { .. }

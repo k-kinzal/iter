@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use iter_language::{
-    ComposeRoot, ComposeTriggerOverride, NamedService, NamedTrigger, QueueDecl, QueueRef,
-    ServiceSource, Spanned,
+    Compose, ComposeTriggerOverride, NamedService, NamedTrigger, QueueDef, QueueRef, ServiceSource,
+    Spanned,
 };
 
 use super::error::ComposeError;
@@ -11,12 +11,12 @@ use crate::compose::load_compose;
 
 #[derive(Debug)]
 pub(super) struct FlattenedPlan {
-    pub(super) root: ComposeRoot,
+    pub(super) root: Compose,
     pub(super) sources: BTreeMap<String, PathBuf>,
 }
 
 pub(super) fn flatten_composes(
-    root: &ComposeRoot,
+    root: &Compose,
     compose_path: &Path,
     compose_dir: &Path,
     visited: &mut BTreeSet<PathBuf>,
@@ -28,7 +28,7 @@ pub(super) fn flatten_composes(
         });
     }
 
-    let mut flat = ComposeRoot {
+    let mut flat = Compose {
         telemetry: root.telemetry.clone(),
         queues: root.queues.clone(),
         services: root.services.clone(),
@@ -107,14 +107,14 @@ fn resolve_child_path(
 #[allow(clippy::too_many_arguments)]
 fn merge_child_into_flat(
     compose_ref: &iter_language::NamedCompose,
-    child_flat: &ComposeRoot,
+    child_flat: &Compose,
     child_dir: &Path,
     child_path: &Path,
     compose_path: &Path,
     parent_queue_names: &BTreeSet<String>,
     parent_service_names: &BTreeSet<String>,
     parent_trigger_names: &BTreeSet<String>,
-    flat: &mut ComposeRoot,
+    flat: &mut Compose,
     sources: &mut BTreeMap<String, PathBuf>,
 ) -> Result<(), ComposeError> {
     let mut imported_services: Vec<Spanned<NamedService>> = Vec::new();
@@ -167,7 +167,7 @@ fn merge_child_into_flat(
         } else {
             check_name_collision(name, "queue", parent_queue_names, child_path, compose_path)?;
             let mut queue = child_queue.clone();
-            if let QueueDecl::File { ref mut path } = queue.node.decl {
+            if let QueueDef::File { ref mut path } = queue.node.decl {
                 let p = PathBuf::from(&*path);
                 if p.is_relative() {
                     *path = child_dir.join(&p).to_string_lossy().into_owned();
@@ -209,7 +209,7 @@ fn merge_child_into_flat(
 
 fn validate_overrides(
     compose_ref: &iter_language::NamedCompose,
-    child_root: &ComposeRoot,
+    child_root: &Compose,
     child_path: &Path,
 ) -> Result<(), ComposeError> {
     for queue_name in compose_ref.queues.keys() {
@@ -561,7 +561,7 @@ mod tests {
             .iter()
             .find(|q| q.node.name == "child_q")
             .expect("child_q");
-        if let QueueDecl::File { path } = &child_queue.node.decl {
+        if let QueueDef::File { path } = &child_queue.node.decl {
             let canonical_child_dir = std::fs::canonicalize(&child_dir).unwrap();
             assert!(
                 path.contains(canonical_child_dir.to_str().unwrap()),

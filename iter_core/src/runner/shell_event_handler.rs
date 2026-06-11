@@ -204,10 +204,8 @@ mod tests {
         let signal = Signal::new(metadata);
         let signal_id = signal.id().to_string();
 
-        let handler = ShellEventHandler::new(
-            "echo {{metadata.file}}:{{signal.id}} > marker.txt",
-        )
-        .expect("compile");
+        let handler = ShellEventHandler::new("echo {{metadata.file}}:{{signal.id}} > marker.txt")
+            .expect("compile");
         handler
             .handle(
                 &Event::WorkspaceTeardownFinished {
@@ -266,8 +264,8 @@ mod tests {
 
     #[tokio::test]
     async fn shell_handler_lifecycle_event_renders_iteration_only() {
-        let handler = ShellEventHandler::new("true {{iteration.count}} {{today}}")
-            .expect("compile");
+        let handler =
+            ShellEventHandler::new("true {{iteration.count}} {{today}}").expect("compile");
         handler
             .handle(&Event::RunnerStarting {}, &iter_ctx())
             .await
@@ -276,8 +274,7 @@ mod tests {
 
     #[tokio::test]
     async fn shell_handler_lifecycle_event_with_signal_root_is_swallowed() {
-        let handler =
-            ShellEventHandler::new("echo {{signal.id}}").expect("compile");
+        let handler = ShellEventHandler::new("echo {{signal.id}}").expect("compile");
         handler
             .handle(&Event::RunnerStarting {}, &iter_ctx())
             .await
@@ -286,8 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn shell_handler_template_error_is_logged_not_propagated() {
-        let handler = ShellEventHandler::new("echo {{metadata.nonexistent}}")
-            .expect("compile");
+        let handler = ShellEventHandler::new("echo {{metadata.nonexistent}}").expect("compile");
         handler
             .handle(&torndown_event(PathBuf::from("/tmp")), &iter_ctx())
             .await
@@ -299,8 +295,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tmp");
         let ws = tmp.path().to_path_buf();
 
-        let handler =
-            ShellEventHandler::new("pwd > pwd.txt").expect("compile");
+        let handler = ShellEventHandler::new("pwd > pwd.txt").expect("compile");
         handler
             .handle(
                 &Event::WorkspaceTeardownFinished {

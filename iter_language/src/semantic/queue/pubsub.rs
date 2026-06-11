@@ -13,7 +13,7 @@ use crate::ast::{
     PubSubPublisher, PubSubSubscriber, Span,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::RawField;
+use crate::parser::CstField;
 
 const PUBSUB_FIELDS: &[&str] = &[
     "project",
@@ -76,7 +76,7 @@ const PUBSUB_CRED_TOKEN: &[&str] = &["kind", "token", "expiry"];
 impl Analyzer {
     pub(super) fn lower_pubsub(
         &mut self,
-        body: BTreeMap<String, RawField>,
+        body: BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> PubSubConfig {
         let mut fields = body;
@@ -125,7 +125,7 @@ impl Analyzer {
 
     fn lower_pubsub_keepalive(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<PubSubKeepalive> {
         let mut block = self.take_optional_block(fields, "keepalive")?;
         let time_secs = self.take_optional_duration(&mut block, "time");
@@ -141,7 +141,7 @@ impl Analyzer {
 
     fn lower_pubsub_credentials(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubCredentials> {
         let mut block = self.take_optional_block(fields, "credentials")?;
@@ -185,7 +185,7 @@ impl Analyzer {
 
     fn lower_pubsub_cred_sa_file(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubCredentialKind> {
         let path =
@@ -200,7 +200,7 @@ impl Analyzer {
 
     fn lower_pubsub_cred_sa_inline(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubCredentialKind> {
         let json = self.take_required_secret(
@@ -219,7 +219,7 @@ impl Analyzer {
 
     fn lower_pubsub_cred_workload(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubCredentialKind> {
         let audience = self.take_required_string(
@@ -245,7 +245,7 @@ impl Analyzer {
 
     fn lower_pubsub_cred_impersonate(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubCredentialKind> {
         let target_principal = self.take_required_string(
@@ -266,7 +266,7 @@ impl Analyzer {
 
     fn lower_pubsub_cred_access_token(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubCredentialKind> {
         let token =
@@ -281,7 +281,7 @@ impl Analyzer {
 
     fn lower_pubsub_publisher(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<PubSubPublisher> {
         let mut block = self.take_optional_block(fields, "publisher")?;
         let delay_threshold_ms = self.take_optional_int(&mut block, "delay_threshold");
@@ -321,7 +321,7 @@ impl Analyzer {
 
     fn lower_pubsub_subscriber(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<PubSubSubscriber> {
         let mut block = self.take_optional_block(fields, "subscriber")?;
         let pull_mode = self.take_optional_string(&mut block, "pull_mode");
@@ -355,7 +355,7 @@ impl Analyzer {
 
     fn lower_pubsub_initial_seek(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<PubSubInitialSeek> {
         let mut block = self.take_optional_block(fields, "initial_seek")?;

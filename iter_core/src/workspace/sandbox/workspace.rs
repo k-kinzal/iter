@@ -405,7 +405,10 @@ mod tests {
         ws.teardown(CancellationToken::new())
             .await
             .expect("teardown must succeed despite backend failure");
-        assert!(!temp.exists(), "temp dir must be removed even when backend cleanup fails");
+        assert!(
+            !temp.exists(),
+            "temp dir must be removed even when backend cleanup fails"
+        );
     }
 
     #[test]

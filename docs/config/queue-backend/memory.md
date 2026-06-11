@@ -2,7 +2,7 @@
 
 In-process priority queue. Signals live only in the owning process; nothing is persisted.
 
-AST: `QueueDecl::Memory` in `iter_language/src/ast/queue/mod.rs`.
+AST: `QueueDef::Memory` in `iter_language/src/ast/queue/mod.rs`.
 
 ## Syntax
 

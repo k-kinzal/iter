@@ -2,7 +2,7 @@
 
 Declares the Signal queue backend for the service. Optional — zero or one block per `Iterfile`.
 
-AST: `QueueDecl` in `iter_language/src/ast/queue/mod.rs`.
+AST: `QueueDef` in `iter_language/src/ast/queue/mod.rs`.
 
 ## Syntax
 

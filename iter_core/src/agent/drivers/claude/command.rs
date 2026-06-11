@@ -167,7 +167,10 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<ClaudeCodeResult, Clau
     // `from_value` that would fail — and silently default the verdict to
     // `false` = success — if any *unrelated* field (e.g. a float `num_turns`)
     // had an unexpected type.
-    let is_error = value.get("is_error").and_then(Value::as_bool).unwrap_or(false);
+    let is_error = value
+        .get("is_error")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     let subtype = value
         .get("subtype")
         .and_then(Value::as_str)
@@ -240,7 +243,10 @@ mod tests {
         // `is_error` independently keeps the failure verdict intact.
         let json = r#"{"type":"result","is_error":true,"num_turns":"oops"}"#;
         let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
-        assert!(matches!(err, ClaudeCodeError::Reported { .. }), "got {err:?}");
+        assert!(
+            matches!(err, ClaudeCodeError::Reported { .. }),
+            "got {err:?}"
+        );
     }
 
     #[test]
@@ -263,7 +269,10 @@ mod tests {
     #[test]
     fn no_terminal_result_on_nonzero_exit() {
         let err = interpret(&output("garbage\n", RawExit::Code(1))).expect_err("err");
-        assert!(matches!(err, ClaudeCodeError::NoResult { exit_code: Some(1) }));
+        assert!(matches!(
+            err,
+            ClaudeCodeError::NoResult { exit_code: Some(1) }
+        ));
     }
 
     #[test]
@@ -274,7 +283,8 @@ mod tests {
 
     #[test]
     fn token_limit_without_result_object_is_detected() {
-        let err = interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
+        let err =
+            interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, ClaudeCodeError::TokenLimit(_)));
     }
 }

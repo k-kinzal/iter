@@ -2,7 +2,7 @@
 
 Declares a named Signal producer that publishes into a queue. Zero or more per `compose.iter`.
 
-AST: `NamedTrigger` in `iter_language/src/ast/compose.rs`; the body reuses `TriggerDecl` from `iter_language/src/ast/trigger.rs`.
+AST: `NamedTrigger` in `iter_language/src/ast/compose.rs`; the body reuses `TriggerDef` from `iter_language/src/ast/trigger.rs`.
 
 ## Syntax
 

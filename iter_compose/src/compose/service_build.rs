@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iter_language::{InlineService, QueueDecl, Root, ServiceSource, parse};
+use iter_language::{InlineService, Iterfile, QueueDef, ServiceSource, parse};
 
 use super::error::ComposeError;
 use super::plan::{ComposeService, lookup_queue};
@@ -16,7 +16,7 @@ pub(super) fn build_service(
     compose_dir: &Path,
     compose_path: &Path,
     once: bool,
-    queue_decl: QueueDecl,
+    queue_decl: QueueDef,
 ) -> Result<ComposeService, ComposeError> {
     match source {
         ServiceSource::Build { path, queue, args } => {
@@ -65,18 +65,19 @@ pub(super) fn build_service(
 
 fn build_service_from_root(
     name: &str,
-    root: &Root,
+    root: &Iterfile,
     queue: Arc<AnyQueue>,
     iterfile_path: PathBuf,
     once: bool,
-    queue_decl: QueueDecl,
+    queue_decl: QueueDef,
 ) -> Result<ComposeService, ComposeError> {
-    let runner = root.runners.first().ok_or_else(|| {
-        ComposeError::ServiceMissingSection {
+    let runner = root
+        .runners
+        .first()
+        .ok_or_else(|| ComposeError::ServiceMissingSection {
             service: name.to_owned(),
             section: "runner",
-        }
-    })?;
+        })?;
     if root.workspaces.is_empty() {
         return Err(ComposeError::ServiceMissingSection {
             service: name.to_owned(),
@@ -112,7 +113,7 @@ fn build_service_from_inline(
     queue: Arc<AnyQueue>,
     iterfile_path: PathBuf,
     once: bool,
-    queue_decl: QueueDecl,
+    queue_decl: QueueDef,
 ) -> Result<ComposeService, ComposeError> {
     let workspace_decl = inline.workspace.as_ref().map(|s| &s.node).ok_or_else(|| {
         ComposeError::ServiceMissingSection {

@@ -7,7 +7,7 @@ use super::{PriorityKeyword, Value};
 
 /// Trigger declaration. Triggers generate signals for the runner.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TriggerDecl {
+pub enum TriggerDef {
     /// `loop` trigger — fires repeatedly with optional bounds.
     Loop {
         /// Maximum number of iterations to perform, if any.
@@ -109,7 +109,7 @@ pub enum TriggerDecl {
         /// Optional shared secret used to verify incoming payloads.
         secret: Option<SecretExpr>,
         /// Per-event route declarations.
-        routes: Vec<WebhookRoute>,
+        routes: Vec<Subscription>,
         /// Trigger-level base metadata inherited by every route that does not
         /// set its own keys.
         base_metadata: Vec<(String, String)>,
@@ -183,7 +183,7 @@ pub enum OnErrorKeyword {
 
 /// One per-event route inside a `trigger webhook` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WebhookRoute {
+pub struct Subscription {
     /// Quoted event name pattern, e.g. `"issues.opened"`.
     pub event_pattern: String,
     /// Optional `when "<expr>"` guard. Stored as a raw string; its

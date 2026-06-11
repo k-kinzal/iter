@@ -1,16 +1,16 @@
 use std::collections::BTreeMap;
 
 use super::Analyzer;
-use crate::ast::{ComposeRoot, NamedTrigger, QueueRef, Span, Spanned, TriggerDecl};
+use crate::ast::{Compose, NamedTrigger, QueueRef, Span, Spanned, TriggerDef};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstIdent, CstValue};
 
 use super::compose::{ComposeSectionParts, TRIGGER_REQUIRES_KIND_HINT};
 
 impl Analyzer {
     pub(super) fn lower_compose_trigger(
         &mut self,
-        root: &mut ComposeRoot,
+        root: &mut Compose,
         trigger_names: &mut BTreeMap<String, Span>,
         parts: ComposeSectionParts,
     ) {
@@ -74,11 +74,11 @@ impl Analyzer {
 
     pub(super) fn lower_trigger_with_target(
         &mut self,
-        kind: RawIdent,
-        body: Option<RawBlock>,
+        kind: CstIdent,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<TriggerDecl> {
-        let body = body.map(|b| RawBlock {
+    ) -> Option<TriggerDef> {
+        let body = body.map(|b| CstBlock {
             fields: b
                 .fields
                 .into_iter()
@@ -94,17 +94,14 @@ impl Analyzer {
     }
 }
 
-fn take_target_field(
-    body: Option<&RawBlock>,
-    errors: &mut Vec<Diagnostic>,
-) -> QueueRef {
+fn take_target_field(body: Option<&CstBlock>, errors: &mut Vec<Diagnostic>) -> QueueRef {
     let Some(block) = body else {
         return QueueRef::Anonymous;
     };
     for field in &block.fields {
         if field.name.name == "target" {
             match &field.value {
-                RawValue::Ident(name, _) => return QueueRef::Named(name.clone()),
+                CstValue::Ident(name, _) => return QueueRef::Named(name.clone()),
                 other => {
                     errors.push(Diagnostic::error(
                         other.span(),
@@ -118,18 +115,14 @@ fn take_target_field(
     QueueRef::Anonymous
 }
 
-fn take_bool_field(
-    body: Option<&RawBlock>,
-    name: &str,
-    errors: &mut Vec<Diagnostic>,
-) -> bool {
+fn take_bool_field(body: Option<&CstBlock>, name: &str, errors: &mut Vec<Diagnostic>) -> bool {
     let Some(block) = body else {
         return false;
     };
     for field in &block.fields {
         if field.name.name == name {
             match &field.value {
-                RawValue::Bool(val, _) => return *val,
+                CstValue::Bool(val, _) => return *val,
                 other => {
                     errors.push(Diagnostic::error(
                         other.span(),

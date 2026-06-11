@@ -2,7 +2,7 @@
 
 Declares a lifecycle event handler. Zero or more per `Iterfile`. Also usable inside a `compose.iter` inline service.
 
-AST: `EventHandlerDecl`, `EventName`, and `Action` in `iter_language/src/ast/event.rs`.
+AST: `EventHandlerDef`, `EventName`, and `Action` in `iter_language/src/ast/event.rs`.
 
 ## Syntax
 

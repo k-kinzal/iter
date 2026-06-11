@@ -4,4 +4,4 @@
 mod trigger_util;
 pub mod webhook;
 
-pub use webhook::{WebhookConfig, WebhookRoute, WebhookTrigger, WebhookTriggerError};
+pub use webhook::{Subscription, WebhookConfig, WebhookTrigger, WebhookTriggerError};

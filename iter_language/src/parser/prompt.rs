@@ -1,12 +1,12 @@
 //! `prompt`, top-level `on`, nested route, and `shell` action parsers.
 
 use super::Parser;
-use super::cst::{RawAction, RawEventHandler, RawPromptMatchArm, RawRoute, RawSection, RawValue};
+use super::cst::{CstAction, CstEventHandler, CstPromptMatchArm, CstRoute, CstSection, CstValue};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
 impl Parser<'_> {
-    pub(super) fn parse_prompt_section(&mut self) -> Option<RawSection> {
+    pub(super) fn parse_prompt_section(&mut self) -> Option<CstSection> {
         let keyword_span = self.peek_span();
         self.bump(); // `prompt`
         // `prompt as <name> "..."` — named prompt definition.
@@ -25,7 +25,7 @@ impl Parser<'_> {
             None
         };
         let (body, body_span) = self.expect_string()?;
-        Some(RawSection::Prompt {
+        Some(CstSection::Prompt {
             keyword_span: keyword_span.clone(),
             name,
             guard,
@@ -35,13 +35,13 @@ impl Parser<'_> {
         })
     }
 
-    pub(super) fn parse_top_on_section(&mut self) -> Option<RawSection> {
+    pub(super) fn parse_top_on_section(&mut self) -> Option<CstSection> {
         let keyword_span = self.peek_span();
         self.bump(); // `on`
         let event = self.expect_ident()?;
         let body = self.parse_block();
         let span_end = body.span.end;
-        Some(RawSection::On {
+        Some(CstSection::On {
             keyword_span: keyword_span.clone(),
             event,
             body,
@@ -49,7 +49,7 @@ impl Parser<'_> {
         })
     }
 
-    pub(super) fn parse_nested_route(&mut self) -> Option<RawRoute> {
+    pub(super) fn parse_nested_route(&mut self) -> Option<CstRoute> {
         let on_span = self.peek_span();
         self.bump(); // `on`
         let (pattern, _pat_span) = self.expect_string()?;
@@ -63,7 +63,7 @@ impl Parser<'_> {
         };
         let body = self.parse_block();
         let span_end = body.span.end;
-        Some(RawRoute {
+        Some(CstRoute {
             event_pattern: pattern,
             when,
             when_span,
@@ -72,11 +72,11 @@ impl Parser<'_> {
         })
     }
 
-    pub(super) fn parse_action(&mut self) -> Option<RawAction> {
+    pub(super) fn parse_action(&mut self) -> Option<CstAction> {
         let kw_span = self.peek_span();
         self.bump(); // `shell`
         let (cmd, cmd_span) = self.expect_string()?;
-        Some(RawAction {
+        Some(CstAction {
             keyword_span: kw_span.clone(),
             command: cmd,
             span: kw_span.start..cmd_span.end,
@@ -84,13 +84,13 @@ impl Parser<'_> {
     }
 
     /// Parse `_ => <value>` — prompt match default arm.
-    pub(super) fn parse_prompt_match_default_arm(&mut self) -> Option<RawPromptMatchArm> {
+    pub(super) fn parse_prompt_match_default_arm(&mut self) -> Option<CstPromptMatchArm> {
         let start = self.peek_span().start;
         self.bump(); // `_`
         self.bump(); // `=>`
         let value = self.parse_prompt_arm_value()?;
         let end = value.span().end;
-        Some(RawPromptMatchArm {
+        Some(CstPromptMatchArm {
             guard: None,
             value,
             span: start..end,
@@ -98,7 +98,7 @@ impl Parser<'_> {
     }
 
     /// Parse `<guard-expr> => <value>` — guarded prompt match arm.
-    pub(super) fn parse_prompt_match_guard_arm(&mut self) -> Option<RawPromptMatchArm> {
+    pub(super) fn parse_prompt_match_guard_arm(&mut self) -> Option<CstPromptMatchArm> {
         let start = self.peek_span().start;
         let guard = self.parse_guard()?;
         if !matches!(self.peek(), Some(Token::FatArrow)) {
@@ -113,7 +113,7 @@ impl Parser<'_> {
         self.bump(); // `=>`
         let value = self.parse_prompt_arm_value()?;
         let end = value.span().end;
-        Some(RawPromptMatchArm {
+        Some(CstPromptMatchArm {
             guard: Some(guard),
             value,
             span: start..end,
@@ -121,32 +121,32 @@ impl Parser<'_> {
     }
 
     /// Parse `on <ident> { <actions> }` — nested event handler inside a block.
-    pub(super) fn parse_nested_event_handler(&mut self) -> Option<RawEventHandler> {
+    pub(super) fn parse_nested_event_handler(&mut self) -> Option<CstEventHandler> {
         let on_span = self.peek_span();
         self.bump(); // `on`
         let event = self.expect_ident()?;
         let body = self.parse_block();
         let span_end = body.span.end;
-        Some(RawEventHandler {
+        Some(CstEventHandler {
             event,
             body,
             span: on_span.start..span_end,
         })
     }
 
-    fn parse_prompt_arm_value(&mut self) -> Option<RawValue> {
+    fn parse_prompt_arm_value(&mut self) -> Option<CstValue> {
         match self.peek() {
             Some(Token::String(s)) => {
                 let s = s.clone();
                 let span = self.peek_span();
                 self.bump();
-                Some(RawValue::String(s, span))
+                Some(CstValue::String(s, span))
             }
             Some(Token::Ident(name)) => {
                 let name = name.clone();
                 let span = self.peek_span();
                 self.bump();
-                Some(RawValue::Ident(name, span))
+                Some(CstValue::Ident(name, span))
             }
             other => {
                 let span = self.peek_span();

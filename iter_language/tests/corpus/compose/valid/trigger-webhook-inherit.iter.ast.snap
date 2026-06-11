@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: trigger-webhook-inherit.iter
 ---
-ComposeRoot {
+Compose {
     telemetry: None,
     queues: [
         Spanned {
@@ -35,7 +35,7 @@ ComposeRoot {
                         ),
                     ),
                     routes: [
-                        WebhookRoute {
+                        Subscription {
                             event_pattern: "push",
                             when: None,
                             priority: None,

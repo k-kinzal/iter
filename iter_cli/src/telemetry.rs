@@ -29,7 +29,7 @@ use std::io::{self, Write};
 use iter_core::log::LogStream;
 use iter_core::process::{LIFECYCLE_TARGET, global_log_sender};
 use iter_core::{Config, LogLevel};
-use iter_language::{TelemetryDecl, TelemetryProtocol};
+use iter_language::{TelemetryDef, TelemetryProtocol};
 use tracing::Level;
 use tracing_subscriber::Layer;
 use tracing_subscriber::filter::filter_fn;
@@ -56,7 +56,7 @@ pub fn init(debug: bool, config: &Config) -> TelemetryGuard {
 pub fn init_for_compose(
     debug: bool,
     config: &Config,
-    telemetry: Option<&TelemetryDecl>,
+    telemetry: Option<&TelemetryDef>,
     project: &str,
     component: Option<&str>,
 ) -> TelemetryGuard {
@@ -170,7 +170,7 @@ pub struct TelemetryGuard {
 }
 
 fn compose_otel_config(
-    telemetry: Option<&TelemetryDecl>,
+    telemetry: Option<&TelemetryDef>,
     project: &str,
     component: Option<&str>,
 ) -> Option<iter_tracing::OtelRuntimeConfig> {
@@ -181,7 +181,7 @@ fn compose_otel_config(
 }
 
 fn otel_config_from_compose(
-    decl: &TelemetryDecl,
+    decl: &TelemetryDef,
     project: &str,
     component: Option<&str>,
 ) -> Option<iter_tracing::OtelRuntimeConfig> {
@@ -373,8 +373,8 @@ mod tests {
         snapshot
     }
 
-    fn telemetry_decl(enabled: bool) -> TelemetryDecl {
-        TelemetryDecl {
+    fn telemetry_decl(enabled: bool) -> TelemetryDef {
+        TelemetryDef {
             enabled,
             service_name: Some("configured".into()),
             service_namespace: None,

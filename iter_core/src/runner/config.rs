@@ -203,8 +203,7 @@ mod tests {
             message: "timeout".into(),
         };
         let json = serde_json::to_string(&original).expect("serialize");
-        let recovered: RunnerTerminationReason =
-            serde_json::from_str(&json).expect("deserialize");
+        let recovered: RunnerTerminationReason = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(original, recovered);
     }
 }

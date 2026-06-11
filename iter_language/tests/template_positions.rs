@@ -36,13 +36,22 @@ runner {{
 #[test]
 fn event_root_is_rejected_in_a_prompt() {
     let src = iterfile("", "{{event.action}}");
-    assert!(parse(&src).is_err(), "`event` is not legal in a prompt body");
+    assert!(
+        parse(&src).is_err(),
+        "`event` is not legal in a prompt body"
+    );
 }
 
 #[test]
 fn signal_metadata_iteration_today_are_legal_in_a_prompt() {
-    let src = iterfile("", "{{signal.id}} {{metadata.k}} {{iteration.count}} {{today}}");
-    assert!(parse(&src).is_ok(), "prompt accepts signal/metadata/iteration/today");
+    let src = iterfile(
+        "",
+        "{{signal.id}} {{metadata.k}} {{iteration.count}} {{today}}",
+    );
+    assert!(
+        parse(&src).is_ok(),
+        "prompt accepts signal/metadata/iteration/today"
+    );
 }
 
 #[test]
@@ -97,7 +106,10 @@ fn declarable_and_referenceable_arg_names_share_a_grammar() {
     // `foo-bar` can never be a declared arg name (no `-`), so it must not
     // validate as a template reference either.
     let src = iterfile("", "{{arg.foo-bar}}");
-    assert!(parse(&src).is_err(), "hyphenated arg references are rejected");
+    assert!(
+        parse(&src).is_err(),
+        "hyphenated arg references are rejected"
+    );
 }
 
 const SQS_DLQ: &str = r#"queue sqs {
@@ -174,7 +186,9 @@ fn illegal_root_in_webhook_when_is_rejected_at_the_guard_span() {
 }"#,
     );
     let errors = parse_compose(&src).expect_err("`error` is illegal in a webhook `when` guard");
-    let when_pos = src.find("{{error.kind}}").expect("source contains the guard");
+    let when_pos = src
+        .find("{{error.kind}}")
+        .expect("source contains the guard");
     // The diagnostic must be located *at* the `when` guard placeholder — not
     // ~20 bytes earlier at the `on` keyword, which is the bug that carrying
     // `when_span` fixes (the placeholder offset is measured from the guard
@@ -185,7 +199,10 @@ fn illegal_root_in_webhook_when_is_rejected_at_the_guard_span() {
                 && d.span.start <= when_pos + "{{error.kind}}".len()
         }),
         "diagnostic should sit at the when-guard near byte {when_pos}; got {:?}",
-        errors.iter().map(|d| (d.span.clone(), d.message.clone())).collect::<Vec<_>>()
+        errors
+            .iter()
+            .map(|d| (d.span.clone(), d.message.clone()))
+            .collect::<Vec<_>>()
     );
 }
 

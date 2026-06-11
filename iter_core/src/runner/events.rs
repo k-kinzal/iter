@@ -8,9 +8,9 @@ use super::event::Event;
 use super::event_emitter::EventEmitter;
 use super::iteration::IterationContext;
 use crate::agent::AgentRun;
+use crate::prompt::Prompt;
 use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::runner::observer::DynRunnerObserver;
-use crate::prompt::Prompt;
 use crate::signal::{Signal, SignalId};
 
 /// Owns the dual emission stream (system observers + user handlers) plus

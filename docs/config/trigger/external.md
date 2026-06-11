@@ -2,7 +2,7 @@
 
 Arbitrary user-defined trigger kind. iter does not interpret the fields; they are preserved verbatim and handed to the runner, which is expected to recognise the kind name and consume the configuration.
 
-AST: `TriggerDecl::External` in `iter_language/src/ast/trigger.rs`.
+AST: `TriggerDef::External` in `iter_language/src/ast/trigger.rs`.
 
 ## Syntax
 

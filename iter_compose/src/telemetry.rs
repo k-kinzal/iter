@@ -1,12 +1,12 @@
 //! Helpers for projecting compose telemetry declarations into process env.
 
-use iter_language::TelemetryDecl;
+use iter_language::TelemetryDef;
 
 /// Build the environment variables a compose-managed service subprocess needs
 /// to initialise OpenTelemetry before it reparses the compose file.
 #[must_use]
 pub fn service_env(
-    telemetry: Option<&TelemetryDecl>,
+    telemetry: Option<&TelemetryDef>,
     project: &str,
     service_name: &str,
 ) -> Vec<(String, String)> {
@@ -45,7 +45,7 @@ pub fn service_env(
 
 /// Build the resource attribute string for environment-driven SDK setup.
 #[must_use]
-pub fn resource_attributes(decl: &TelemetryDecl, project: &str, component: Option<&str>) -> String {
+pub fn resource_attributes(decl: &TelemetryDef, project: &str, component: Option<&str>) -> String {
     let mut attrs = decl.resource_attributes.clone();
     attrs
         .entry("iter.compose.project".to_string())
@@ -69,7 +69,7 @@ pub fn resource_attributes(decl: &TelemetryDecl, project: &str, component: Optio
 
 /// Derive a concrete `OTel` service name from a project-level declaration.
 #[must_use]
-pub fn component_service_name(decl: &TelemetryDecl, project: &str, component: &str) -> String {
+pub fn component_service_name(decl: &TelemetryDef, project: &str, component: &str) -> String {
     let base = decl
         .service_name
         .as_deref()

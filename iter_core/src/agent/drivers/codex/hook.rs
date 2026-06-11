@@ -110,8 +110,7 @@ impl HookBundle {
         hooks_slot.snapshot().await?;
 
         let hooks_dir = project_hooks_dir(cwd, service)?;
-        let user_hooks_sidecar =
-            extract_user_hooks(&hooks_path, "Stop", &hooks_dir).await?;
+        let user_hooks_sidecar = extract_user_hooks(&hooks_path, "Stop", &hooks_dir).await?;
 
         let hook_cmd = hook_script
             .to_str()

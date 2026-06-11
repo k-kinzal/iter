@@ -22,14 +22,15 @@ pub(crate) mod trigger;
 
 use std::path::Path;
 
-use iter_language::{ComposeRoot, parse_compose};
+use iter_language::{Compose, parse_compose};
 
 pub use error::{ComposeError, ServiceRunError, ServiceSubprocessError, TargetedSpawnError};
 pub use plan::{ComposePlan, SingleServiceBuild, build, build_single_service};
 pub use run::{run, spawn_targeted_service};
 pub use service::{
-    ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID,
-    LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, CompletedTask,
+    CompletedTask, ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID,
+    LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE,
+    OrchestratorContext,
 };
 pub use supervisor::{
     TriggerLifecycleState, TriggerStatus, read_status as read_trigger_status, trigger_state_dir,
@@ -55,7 +56,7 @@ pub fn is_compose_filename(path: &Path) -> bool {
 ///
 /// * The file does not exist or cannot be read.
 /// * The parser produced one or more error-severity diagnostics.
-pub fn load_compose(path: &Path) -> Result<ComposeRoot, ComposeError> {
+pub fn load_compose(path: &Path) -> Result<Compose, ComposeError> {
     let source = std::fs::read_to_string(path).map_err(|e| ComposeError::io(path, e))?;
     parse_compose(&source).map_err(|diags| ComposeError::parse(path, &source, &diags))
 }

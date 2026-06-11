@@ -2,7 +2,7 @@
 
 Emits a Signal on a cron schedule.
 
-AST: `TriggerDecl::Cron` in `iter_language/src/ast/trigger.rs`.
+AST: `TriggerDef::Cron` in `iter_language/src/ast/trigger.rs`.
 
 Standalone binary: `iter-cron`.
 

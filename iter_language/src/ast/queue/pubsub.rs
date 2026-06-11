@@ -1,6 +1,6 @@
 //! GCP Pub/Sub `queue pubsub { ... }` AST types.
 
-use super::{DlqPolicyDecl, RetryPolicyDecl, TemplatedString};
+use super::{DlqPolicyDef, MetadataSource, RetryPolicyDef};
 use crate::ast::SecretExpr;
 
 /// Top-level `queue pubsub { ... }` configuration.
@@ -35,7 +35,7 @@ pub struct PubSubConfig {
     /// Optional idempotent startup seek operation.
     pub initial_seek: Option<PubSubInitialSeek>,
     /// Dead-letter handling — typically `Native` (configured outside iter).
-    pub dlq: Option<DlqPolicyDecl>,
+    pub dlq: Option<DlqPolicyDef>,
 }
 
 /// gRPC channel keepalive parameters.
@@ -120,7 +120,7 @@ pub struct PubSubPublisher {
     /// Per-publish RPC timeout in seconds.
     pub request_timeout_secs: Option<i64>,
     /// SDK retry policy for publish RPCs.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
     /// Enable gRPC compression.
     pub enable_compression: Option<bool>,
     /// Minimum payload size to compress.
@@ -128,7 +128,7 @@ pub struct PubSubPublisher {
     /// Static attribute overlay applied to every message.
     pub attributes: Option<Vec<(String, String)>>,
     /// Ordering key source (`none` or `from_metadata("k")`).
-    pub ordering_key_strategy: Option<TemplatedString>,
+    pub ordering_key_strategy: Option<MetadataSource>,
 }
 
 /// Consumer-side knobs.
@@ -153,7 +153,7 @@ pub struct PubSubSubscriber {
     /// Sync-only: return immediately on empty pull (default false).
     pub return_immediately: Option<bool>,
     /// Retry policy for receive RPCs.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
 }
 
 /// Idempotent startup seek operation.

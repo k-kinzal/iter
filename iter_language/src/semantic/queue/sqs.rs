@@ -16,7 +16,7 @@ use crate::ast::{
     SqsProducer,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::RawField;
+use crate::parser::CstField;
 
 const SQS_FIELDS: &[&str] = &[
     "queue_url",
@@ -92,7 +92,7 @@ const CONSUMER_FIELDS: &[&str] = &[
 impl Analyzer {
     pub(in crate::semantic) fn lower_sqs(
         &mut self,
-        body: BTreeMap<String, RawField>,
+        body: BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> SqsConfig {
         let mut fields = body;
@@ -193,7 +193,7 @@ impl Analyzer {
 
     fn lower_sqs_identity(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> SqsIdentity {
         let url = self.take_optional_string(fields, "queue_url");
@@ -241,7 +241,7 @@ impl Analyzer {
 
     pub(in crate::semantic) fn lower_sqs_credentials(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<SqsCredentials> {
         let mut block = self.take_optional_block(fields, "credentials")?;
@@ -291,7 +291,7 @@ impl Analyzer {
 
     fn lower_sqs_credentials_static(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<SqsCredentialKind> {
         let access_key_id =
@@ -309,7 +309,7 @@ impl Analyzer {
 
     fn lower_sqs_credentials_assume_role(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<SqsCredentialKind> {
         let role_arn =
@@ -330,7 +330,7 @@ impl Analyzer {
 
     fn lower_sqs_credentials_profile(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<SqsCredentialKind> {
         let name = self.take_required_string(block, "name", kind_span, "credentials profile");
@@ -340,7 +340,7 @@ impl Analyzer {
 
     fn lower_sqs_credentials_web_identity(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<SqsCredentialKind> {
         let role_arn = self.take_required_string(
@@ -370,7 +370,7 @@ impl Analyzer {
 
     fn lower_sqs_credentials_process(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<SqsCredentialKind> {
         let command = self.take_required_string(block, "command", kind_span, "credentials process");
@@ -380,7 +380,7 @@ impl Analyzer {
 
     pub(in crate::semantic) fn lower_sqs_http_client(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<SqsHttpClient> {
         let mut block = self.take_optional_block(fields, "http_client")?;
         let connect_timeout_secs = self.take_optional_duration(&mut block, "connect_timeout");
@@ -411,7 +411,7 @@ impl Analyzer {
 
     fn lower_sqs_producer(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<SqsProducer> {
         let mut block = self.take_optional_block(fields, "producer")?;
         let delay_seconds = self.take_optional_duration(&mut block, "delay_seconds");
@@ -439,7 +439,7 @@ impl Analyzer {
 
     fn lower_sqs_consumer(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<SqsConsumer> {
         let mut block = self.take_optional_block(fields, "consumer")?;
         let visibility_timeout_secs = self.take_optional_duration(&mut block, "visibility_timeout");

@@ -26,7 +26,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::webhook::{WebhookConfig, WebhookRoute, WebhookTrigger, WebhookTriggerError};
+use crate::webhook::{Subscription, WebhookConfig, WebhookTrigger, WebhookTriggerError};
 use clap::Parser;
 use iter_core::{Priority, Queue};
 use iter_trigger::shutdown::ShutdownError;
@@ -279,9 +279,9 @@ fn resolve_secret(args: &Args) -> Result<Option<String>, WebhookCliError> {
 fn parse_routes(
     raw: &[String],
     base_metadata: &[(String, String)],
-) -> Result<Vec<WebhookRoute>, WebhookCliError> {
+) -> Result<Vec<Subscription>, WebhookCliError> {
     if raw.is_empty() {
-        return Ok(vec![WebhookRoute {
+        return Ok(vec![Subscription {
             event_pattern: "*".into(),
             when: None,
             priority: Priority::NORMAL,
@@ -294,7 +294,7 @@ fn parse_routes(
             Some((p, prio)) if !p.is_empty() => (p.to_owned(), parse_priority(prio)?),
             _ => (entry.to_owned(), Priority::NORMAL),
         };
-        out.push(WebhookRoute {
+        out.push(Subscription {
             event_pattern: pattern,
             when: None,
             priority,

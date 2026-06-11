@@ -219,14 +219,8 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         }
 
         if self.config.per_file && self.config.interval.is_none() {
-            self.run_per_file(
-                &mut rx,
-                cancel,
-                &path_key,
-                &kind_key,
-                &timestamp_key,
-            )
-            .await?;
+            self.run_per_file(&mut rx, cancel, &path_key, &kind_key, &timestamp_key)
+                .await?;
         } else {
             let interval = self
                 .config
@@ -345,7 +339,14 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
             }
 
             self.save_pending_batch(&batch);
-            self.flush_batch(batch, files_key, events_key, changed_count_key, event_count_key).await?;
+            self.flush_batch(
+                batch,
+                files_key,
+                events_key,
+                changed_count_key,
+                event_count_key,
+            )
+            .await?;
             self.clear_pending_batch();
         }
     }
@@ -752,13 +753,11 @@ mod tests {
         let state_dir = tmp.path().join("state");
         fs::create_dir_all(&state_dir).unwrap();
 
-        let batch = vec![
-            ChangeRecord {
-                path: watch_dir.join("recovered.txt"),
-                kind: ChangeKind::Modified,
-                timestamp: Utc::now(),
-            },
-        ];
+        let batch = vec![ChangeRecord {
+            path: watch_dir.join("recovered.txt"),
+            kind: ChangeKind::Modified,
+            timestamp: Utc::now(),
+        }];
         let json = serde_json::to_string(&batch).unwrap();
         fs::write(state_dir.join(PENDING_BATCH_FILENAME), &json).unwrap();
 
@@ -968,10 +967,8 @@ mod tests {
             };
             let files: Vec<String> =
                 serde_json::from_str(files_json).expect("files is valid JSON array");
-            let target_files: Vec<&String> = files
-                .iter()
-                .filter(|f| f.contains("target.txt"))
-                .collect();
+            let target_files: Vec<&String> =
+                files.iter().filter(|f| f.contains("target.txt")).collect();
             assert_eq!(
                 target_files.len(),
                 1,

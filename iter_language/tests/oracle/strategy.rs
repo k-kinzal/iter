@@ -1,4 +1,4 @@
-//! `proptest` strategies for generating `RawFile` CSTs.
+//! `proptest` strategies for generating `CstFile` CSTs.
 //!
 //! The generated trees are intentionally constrained so that the
 //! test-only pretty printer in `pretty.rs` can render them back to source
@@ -6,8 +6,8 @@
 //!   * identifiers are drawn from a bareword alphabet and never equal a
 //!     contextual block-entry keyword (`on`, `shell`) when placed as a
 //!     field name, since the formal grammar rejects such fields,
-//!   * booleans and `null` are emitted as `RawValue::Bool`/`RawValue::Null`,
-//!     never as `RawValue::Ident` with name `"true"`/`"false"`/`"null"`, to
+//!   * booleans and `null` are emitted as `CstValue::Bool`/`CstValue::Null`,
+//!     never as `CstValue::Ident` with name `"true"`/`"false"`/`"null"`, to
 //!     stay on the side of the grammar that prefers `boolean`/`null` before
 //!     `ident` in `value`,
 //!   * strings contain only characters the pretty printer can round-trip,
@@ -18,7 +18,7 @@
 //! shape should run `canonicalize::canonicalize` on both sides anyway.
 
 use iter_language::{
-    RawAction, RawBlock, RawField, RawFile, RawGuard, RawIdent, RawRoute, RawSection, RawValue,
+    CstAction, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstRoute, CstSection, CstValue,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -76,26 +76,26 @@ fn string_lit() -> impl Strategy<Value = String> {
 // Values
 // ---------------------------------------------------------------------------
 
-fn value_leaf() -> impl Strategy<Value = RawValue> {
+fn value_leaf() -> impl Strategy<Value = CstValue> {
     prop_oneof![
-        string_lit().prop_map(|s| RawValue::String(s, 0..0)),
-        (0i64..1_000_000).prop_map(|n| RawValue::Integer(n, 0..0)),
-        (1i64..10_000).prop_map(|n| RawValue::Duration(n, 0..0)),
-        any::<bool>().prop_map(|b| RawValue::Bool(b, 0..0)),
-        Just(RawValue::Null(0..0)),
-        ident_name().prop_map(|s| RawValue::Ident(s, 0..0)),
+        string_lit().prop_map(|s| CstValue::String(s, 0..0)),
+        (0i64..1_000_000).prop_map(|n| CstValue::Integer(n, 0..0)),
+        (1i64..10_000).prop_map(|n| CstValue::Duration(n, 0..0)),
+        any::<bool>().prop_map(|b| CstValue::Bool(b, 0..0)),
+        Just(CstValue::Null(0..0)),
+        ident_name().prop_map(|s| CstValue::Ident(s, 0..0)),
     ]
 }
 
-fn value_strategy() -> impl Strategy<Value = RawValue> {
+fn value_strategy() -> impl Strategy<Value = CstValue> {
     value_leaf().prop_recursive(
         2,  // up to 2 levels of recursion
         16, // max total size
         4,  // items per collection
         |inner| {
             prop_oneof![
-                vec(inner.clone(), 0..=3).prop_map(|items| RawValue::List(items, 0..0)),
-                (ident_name(), vec(inner.clone(), 0..=2)).prop_map(|(name, args)| RawValue::Call {
+                vec(inner.clone(), 0..=3).prop_map(|items| CstValue::List(items, 0..0)),
+                (ident_name(), vec(inner.clone(), 0..=2)).prop_map(|(name, args)| CstValue::Call {
                     name,
                     args,
                     span: 0..0,
@@ -104,13 +104,13 @@ fn value_strategy() -> impl Strategy<Value = RawValue> {
                 vec((ident_name(), inner), 0..=3).prop_map(|entries| {
                     let fields = entries
                         .into_iter()
-                        .map(|(name, value)| RawField {
-                            name: RawIdent { name, span: 0..0 },
+                        .map(|(name, value)| CstField {
+                            name: CstIdent { name, span: 0..0 },
                             value,
                             span: 0..0,
                         })
                         .collect();
-                    RawValue::Block(RawBlock {
+                    CstValue::Block(CstBlock {
                         fields,
                         routes: Vec::new(),
                         actions: Vec::new(),
@@ -128,33 +128,33 @@ fn value_strategy() -> impl Strategy<Value = RawValue> {
 // Blocks
 // ---------------------------------------------------------------------------
 
-fn field_strategy() -> impl Strategy<Value = RawField> {
-    (ident_name(), value_strategy()).prop_map(|(name, value)| RawField {
-        name: RawIdent { name, span: 0..0 },
+fn field_strategy() -> impl Strategy<Value = CstField> {
+    (ident_name(), value_strategy()).prop_map(|(name, value)| CstField {
+        name: CstIdent { name, span: 0..0 },
         value,
         span: 0..0,
     })
 }
 
-fn action_strategy() -> impl Strategy<Value = RawAction> {
-    string_lit().prop_map(|command| RawAction {
+fn action_strategy() -> impl Strategy<Value = CstAction> {
+    string_lit().prop_map(|command| CstAction {
         keyword_span: 0..0,
         command,
         span: 0..0,
     })
 }
 
-fn route_strategy() -> impl Strategy<Value = RawRoute> {
+fn route_strategy() -> impl Strategy<Value = CstRoute> {
     (
         string_lit(),
         proptest::option::of(string_lit()),
         vec(field_strategy(), 0..=3),
     )
-        .prop_map(|(event_pattern, when, fields)| RawRoute {
+        .prop_map(|(event_pattern, when, fields)| CstRoute {
             event_pattern,
             when_span: when.as_ref().map(|_| 0..0),
             when,
-            body: RawBlock {
+            body: CstBlock {
                 fields,
                 routes: Vec::new(),
                 actions: Vec::new(),
@@ -166,13 +166,13 @@ fn route_strategy() -> impl Strategy<Value = RawRoute> {
         })
 }
 
-fn block_strategy() -> impl Strategy<Value = RawBlock> {
+fn block_strategy() -> impl Strategy<Value = CstBlock> {
     (
         vec(field_strategy(), 0..=4),
         vec(route_strategy(), 0..=2),
         vec(action_strategy(), 0..=2),
     )
-        .prop_map(|(fields, routes, actions)| RawBlock {
+        .prop_map(|(fields, routes, actions)| CstBlock {
             fields,
             routes,
             actions,
@@ -186,16 +186,16 @@ fn block_strategy() -> impl Strategy<Value = RawBlock> {
 // Sections
 // ---------------------------------------------------------------------------
 
-fn guard_leaf() -> impl Strategy<Value = RawGuard> {
+fn guard_leaf() -> impl Strategy<Value = CstGuard> {
     (ident_name(), string_lit(), any::<bool>()).prop_map(|(key, value, eq)| {
         if eq {
-            RawGuard::MetadataEq {
+            CstGuard::MetadataEq {
                 key,
                 value,
                 span: 0..0,
             }
         } else {
-            RawGuard::MetadataNeq {
+            CstGuard::MetadataNeq {
                 key,
                 value,
                 span: 0..0,
@@ -204,15 +204,15 @@ fn guard_leaf() -> impl Strategy<Value = RawGuard> {
     })
 }
 
-fn guard_strategy() -> impl Strategy<Value = RawGuard> {
+fn guard_strategy() -> impl Strategy<Value = CstGuard> {
     guard_leaf().prop_recursive(2, 8, 2, |inner| {
         prop_oneof![
-            (inner.clone(), inner.clone()).prop_map(|(l, r)| RawGuard::And(
+            (inner.clone(), inner.clone()).prop_map(|(l, r)| CstGuard::And(
                 Box::new(l),
                 Box::new(r),
                 0..0
             )),
-            (inner.clone(), inner.clone()).prop_map(|(l, r)| RawGuard::Or(
+            (inner.clone(), inner.clone()).prop_map(|(l, r)| CstGuard::Or(
                 Box::new(l),
                 Box::new(r),
                 0..0
@@ -221,7 +221,7 @@ fn guard_strategy() -> impl Strategy<Value = RawGuard> {
     })
 }
 
-fn block_section_strategy() -> impl Strategy<Value = RawSection> {
+fn block_section_strategy() -> impl Strategy<Value = CstSection> {
     (
         prop_oneof![
             Just("queue".to_string()),
@@ -232,10 +232,10 @@ fn block_section_strategy() -> impl Strategy<Value = RawSection> {
         kind_name(),
         proptest::option::of(block_strategy()),
     )
-        .prop_map(|(keyword, kind, body)| RawSection::Block {
+        .prop_map(|(keyword, kind, body)| CstSection::Block {
             keyword,
             keyword_span: 0..0,
-            kind: Some(RawIdent {
+            kind: Some(CstIdent {
                 name: kind,
                 span: 0..0,
             }),
@@ -246,8 +246,8 @@ fn block_section_strategy() -> impl Strategy<Value = RawSection> {
         })
 }
 
-fn runner_section_strategy() -> impl Strategy<Value = RawSection> {
-    proptest::option::of(block_strategy()).prop_map(|body| RawSection::Block {
+fn runner_section_strategy() -> impl Strategy<Value = CstSection> {
+    proptest::option::of(block_strategy()).prop_map(|body| CstSection::Block {
         keyword: "runner".into(),
         keyword_span: 0..0,
         kind: None,
@@ -258,9 +258,9 @@ fn runner_section_strategy() -> impl Strategy<Value = RawSection> {
     })
 }
 
-fn prompt_section_strategy() -> impl Strategy<Value = RawSection> {
+fn prompt_section_strategy() -> impl Strategy<Value = CstSection> {
     (proptest::option::of(guard_strategy()), string_lit()).prop_map(|(guard, body)| {
-        RawSection::Prompt {
+        CstSection::Prompt {
             keyword_span: 0..0,
             name: None,
             guard,
@@ -271,10 +271,10 @@ fn prompt_section_strategy() -> impl Strategy<Value = RawSection> {
     })
 }
 
-fn on_section_strategy() -> impl Strategy<Value = RawSection> {
-    (event_name(), block_strategy()).prop_map(|(event, body)| RawSection::On {
+fn on_section_strategy() -> impl Strategy<Value = CstSection> {
+    (event_name(), block_strategy()).prop_map(|(event, body)| CstSection::On {
         keyword_span: 0..0,
-        event: RawIdent {
+        event: CstIdent {
             name: event,
             span: 0..0,
         },
@@ -283,7 +283,7 @@ fn on_section_strategy() -> impl Strategy<Value = RawSection> {
     })
 }
 
-pub(crate) fn section_strategy() -> impl Strategy<Value = RawSection> {
+pub(crate) fn section_strategy() -> impl Strategy<Value = CstSection> {
     prop_oneof![
         block_section_strategy(),
         runner_section_strategy(),
@@ -292,6 +292,6 @@ pub(crate) fn section_strategy() -> impl Strategy<Value = RawSection> {
     ]
 }
 
-pub(crate) fn file_strategy() -> impl Strategy<Value = RawFile> {
-    vec(section_strategy(), 0..=5).prop_map(|sections| RawFile { sections })
+pub(crate) fn file_strategy() -> impl Strategy<Value = CstFile> {
+    vec(section_strategy(), 0..=5).prop_map(|sections| CstFile { sections })
 }

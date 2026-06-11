@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use super::Analyzer;
 use super::TemplatePosition;
 use super::value::value_from_raw_pure;
-use crate::ast::{ExtractExpr, FilesSource, PriorityKeyword, Span, TriggerDecl, WatchEventKind};
+use crate::ast::{ExtractExpr, FilesSource, PriorityKeyword, Span, TriggerDef, WatchEventKind};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
 
 /// Common trigger fields shared by every built-in kind except `loop` and
 /// `external`.
@@ -20,10 +20,10 @@ struct CommonTriggerFields {
 impl Analyzer {
     pub(super) fn lower_trigger(
         &mut self,
-        kind: Option<RawIdent>,
-        body: Option<RawBlock>,
+        kind: Option<CstIdent>,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<TriggerDecl> {
+    ) -> Option<TriggerDef> {
         let kind = self.require_kind(
             kind,
             keyword_span,
@@ -60,11 +60,11 @@ impl Analyzer {
         Some(decl)
     }
 
-    fn lower_trigger_loop(&mut self, fields: &mut BTreeMap<String, RawField>) -> TriggerDecl {
+    fn lower_trigger_loop(&mut self, fields: &mut BTreeMap<String, CstField>) -> TriggerDef {
         let max_iteration = self.take_optional_int(fields, "max_iteration");
         let delay_secs = self.take_optional_duration(fields, "delay");
         self.reject_unknown_fields(fields, &["max_iteration", "delay"], "trigger loop");
-        TriggerDecl::Loop {
+        TriggerDef::Loop {
             max_iteration,
             delay_secs,
         }
@@ -72,9 +72,9 @@ impl Analyzer {
 
     fn lower_trigger_cron(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<TriggerDecl> {
+    ) -> Option<TriggerDef> {
         let schedule = self.take_required_string(fields, "schedule", kind_span, "trigger cron")?;
         let timezone = self.take_optional_string(fields, "timezone");
         let at_startup = self
@@ -97,7 +97,7 @@ impl Analyzer {
             ],
             "trigger cron",
         );
-        Some(TriggerDecl::Cron {
+        Some(TriggerDef::Cron {
             schedule,
             timezone,
             at_startup,
@@ -111,9 +111,9 @@ impl Analyzer {
 
     fn lower_trigger_watch(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<TriggerDecl> {
+    ) -> Option<TriggerDef> {
         let dir = self.take_required_string(fields, "dir", kind_span, "trigger watch")?;
         let include = self
             .take_optional_string_list(fields, "include")
@@ -160,7 +160,7 @@ impl Analyzer {
             ],
             "trigger watch",
         );
-        Some(TriggerDecl::Watch {
+        Some(TriggerDef::Watch {
             dir,
             include,
             exclude,
@@ -175,9 +175,9 @@ impl Analyzer {
 
     fn lower_trigger_files(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<TriggerDecl> {
+    ) -> Option<TriggerDef> {
         let sources = self.lower_files_sources(fields, kind_span)?;
         let no_exit_on_eof = self
             .take_optional_bool(fields, "no_exit_on_eof")
@@ -195,7 +195,7 @@ impl Analyzer {
             ],
             "trigger files",
         );
-        Some(TriggerDecl::Files {
+        Some(TriggerDef::Files {
             sources,
             no_exit_on_eof,
             base_metadata: common.base_metadata,
@@ -206,9 +206,9 @@ impl Analyzer {
 
     fn lower_trigger_command(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<TriggerDecl> {
+    ) -> Option<TriggerDef> {
         let run = self.take_required_string(fields, "run", kind_span, "trigger command")?;
         let shell = self.take_optional_string(fields, "shell");
         let extract = self.take_extract_expr(fields);
@@ -231,7 +231,7 @@ impl Analyzer {
             ],
             "trigger command",
         );
-        Some(TriggerDecl::Command {
+        Some(TriggerDef::Command {
             run,
             shell,
             extract,
@@ -246,13 +246,13 @@ impl Analyzer {
 
     fn take_extract_expr(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<ExtractExpr> {
         let field = fields.remove("extract")?;
         match field.value {
-            RawValue::Call { name, args, span } => match name.as_str() {
+            CstValue::Call { name, args, span } => match name.as_str() {
                 "regex" => {
-                    if let Some(RawValue::String(s, _)) = args.into_iter().next() {
+                    if let Some(CstValue::String(s, _)) = args.into_iter().next() {
                         Some(ExtractExpr::Regex(s))
                     } else {
                         self.errors.push(Diagnostic::error(
@@ -282,10 +282,10 @@ impl Analyzer {
 
     fn lower_trigger_webhook(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
-        body_block: Option<&RawBlock>,
+        fields: &mut BTreeMap<String, CstField>,
+        body_block: Option<&CstBlock>,
         kind_span: &Span,
-    ) -> Option<TriggerDecl> {
+    ) -> Option<TriggerDef> {
         let host = self.take_optional_string(fields, "host");
         let bind = self.take_optional_string(fields, "bind");
         let port = self.take_optional_int(fields, "port");
@@ -330,7 +330,7 @@ impl Analyzer {
             return None;
         }
 
-        Some(TriggerDecl::Webhook {
+        Some(TriggerDef::Webhook {
             host,
             port,
             bind,
@@ -343,12 +343,12 @@ impl Analyzer {
         })
     }
 
-    fn lower_trigger_external(name: &str, fields: BTreeMap<String, RawField>) -> TriggerDecl {
+    fn lower_trigger_external(name: &str, fields: BTreeMap<String, CstField>) -> TriggerDef {
         let mut config = BTreeMap::new();
         for field in fields.into_values() {
             config.insert(field.name.name.clone(), value_from_raw_pure(field.value));
         }
-        TriggerDecl::External {
+        TriggerDef::External {
             name: name.to_string(),
             config,
         }
@@ -356,7 +356,7 @@ impl Analyzer {
 
     fn take_common_trigger_fields(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> CommonTriggerFields {
         let base_metadata = self
             .take_optional_metadata_block(fields, "metadata", TemplatePosition::TriggerBaseMetadata)
@@ -370,15 +370,12 @@ impl Analyzer {
         }
     }
 
-    fn take_watch_kinds(
-        &mut self,
-        fields: &mut BTreeMap<String, RawField>,
-    ) -> Vec<WatchEventKind> {
+    fn take_watch_kinds(&mut self, fields: &mut BTreeMap<String, CstField>) -> Vec<WatchEventKind> {
         let Some(field) = fields.remove("kinds") else {
             return Vec::new();
         };
         let (items, list_span) = match field.value {
-            RawValue::List(items, span) => {
+            CstValue::List(items, span) => {
                 if items.is_empty() {
                     self.errors.push(Diagnostic::error(
                         span,
@@ -390,11 +387,8 @@ impl Analyzer {
             }
             other => {
                 self.errors.push(
-                    Diagnostic::error(
-                        other.span(),
-                        "`kinds` must be a list of strings",
-                    )
-                    .with_hint("e.g. kinds = [\"created\", \"modified\"]"),
+                    Diagnostic::error(other.span(), "`kinds` must be a list of strings")
+                        .with_hint("e.g. kinds = [\"created\", \"modified\"]"),
                 );
                 return Vec::new();
             }
@@ -404,7 +398,7 @@ impl Analyzer {
         let mut had_error = false;
         for item in items {
             match item {
-                RawValue::String(s, span) => match s.as_str() {
+                CstValue::String(s, span) => match s.as_str() {
                     "created" | "modified" | "removed" => {
                         let kind = match s.as_str() {
                             "created" => WatchEventKind::Created,
@@ -424,13 +418,8 @@ impl Analyzer {
                     _ => {
                         had_error = true;
                         self.errors.push(
-                            Diagnostic::error(
-                                span,
-                                format!(
-                                    "unknown watch event kind `{s}`"
-                                ),
-                            )
-                            .with_hint("valid values: \"created\", \"modified\", \"removed\""),
+                            Diagnostic::error(span, format!("unknown watch event kind `{s}`"))
+                                .with_hint("valid values: \"created\", \"modified\", \"removed\""),
                         );
                     }
                 },
@@ -444,28 +433,26 @@ impl Analyzer {
             }
         }
         if seen.len() == 3 && !had_error {
-            self.errors.push(
-                Diagnostic::warning(
-                    list_span,
-                    "trigger watch: listing all three kinds is equivalent to omitting `kinds`",
-                ),
-            );
+            self.errors.push(Diagnostic::warning(
+                list_span,
+                "trigger watch: listing all three kinds is equivalent to omitting `kinds`",
+            ));
         }
         out
     }
 
     fn lower_files_sources(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<Vec<FilesSource>> {
         if let Some(field) = fields.remove("from") {
             match field.value {
-                RawValue::Ident(name, span) if name == "stdin" => {
+                CstValue::Ident(name, span) if name == "stdin" => {
                     let _ = span;
                     Some(vec![FilesSource::Stdin])
                 }
-                RawValue::String(s, span) => {
+                CstValue::String(s, span) => {
                     if let Some(src) = parse_files_source_string(&s) {
                         Some(vec![src])
                     } else {
@@ -476,7 +463,7 @@ impl Analyzer {
                         None
                     }
                 }
-                RawValue::List(items, list_span) => {
+                CstValue::List(items, list_span) => {
                     if items.is_empty() {
                         self.errors.push(Diagnostic::error(
                             list_span,
@@ -487,7 +474,7 @@ impl Analyzer {
                     let mut out = Vec::with_capacity(items.len());
                     for item in items {
                         match item {
-                            RawValue::String(s, span) => match parse_files_source_string(&s) {
+                            CstValue::String(s, span) => match parse_files_source_string(&s) {
                                 Some(src) => out.push(src),
                                 None => {
                                     self.errors.push(Diagnostic::error(
@@ -496,7 +483,7 @@ impl Analyzer {
                                     ));
                                 }
                             },
-                            RawValue::Ident(name, span) if name == "stdin" => {
+                            CstValue::Ident(name, span) if name == "stdin" => {
                                 self.errors.push(
                                     Diagnostic::error(
                                         span,
@@ -527,7 +514,7 @@ impl Analyzer {
             }
         } else if let Some(field) = fields.remove("path") {
             match field.value {
-                RawValue::String(s, _) => Some(vec![FilesSource::Path(s)]),
+                CstValue::String(s, _) => Some(vec![FilesSource::Path(s)]),
                 other => {
                     self.errors
                         .push(Diagnostic::error(other.span(), "`path` must be a string"));

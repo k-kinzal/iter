@@ -1,7 +1,7 @@
 //! Compose trigger construction and in-process execution.
 //!
 //! Each trigger kind declared in `compose.iter` is built from its
-//! [`TriggerDecl`] and run as a tokio task inside the compose
+//! [`TriggerDef`] and run as a tokio task inside the compose
 //! orchestrator. The concrete trigger implementations live in the
 //! standalone CLI crates (`iter_cron_cli`, `iter_watch_cli`, etc.);
 //! this module wires them into the compose runtime.
@@ -16,10 +16,10 @@ use iter_core::{Metadata, MetadataKey, MetadataValue, Priority, Queue, Signal};
 use iter_cron_cli::CronTrigger;
 use iter_files_cli::{FilesSource, FilesTrigger};
 use iter_language::{
-    ExtractExpr, NamedTrigger, OnErrorKeyword, PriorityKeyword, TriggerDecl, WatchEventKind,
+    ExtractExpr, NamedTrigger, OnErrorKeyword, PriorityKeyword, TriggerDef, WatchEventKind,
 };
 use iter_watch_cli::{ChangeKind, WatchConfig, WatchTrigger};
-use iter_webhook_cli::{WebhookConfig, WebhookRoute as WebhookRouteConfig, WebhookTrigger};
+use iter_webhook_cli::{Subscription as SubscriptionConfig, WebhookConfig, WebhookTrigger};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -33,7 +33,7 @@ use super::error::ComposeError;
 #[derive(Clone)]
 pub(crate) struct ComposeTrigger {
     pub(crate) name: String,
-    pub(crate) decl: TriggerDecl,
+    pub(crate) decl: TriggerDef,
     pub(crate) queue: Arc<AnyQueue>,
     pub(crate) terminate_on_completion: bool,
     pub(crate) state_dir: Option<PathBuf>,
@@ -46,7 +46,7 @@ impl ComposeTrigger {
     pub(crate) fn is_finite(&self) -> bool {
         matches!(
             self.decl,
-            TriggerDecl::Files {
+            TriggerDef::Files {
                 no_exit_on_eof: false,
                 ..
             }
@@ -56,13 +56,13 @@ impl ComposeTrigger {
     /// Human-readable kind name for status reporting.
     pub(crate) fn kind_name(&self) -> &'static str {
         match &self.decl {
-            TriggerDecl::Cron { .. } => "cron",
-            TriggerDecl::Watch { .. } => "watch",
-            TriggerDecl::Command { .. } => "command",
-            TriggerDecl::Files { .. } => "files",
-            TriggerDecl::Webhook { .. } => "webhook",
-            TriggerDecl::Loop { .. } => "loop",
-            TriggerDecl::External { .. } => "external",
+            TriggerDef::Cron { .. } => "cron",
+            TriggerDef::Watch { .. } => "watch",
+            TriggerDef::Command { .. } => "command",
+            TriggerDef::Files { .. } => "files",
+            TriggerDef::Webhook { .. } => "webhook",
+            TriggerDef::Loop { .. } => "loop",
+            TriggerDef::External { .. } => "external",
         }
     }
 }
@@ -95,7 +95,7 @@ pub(crate) fn build_trigger(
     named: &NamedTrigger,
     queues: &std::collections::BTreeMap<String, Arc<AnyQueue>>,
 ) -> Result<ComposeTrigger, ComposeError> {
-    if let TriggerDecl::External { ref name, .. } = named.decl {
+    if let TriggerDef::External { ref name, .. } = named.decl {
         return Err(ComposeError::UnsupportedTriggerKind {
             trigger_name: named.name.clone(),
             kind: name.clone(),
@@ -153,13 +153,13 @@ pub(crate) async fn enqueue_terminate(trigger: &ComposeTrigger) -> Result<(), Tr
 #[allow(clippy::too_many_lines)]
 async fn dispatch_trigger(
     name: &str,
-    decl: TriggerDecl,
+    decl: TriggerDef,
     queue: Arc<AnyQueue>,
     cancel: CancellationToken,
     state_dir: Option<PathBuf>,
 ) -> Result<(), TriggerRunError> {
     match decl {
-        TriggerDecl::Cron {
+        TriggerDef::Cron {
             schedule,
             timezone,
             at_startup,
@@ -183,7 +183,7 @@ async fn dispatch_trigger(
             )
             .await
         }
-        TriggerDecl::Watch {
+        TriggerDef::Watch {
             dir,
             include,
             exclude,
@@ -210,7 +210,7 @@ async fn dispatch_trigger(
             )
             .await
         }
-        TriggerDecl::Command {
+        TriggerDef::Command {
             run: command,
             shell,
             extract,
@@ -236,7 +236,7 @@ async fn dispatch_trigger(
             )
             .await
         }
-        TriggerDecl::Files {
+        TriggerDef::Files {
             sources,
             no_exit_on_eof,
             base_metadata,
@@ -255,7 +255,7 @@ async fn dispatch_trigger(
             )
             .await
         }
-        TriggerDecl::Webhook {
+        TriggerDef::Webhook {
             host,
             port,
             bind,
@@ -281,14 +281,12 @@ async fn dispatch_trigger(
             )
             .await
         }
-        TriggerDecl::Loop { .. } => Err(TriggerRunError::Build(Box::from(format!(
+        TriggerDef::Loop { .. } => Err(TriggerRunError::Build(Box::from(format!(
             "trigger `{name}`: loop triggers are not supported in compose; use runner.behavior = loop"
         )))),
-        TriggerDecl::External { name: kind, .. } => {
-            Err(TriggerRunError::Build(Box::from(format!(
-                "trigger `{name}`: external trigger type `{kind}` is not supported in compose runtime"
-            ))))
-        }
+        TriggerDef::External { name: kind, .. } => Err(TriggerRunError::Build(Box::from(format!(
+            "trigger `{name}`: external trigger type `{kind}` is not supported in compose runtime"
+        )))),
     }
 }
 
@@ -354,9 +352,15 @@ async fn dispatch_watch(
         .and_then(|s| u64::try_from(s).ok())
         .map(Duration::from_secs);
     let allowed_kinds = convert_watch_kinds(&kinds);
-    let config =
-        WatchConfig::new(PathBuf::from(&dir), &include, &exclude, per_file, interval, allowed_kinds)
-            .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
+    let config = WatchConfig::new(
+        PathBuf::from(&dir),
+        &include,
+        &exclude,
+        per_file,
+        interval,
+        allowed_kinds,
+    )
+    .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
     let metadata = build_metadata(base_metadata);
     let mut trigger = WatchTrigger::new(queue, config)
         .with_base_metadata(metadata)
@@ -457,7 +461,7 @@ async fn dispatch_webhook(
     bind: Option<String>,
     path: String,
     secret: Option<iter_language::SecretExpr>,
-    routes: Vec<iter_language::WebhookRoute>,
+    routes: Vec<iter_language::Subscription>,
     base_metadata: &[(String, String)],
     priority: Option<PriorityKeyword>,
 ) -> Result<(), TriggerRunError> {
@@ -484,7 +488,7 @@ async fn dispatch_webhook(
         .transpose()
         .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
     let default_priority = convert_priority(priority);
-    let webhook_routes: Vec<WebhookRouteConfig> = routes
+    let webhook_routes: Vec<SubscriptionConfig> = routes
         .into_iter()
         .map(|r| {
             let route_priority = r
@@ -492,7 +496,7 @@ async fn dispatch_webhook(
                 .map_or(default_priority, |kw| convert_priority(Some(kw)));
             let mut route_metadata = base_metadata.to_vec();
             route_metadata.extend(r.metadata);
-            WebhookRouteConfig {
+            SubscriptionConfig {
                 event_pattern: r.event_pattern,
                 when: r.when,
                 priority: route_priority,

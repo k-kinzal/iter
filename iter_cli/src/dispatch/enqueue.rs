@@ -2,7 +2,7 @@
 //!
 //! Resolves a queue from one of three sources, in this priority:
 //!
-//! 1. `--queue-url URL` — scheme-dispatched to a [`QueueDecl`] variant and
+//! 1. `--queue-url URL` — scheme-dispatched to a [`QueueDef`] variant and
 //!    built via [`build_queue`].
 //! 2. `-f PATH` (or auto-detected `./compose.iter`/`./Iterfile`) — built
 //!    from the file's queue declaration. Compose files with multiple
@@ -18,7 +18,7 @@ use iter_compose::{AnyQueue, ComposeError, build_queue, is_compose_filename, loa
 use iter_core::queue::Priority;
 use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
 use iter_core::{Config, Queue};
-use iter_language::{ComposeRoot, NamedQueue, QueueDecl};
+use iter_language::{Compose, NamedQueue, QueueDef};
 use percent_encoding::percent_decode_str;
 use thiserror::Error;
 
@@ -188,13 +188,13 @@ fn resolve_queue(args: &EnqueueArgs) -> Result<AnyQueue, EnqueueCmdError> {
 
 fn queue_from_url(url: &str) -> Result<AnyQueue, EnqueueCmdError> {
     if url == "memory://" || url == "memory:" {
-        return Ok(build_queue(&QueueDecl::Memory).map_err(ComposeError::from)?);
+        return Ok(build_queue(&QueueDef::Memory).map_err(ComposeError::from)?);
     }
     if let Some(rest) = url.strip_prefix("file://") {
         if rest.is_empty() {
             return Err(EnqueueCmdError::FileUrlMissingPath);
         }
-        return Ok(build_queue(&QueueDecl::File {
+        return Ok(build_queue(&QueueDef::File {
             path: rest.to_string(),
         })
         .map_err(ComposeError::from)?);
@@ -202,7 +202,7 @@ fn queue_from_url(url: &str) -> Result<AnyQueue, EnqueueCmdError> {
     if url.starts_with("redis://") || url.starts_with("rediss://") {
         let (url_part, key) = split_redis_url(url);
         return Ok(
-            build_queue(&QueueDecl::Redis { url: url_part, key }).map_err(ComposeError::from)?
+            build_queue(&QueueDef::Redis { url: url_part, key }).map_err(ComposeError::from)?
         );
     }
     Err(EnqueueCmdError::UnsupportedQueueUrl(url.to_owned()))
@@ -225,7 +225,7 @@ fn split_redis_url(url: &str) -> (String, String) {
     }
 }
 
-fn load_iterfile_queue(path: &Path) -> Result<QueueDecl, EnqueueCmdError> {
+fn load_iterfile_queue(path: &Path) -> Result<QueueDef, EnqueueCmdError> {
     let loaded = super::load::load_iterfile(Some(path))?;
     loaded
         .iterfile
@@ -254,7 +254,7 @@ fn resolve_from_compose(
     path: &Path,
     queue_name: Option<&str>,
 ) -> Result<AnyQueue, EnqueueCmdError> {
-    let root: ComposeRoot = load_compose(path)?;
+    let root: Compose = load_compose(path)?;
     if root.queues.is_empty() {
         return Err(EnqueueCmdError::NoQueuesInCompose {
             path: path.to_path_buf(),
@@ -286,7 +286,7 @@ fn resolve_from_compose(
     Ok(build_queue(&decl.decl).map_err(ComposeError::from)?)
 }
 
-fn find_named_queue<'a>(root: &'a ComposeRoot, name: &str) -> Option<&'a NamedQueue> {
+fn find_named_queue<'a>(root: &'a Compose, name: &str) -> Option<&'a NamedQueue> {
     root.queues.iter().map(|q| &q.node).find(|q| q.name == name)
 }
 

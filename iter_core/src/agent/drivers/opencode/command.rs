@@ -400,6 +400,9 @@ mod tests {
         // `result.error` JSON; trusting the non-zero exit here is the only
         // signal left, and it must NOT be misread as a successful turn.
         let err = interpret(&output("", RawExit::Code(1))).expect_err("err");
-        assert!(matches!(err, OpenCodeError::Failed { code: Some(1), .. }), "got {err:?}");
+        assert!(
+            matches!(err, OpenCodeError::Failed { code: Some(1), .. }),
+            "got {err:?}"
+        );
     }
 }

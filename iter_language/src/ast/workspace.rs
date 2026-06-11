@@ -25,7 +25,7 @@ pub enum CloneApplyBackMode {
 /// empty when [`mode`](Self::mode) is `Discard`; this is enforced by the
 /// semantic analyzer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ApplyBackDecl {
+pub struct ApplyBackDef {
     /// Reconciliation strategy.
     pub mode: CloneApplyBackMode,
     /// Apply-back-time exclude pattern list. Empty = no exclusions.
@@ -37,7 +37,7 @@ pub struct ApplyBackDecl {
 
 /// Workspace backend declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WorkspaceDecl {
+pub enum WorkspaceDef {
     /// Run agents directly inside the existing directory at `base`.
     Local {
         /// Filesystem path to the workspace root. Required.
@@ -62,11 +62,11 @@ pub enum WorkspaceDecl {
         preserve_mtime: bool,
         /// Reconciliation block (mode + apply-back-time filter).
         /// Required.
-        apply_back: ApplyBackDecl,
+        apply_back: ApplyBackDef,
     },
     /// Run agents inside a sandboxed copy of `base`. The sandbox is a
     /// tmpdir clone (honouring the same excludes / includes / mtime /
-    /// apply-back knobs as [`Clone`](WorkspaceDecl::Clone)) wrapped by a
+    /// apply-back knobs as [`Clone`](WorkspaceDef::Clone)) wrapped by a
     /// kernel-level sandbox (`sandbox-exec` on macOS, `bwrap` on Linux).
     Sandbox {
         /// Source directory used to seed the sandbox. Required.
@@ -81,9 +81,9 @@ pub enum WorkspaceDecl {
         preserve_mtime: bool,
         /// Reconciliation block (mode + apply-back-time filter).
         /// Required.
-        apply_back: ApplyBackDecl,
+        apply_back: ApplyBackDef,
         /// Workspace-level sandbox policy (upper-bound rules). Required.
-        policy: SandboxPolicyDecl,
+        policy: SandboxPolicyDef,
     },
 }
 
@@ -93,7 +93,7 @@ pub enum WorkspaceDecl {
 /// projects cannot function without it, others must run isolated). The
 /// source file must spell it out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SandboxNetworkDecl {
+pub enum SandboxNetworkDef {
     /// No outbound network.
     Off,
     /// Unrestricted outbound network.
@@ -111,9 +111,9 @@ pub enum SandboxNetworkDecl {
 /// `network` is required: there is no honest default (`off` breaks some
 /// projects, `all` breaks others).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxPolicyDecl {
+pub struct SandboxPolicyDef {
     /// Network-access rule. Required.
-    pub network: SandboxNetworkDecl,
+    pub network: SandboxNetworkDef,
     /// Absolute paths outside the workspace tmpdir the agent may read.
     pub allow_read_outside: Vec<String>,
     /// Absolute paths outside the workspace tmpdir the agent may write.

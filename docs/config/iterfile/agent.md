@@ -2,7 +2,7 @@
 
 Declares the AI agent that runs inside the workspace. Optional — zero or one block per `Iterfile`. Also usable inside a `compose.iter` inline service.
 
-AST: `AgentDecl` and `AgentMode` in `iter_language/src/ast/agent.rs`.
+AST: `AgentDef` and `AgentMode` in `iter_language/src/ast/agent.rs`.
 
 ## Syntax
 

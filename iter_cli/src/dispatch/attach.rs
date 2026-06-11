@@ -20,9 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iter_core::log::{LogStream, NdjsonReader};
-use iter_core::process::{
-    ProcessError, ProcessHandle, ProcessId, ProcessRegistry, ProcessStatus,
-};
+use iter_core::process::{ProcessError, ProcessHandle, ProcessId, ProcessRegistry, ProcessStatus};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;

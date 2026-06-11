@@ -1,4 +1,4 @@
-//! Lowering of [`RawGuard`] CST nodes into [`PromptGuard`] AST nodes.
+//! Lowering of [`CstGuard`] CST nodes into [`PromptGuard`] AST nodes.
 //!
 //! This is also where the iteration-guard well-formedness rules live:
 //!
@@ -18,17 +18,17 @@
 
 use crate::ast::{CmpOp, IterationField, PromptGuard};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawCmpOp, RawGuard};
+use crate::parser::{CstCmpOp, CstGuard};
 
 const ITERATION_NUMERIC_FIELDS_HINT: &str = "valid numeric `iteration.*` fields: `count`, `previous_exit_code`, `consecutive_failures`, `consecutive_successes`. Use `iteration.previous_result ==/!= \"none|success|errored\"` for the result string.";
 
 const ITERATION_RESULT_VALUES: &[&str] = &["none", "success", "errored"];
 
-pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) -> PromptGuard {
+pub(super) fn lower_guard_pure(guard: CstGuard, errors: &mut Vec<Diagnostic>) -> PromptGuard {
     match guard {
-        RawGuard::MetadataEq { key, value, .. } => PromptGuard::MetadataEq { key, value },
-        RawGuard::MetadataNeq { key, value, .. } => PromptGuard::MetadataNeq { key, value },
-        RawGuard::IterationCmp {
+        CstGuard::MetadataEq { key, value, .. } => PromptGuard::MetadataEq { key, value },
+        CstGuard::MetadataNeq { key, value, .. } => PromptGuard::MetadataNeq { key, value },
+        CstGuard::IterationCmp {
             field,
             field_span,
             modulus,
@@ -54,7 +54,7 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
                     );
                     // Fall back to a numeric field so the AST shape is
                     // representable; the error severity prevents the
-                    // caller from returning a `Root` anyway.
+                    // caller from returning a `Iterfile` anyway.
                     IterationField::Count
                 }
                 other => {
@@ -96,7 +96,7 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
                 rhs,
             }
         }
-        RawGuard::IterationResultEq {
+        CstGuard::IterationResultEq {
             field,
             field_span,
             value,
@@ -106,7 +106,7 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
             check_result_string_rhs(&field, field_span, &value, value_span, errors);
             PromptGuard::IterationResultEq { value }
         }
-        RawGuard::IterationResultNeq {
+        CstGuard::IterationResultNeq {
             field,
             field_span,
             value,
@@ -116,11 +116,11 @@ pub(super) fn lower_guard_pure(guard: RawGuard, errors: &mut Vec<Diagnostic>) ->
             check_result_string_rhs(&field, field_span, &value, value_span, errors);
             PromptGuard::IterationResultNeq { value }
         }
-        RawGuard::And(l, r, _) => PromptGuard::And(
+        CstGuard::And(l, r, _) => PromptGuard::And(
             Box::new(lower_guard_pure(*l, errors)),
             Box::new(lower_guard_pure(*r, errors)),
         ),
-        RawGuard::Or(l, r, _) => PromptGuard::Or(
+        CstGuard::Or(l, r, _) => PromptGuard::Or(
             Box::new(lower_guard_pure(*l, errors)),
             Box::new(lower_guard_pure(*r, errors)),
         ),
@@ -171,13 +171,13 @@ fn check_result_string_rhs(
     }
 }
 
-fn lower_cmp_op(op: RawCmpOp) -> CmpOp {
+fn lower_cmp_op(op: CstCmpOp) -> CmpOp {
     match op {
-        RawCmpOp::Eq => CmpOp::Eq,
-        RawCmpOp::Neq => CmpOp::Neq,
-        RawCmpOp::Lt => CmpOp::Lt,
-        RawCmpOp::Le => CmpOp::Le,
-        RawCmpOp::Gt => CmpOp::Gt,
-        RawCmpOp::Ge => CmpOp::Ge,
+        CstCmpOp::Eq => CmpOp::Eq,
+        CstCmpOp::Neq => CmpOp::Neq,
+        CstCmpOp::Lt => CmpOp::Lt,
+        CstCmpOp::Le => CmpOp::Le,
+        CstCmpOp::Gt => CmpOp::Gt,
+        CstCmpOp::Ge => CmpOp::Ge,
     }
 }

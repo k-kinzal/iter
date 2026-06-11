@@ -5,7 +5,7 @@
 /// overridden via `iter run --arg name=value` or compose service
 /// `args { name = "value" }` blocks.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArgDecl {
+pub struct ArgDef {
     /// Argument name. Must be a valid identifier.
     pub name: String,
     /// Default value. `None` means the arg is required and must be

@@ -52,6 +52,7 @@ pub mod shutdown;
 pub mod spawner;
 pub mod status;
 
+pub use crate::runner::{DynRunnerObserver, RedactedMetadata, RunnerLifecycle, RunnerObserver};
 pub use adoption::adopt_from_argv;
 pub use error::{
     AdoptError, LockedSectionError, ObserverError, ProcessError, RegistryError, Result,
@@ -59,7 +60,6 @@ pub use error::{
 };
 pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
-pub use crate::runner::{DynRunnerObserver, RedactedMetadata, RunnerLifecycle, RunnerObserver};
 pub use log::{
     DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,
     install_global_log_sender, open_output,

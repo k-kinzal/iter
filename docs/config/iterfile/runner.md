@@ -2,7 +2,7 @@
 
 Declares the runtime policy for the iter loop. Optional — zero or one block per `Iterfile`. Also usable inside a `compose.iter` inline service.
 
-AST: `RunnerDecl` and `RunnerBehavior` in `iter_language/src/ast/runner.rs`.
+AST: `RunnerDef` and `RunnerBehavior` in `iter_language/src/ast/runner.rs`.
 
 ## Syntax
 

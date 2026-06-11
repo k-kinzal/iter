@@ -6,7 +6,7 @@
 //! core-level handler registrations.
 
 use iter_core::{EventName, RunnerBuilder, ShellEventHandler, TemplateError};
-use iter_language::{Action, EventHandlerDecl, Root, Spanned};
+use iter_language::{Action, EventHandlerDef, Iterfile, Spanned};
 
 use crate::{AnyAgent, AnyQueue, AnyWorkspace};
 
@@ -20,12 +20,8 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
         iter_language::EventName::WorkspaceSetupFinished => EventName::WorkspaceSetupFinished,
         iter_language::EventName::AgentStarting => EventName::AgentStarting,
         iter_language::EventName::AgentFinished => EventName::AgentFinished,
-        iter_language::EventName::WorkspaceTeardownStarting => {
-            EventName::WorkspaceTeardownStarting
-        }
-        iter_language::EventName::WorkspaceTeardownFinished => {
-            EventName::WorkspaceTeardownFinished
-        }
+        iter_language::EventName::WorkspaceTeardownStarting => EventName::WorkspaceTeardownStarting,
+        iter_language::EventName::WorkspaceTeardownFinished => EventName::WorkspaceTeardownFinished,
         iter_language::EventName::RunnerError => EventName::RunnerError,
         iter_language::EventName::RunnerFinished => EventName::RunnerFinished,
     }
@@ -34,7 +30,7 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 /// Register every `on <event> { shell "..." }` block from `iterfile` against
 /// `builder`.
 ///
-/// Collects event handlers from all runners in the Root and registers them.
+/// Collects event handlers from all runners in the Iterfile and registers them.
 /// Convenience wrapper around [`register_event_handlers_from_events`] for the
 /// Iterfile case. Compose-side code that ships its own event slice should
 /// call [`register_event_handlers_from_events`] directly.
@@ -45,7 +41,7 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 /// Handlebars template.
 pub fn register_event_handlers(
     mut builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
-    iterfile: &Root,
+    iterfile: &Iterfile,
 ) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, TemplateError> {
     for runner in &iterfile.runners {
         builder = register_event_handlers_from_events(builder, &runner.node.events)?;
@@ -64,11 +60,11 @@ pub fn register_event_handlers(
 /// Handlebars template.
 pub fn register_event_handlers_from_events(
     mut builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
-    events: &[Spanned<EventHandlerDecl>],
+    events: &[Spanned<EventHandlerDef>],
 ) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, TemplateError> {
     for spanned in events {
         let Spanned { node, .. } = spanned;
-        let EventHandlerDecl { event, actions } = node;
+        let EventHandlerDef { event, actions } = node;
         let core_name = to_core_event_name(*event);
         for action in actions {
             match action {
@@ -85,11 +81,11 @@ pub fn register_event_handlers_from_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_language::{Action, EventHandlerDecl, Spanned};
+    use iter_language::{Action, EventHandlerDef, Spanned};
 
-    fn handler_decl(event: iter_language::EventName, cmd: &str) -> Spanned<EventHandlerDecl> {
+    fn handler_decl(event: iter_language::EventName, cmd: &str) -> Spanned<EventHandlerDef> {
         Spanned::new(
-            EventHandlerDecl {
+            EventHandlerDef {
                 event,
                 actions: vec![Action::Shell(cmd.to_owned())],
             },
@@ -136,8 +132,7 @@ mod tests {
             iter_language::EventName::RunnerStarting,
             "echo {{",
         )];
-        let builder =
-            iter_core::Runner::<AnyQueue, AnyWorkspace, AnyAgent>::builder();
+        let builder = iter_core::Runner::<AnyQueue, AnyWorkspace, AnyAgent>::builder();
         let result = register_event_handlers_from_events(builder, &events);
         assert!(result.is_err());
     }

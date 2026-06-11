@@ -1,7 +1,7 @@
 //! `compose.iter` lowerer.
 //!
 //! Reuses the same CST/parser as the Iterfile path but interprets each
-//! [`RawSection::Block`] differently: the first ident is the section *name*
+//! [`CstSection::Block`] differently: the first ident is the section *name*
 //! (instead of the kind), and the optional second ident — when present — is
 //! the kind. The compose file's grammar is otherwise identical to an
 //! Iterfile body, so the per-kind builders (`lower_queue`, `lower_workspace`,
@@ -9,13 +9,11 @@
 
 use std::collections::BTreeMap;
 
-use super::compose_resolve::resolve_queue_refs;
 use super::Analyzer;
-use crate::ast::{
-    ComposeRoot, NamedQueue, Span, Spanned, TelemetryDecl, TelemetryProtocol,
-};
+use super::compose_resolve::resolve_queue_refs;
+use crate::ast::{Compose, NamedQueue, Span, Spanned, TelemetryDef, TelemetryProtocol};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawField, RawFile, RawIdent, RawSection, RawValue};
+use crate::parser::{CstBlock, CstField, CstFile, CstIdent, CstSection, CstValue};
 
 const QUEUE_REQUIRES_KIND_HINT: &str = "compose.iter queues take a name *and* a backend kind: e.g. `queue main file { path = \"./.iter/queue\" }`.";
 pub(super) const TRIGGER_REQUIRES_KIND_HINT: &str = "compose.iter triggers take a name *and* a kind: e.g. `trigger nightly cron { schedule = \"0 0 * * *\" target = main }`.";
@@ -23,7 +21,7 @@ pub(super) const SERVICE_NO_KIND_HINT: &str = "compose.iter services take a name
 pub(super) const COMPOSE_NO_KIND_HINT: &str = "compose.iter compose blocks take a name only: `compose child { build = \"./child/compose.iter\" }`.";
 const TELEMETRY_NO_KIND_HINT: &str = "compose.iter telemetry is a singleton block: `telemetry { endpoint = \"http://collector:4318\" }`.";
 
-pub(crate) fn lower_compose_and_check(file: RawFile) -> (Option<ComposeRoot>, Vec<Diagnostic>) {
+pub(crate) fn lower_compose_and_check(file: CstFile) -> (Option<Compose>, Vec<Diagnostic>) {
     let mut analyzer = Analyzer::default();
     let result = analyzer.lower_compose(file);
     // Note: `finish_arg_refs` is deliberately Iterfile-only. A compose.iter
@@ -46,22 +44,22 @@ struct ComposeNameSets {
 }
 
 pub(super) struct ComposeSectionParts {
-    pub(super) kind: Option<RawIdent>,
-    pub(super) kind2: Option<RawIdent>,
-    pub(super) body: Option<RawBlock>,
+    pub(super) kind: Option<CstIdent>,
+    pub(super) kind2: Option<CstIdent>,
+    pub(super) body: Option<CstBlock>,
     pub(super) keyword_span: Span,
     pub(super) span: Span,
 }
 
 impl Analyzer {
     #[allow(clippy::too_many_lines)]
-    fn lower_compose(&mut self, file: RawFile) -> ComposeRoot {
-        let mut root = ComposeRoot::default();
+    fn lower_compose(&mut self, file: CstFile) -> Compose {
+        let mut root = Compose::default();
         let mut names = ComposeNameSets::default();
 
         for section in file.sections {
             match section {
-                RawSection::Block {
+                CstSection::Block {
                     keyword,
                     keyword_span,
                     kind,
@@ -77,85 +75,85 @@ impl Analyzer {
                         ).with_hint("compose.iter uses `<keyword> <name> [<kind>] {{ ... }}` — the first identifier is the name."));
                     }
                     match keyword.as_str() {
-                    "queue" => {
-                        self.lower_compose_queue(
-                            &mut root,
-                            &mut names.queues,
-                            ComposeSectionParts {
-                                kind,
-                                kind2,
-                                body,
-                                keyword_span,
-                                span,
-                            },
-                        );
-                    }
-                    "service" => {
-                        self.lower_compose_service_section(
-                            &mut root,
-                            &mut names.services,
-                            ComposeSectionParts {
-                                kind,
-                                kind2,
-                                body,
-                                keyword_span,
-                                span,
-                            },
-                        );
-                    }
-                    "trigger" => {
-                        self.lower_compose_trigger(
-                            &mut root,
-                            &mut names.triggers,
-                            ComposeSectionParts {
-                                kind,
-                                kind2,
-                                body,
-                                keyword_span,
-                                span,
-                            },
-                        );
-                    }
-                    "compose" => {
-                        self.lower_compose_compose(
-                            &mut root,
-                            &mut names.composes,
-                            ComposeSectionParts {
-                                kind,
-                                kind2,
-                                body,
-                                keyword_span,
-                                span,
-                            },
-                        );
-                    }
-                    "telemetry" => {
-                        self.lower_compose_telemetry(
-                            &mut root,
-                            &mut names.telemetry,
-                            ComposeSectionParts {
-                                kind,
-                                kind2,
-                                body,
-                                keyword_span,
-                                span,
-                            },
-                        );
-                    }
-                    other => {
-                        self.errors.push(
-                            Diagnostic::error(
-                                keyword_span,
-                                format!("unknown compose.iter top-level keyword `{other}`"),
-                            )
-                            .with_hint(
-                                "expected one of: queue, service, trigger, compose, telemetry.",
-                            ),
-                        );
+                        "queue" => {
+                            self.lower_compose_queue(
+                                &mut root,
+                                &mut names.queues,
+                                ComposeSectionParts {
+                                    kind,
+                                    kind2,
+                                    body,
+                                    keyword_span,
+                                    span,
+                                },
+                            );
+                        }
+                        "service" => {
+                            self.lower_compose_service_section(
+                                &mut root,
+                                &mut names.services,
+                                ComposeSectionParts {
+                                    kind,
+                                    kind2,
+                                    body,
+                                    keyword_span,
+                                    span,
+                                },
+                            );
+                        }
+                        "trigger" => {
+                            self.lower_compose_trigger(
+                                &mut root,
+                                &mut names.triggers,
+                                ComposeSectionParts {
+                                    kind,
+                                    kind2,
+                                    body,
+                                    keyword_span,
+                                    span,
+                                },
+                            );
+                        }
+                        "compose" => {
+                            self.lower_compose_compose(
+                                &mut root,
+                                &mut names.composes,
+                                ComposeSectionParts {
+                                    kind,
+                                    kind2,
+                                    body,
+                                    keyword_span,
+                                    span,
+                                },
+                            );
+                        }
+                        "telemetry" => {
+                            self.lower_compose_telemetry(
+                                &mut root,
+                                &mut names.telemetry,
+                                ComposeSectionParts {
+                                    kind,
+                                    kind2,
+                                    body,
+                                    keyword_span,
+                                    span,
+                                },
+                            );
+                        }
+                        other => {
+                            self.errors.push(
+                                Diagnostic::error(
+                                    keyword_span,
+                                    format!("unknown compose.iter top-level keyword `{other}`"),
+                                )
+                                .with_hint(
+                                    "expected one of: queue, service, trigger, compose, telemetry.",
+                                ),
+                            );
+                        }
                     }
                 }
-                }
-                RawSection::Prompt { span, .. } => {
+                CstSection::Prompt { span, .. } => {
                     self.errors.push(
                         Diagnostic::error(
                             span,
@@ -166,7 +164,7 @@ impl Analyzer {
                         ),
                     );
                 }
-                RawSection::On { span, .. } => {
+                CstSection::On { span, .. } => {
                     self.errors.push(
                         Diagnostic::error(
                             span,
@@ -187,7 +185,7 @@ impl Analyzer {
 
     fn lower_compose_queue(
         &mut self,
-        root: &mut ComposeRoot,
+        root: &mut Compose,
         queue_names: &mut BTreeMap<String, Span>,
         parts: ComposeSectionParts,
     ) {
@@ -240,7 +238,7 @@ impl Analyzer {
 
     fn lower_compose_telemetry(
         &mut self,
-        root: &mut ComposeRoot,
+        root: &mut Compose,
         telemetry_seen: &mut Option<Span>,
         parts: ComposeSectionParts,
     ) {
@@ -275,7 +273,7 @@ impl Analyzer {
         root.telemetry = Some(Spanned::new(decl, span));
     }
 
-    fn lower_telemetry(&mut self, body: Option<RawBlock>, keyword_span: &Span) -> TelemetryDecl {
+    fn lower_telemetry(&mut self, body: Option<CstBlock>, keyword_span: &Span) -> TelemetryDef {
         let mut fields = self.collect_fields(body);
         let enabled = self
             .take_optional_bool(&mut fields, "enabled")
@@ -312,7 +310,7 @@ impl Analyzer {
             ],
             "telemetry block",
         );
-        TelemetryDecl {
+        TelemetryDef {
             enabled,
             service_name,
             service_namespace,
@@ -324,16 +322,16 @@ impl Analyzer {
 
     fn take_optional_string_map(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<BTreeMap<String, String>> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Block(block) => {
+            CstValue::Block(block) => {
                 let mut out = BTreeMap::new();
                 for attr in block.fields {
                     match attr.value {
-                        RawValue::String(value, _) => {
+                        CstValue::String(value, _) => {
                             out.insert(attr.name.name, value);
                         }
                         other => {
@@ -358,11 +356,11 @@ impl Analyzer {
 
     pub(super) fn compose_name_and_kind(
         &mut self,
-        kind: Option<RawIdent>,
-        kind2: Option<RawIdent>,
+        kind: Option<CstIdent>,
+        kind2: Option<CstIdent>,
         keyword_span: &Span,
         keyword: &str,
-    ) -> Option<(RawIdent, Option<RawIdent>)> {
+    ) -> Option<(CstIdent, Option<CstIdent>)> {
         let Some(name) = kind else {
             self.errors.push(Diagnostic::error(
                 keyword_span.clone(),

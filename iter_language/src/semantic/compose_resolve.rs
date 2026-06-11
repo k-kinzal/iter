@@ -1,9 +1,9 @@
 use crate::ast::{
-    ComposeRoot, ComposeTriggerOverride, NamedQueue, QueueRef, ServiceSource, Span, Spanned,
+    Compose, ComposeTriggerOverride, NamedQueue, QueueRef, ServiceSource, Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
 
-pub(super) fn resolve_queue_refs(root: &mut ComposeRoot) -> Result<(), Diagnostic> {
+pub(super) fn resolve_queue_refs(root: &mut Compose) -> Result<(), Diagnostic> {
     let queue_count = root.queues.len();
     let single_queue_name = if queue_count == 1 {
         Some(root.queues[0].node.name.clone())

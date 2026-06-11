@@ -1,9 +1,8 @@
 ---
 source: iter_language/tests/conformance.rs
-assertion_line: 131
 description: trigger-watch-kinds.iter
 ---
-ComposeRoot {
+Compose {
     telemetry: None,
     queues: [
         Spanned {

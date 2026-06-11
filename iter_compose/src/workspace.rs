@@ -8,7 +8,7 @@ use iter_core::workspace::{
     LocalWorkspaceError, SandboxPolicy, SandboxWorkspace, SandboxWorkspaceError,
 };
 use iter_core::{SandboxRequirements, Workspace};
-use iter_language::{ApplyBackDecl, CloneApplyBackMode, WorkspaceDecl};
+use iter_language::{ApplyBackDef, CloneApplyBackMode, WorkspaceDef};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
@@ -74,7 +74,7 @@ impl Workspace for AnyWorkspace {
     }
 }
 
-/// Frozen workspace configuration extracted from an [`Iterfile`](iter_language::Root).
+/// Frozen workspace configuration extracted from an [`Iterfile`](iter_language::Iterfile).
 ///
 /// We snapshot the AST values into a `Send + Sync` payload so the
 /// workspace factory closure can be cloned across threads
@@ -161,14 +161,14 @@ fn map_apply_back_mode(mode: CloneApplyBackMode) -> ApplyBackMode {
     }
 }
 
-fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDecl) -> SandboxPolicy {
+fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
     use iter_core::workspace::NetworkAccess;
-    use iter_language::SandboxNetworkDecl;
+    use iter_language::SandboxNetworkDef;
     SandboxPolicy {
         network: match &decl.network {
-            SandboxNetworkDecl::Off => NetworkAccess::Off,
-            SandboxNetworkDecl::All => NetworkAccess::All,
-            SandboxNetworkDecl::Hosts(hosts) => NetworkAccess::Hosts(hosts.clone()),
+            SandboxNetworkDef::Off => NetworkAccess::Off,
+            SandboxNetworkDef::All => NetworkAccess::All,
+            SandboxNetworkDef::Hosts(hosts) => NetworkAccess::Hosts(hosts.clone()),
         },
         allow_read_outside: decl.allow_read_outside.iter().map(PathBuf::from).collect(),
         allow_write_outside: decl.allow_write_outside.iter().map(PathBuf::from).collect(),
@@ -177,7 +177,7 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDecl) -> SandboxPolicy 
     }
 }
 
-/// Build a workspace factory from a [`WorkspaceDecl`].
+/// Build a workspace factory from a [`WorkspaceDef`].
 ///
 /// The returned closure clones the captured spec on every call so that each
 /// signal sees a fresh, not-yet-set-up workspace — exactly the contract
@@ -195,21 +195,21 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDecl) -> SandboxPolicy 
 /// why this function is infallible.
 #[must_use = "the returned factory closure is not useful unless called"]
 pub fn build_workspace_factory(
-    decl: &WorkspaceDecl,
+    decl: &WorkspaceDef,
     agent_requirements: SandboxRequirements,
 ) -> impl Fn() -> AnyWorkspace + Send + Sync + use<> {
     let spec = match decl {
-        WorkspaceDecl::Local { base } => WorkspaceSpec::Local {
+        WorkspaceDef::Local { base } => WorkspaceSpec::Local {
             base: PathBuf::from(base),
         },
-        WorkspaceDecl::Clone {
+        WorkspaceDef::Clone {
             base,
             remote: _,
             excludes,
             includes,
             preserve_mtime,
             apply_back:
-                ApplyBackDecl {
+                ApplyBackDef {
                     mode,
                     excludes: ab_excludes,
                     includes: ab_includes,
@@ -223,13 +223,13 @@ pub fn build_workspace_factory(
             apply_back_excludes: ab_excludes.clone(),
             apply_back_includes: ab_includes.clone(),
         },
-        WorkspaceDecl::Sandbox {
+        WorkspaceDef::Sandbox {
             base,
             excludes,
             includes,
             preserve_mtime,
             apply_back:
-                ApplyBackDecl {
+                ApplyBackDef {
                     mode,
                     excludes: ab_excludes,
                     includes: ab_includes,
@@ -255,11 +255,11 @@ pub fn build_workspace_factory(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_language::{SandboxNetworkDecl, SandboxPolicyDecl, WorkspaceDecl};
+    use iter_language::{SandboxNetworkDef, SandboxPolicyDef, WorkspaceDef};
 
     #[test]
     fn factory_yields_distinct_local_instances() {
-        let decl = WorkspaceDecl::Local {
+        let decl = WorkspaceDef::Local {
             base: "/tmp/iter-cli-test".into(),
         };
         let factory = build_workspace_factory(&decl, SandboxRequirements::default());
@@ -271,8 +271,8 @@ mod tests {
         }
     }
 
-    fn sync_apply_back() -> ApplyBackDecl {
-        ApplyBackDecl {
+    fn sync_apply_back() -> ApplyBackDef {
+        ApplyBackDef {
             mode: CloneApplyBackMode::Sync,
             excludes: Vec::new(),
             includes: Vec::new(),
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn factory_handles_clone_decl() {
-        let decl = WorkspaceDecl::Clone {
+        let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
             remote: None,
             excludes: Vec::new(),
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn factory_handles_clone_with_remote() {
-        let decl = WorkspaceDecl::Clone {
+        let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
             remote: Some("https://example.com/repo".into()),
             excludes: Vec::new(),
@@ -311,14 +311,14 @@ mod tests {
 
     #[test]
     fn factory_handles_sandbox_decl() {
-        let decl = WorkspaceDecl::Sandbox {
+        let decl = WorkspaceDef::Sandbox {
             base: "/tmp/iter-cli-test".into(),
             excludes: Vec::new(),
             includes: Vec::new(),
             preserve_mtime: true,
             apply_back: sync_apply_back(),
-            policy: SandboxPolicyDecl {
-                network: SandboxNetworkDecl::Off,
+            policy: SandboxPolicyDef {
+                network: SandboxNetworkDef::Off,
                 allow_read_outside: Vec::new(),
                 allow_write_outside: Vec::new(),
                 extra_deny_paths: Vec::new(),

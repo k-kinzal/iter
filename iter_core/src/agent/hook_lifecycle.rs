@@ -59,9 +59,8 @@ pub(crate) fn project_hooks_dir(
     workspace_path: &Path,
     service: &str,
 ) -> Result<PathBuf, AgentError> {
-    let home = home_dir().ok_or_else(|| {
-        AgentError::Launch("could not resolve home directory".into())
-    })?;
+    let home =
+        home_dir().ok_or_else(|| AgentError::Launch("could not resolve home directory".into()))?;
     let canonical = workspace_path.canonicalize().map_err(|e| {
         AgentError::Launch(format!(
             "canonicalize workspace path {}: {e}",
@@ -436,13 +435,9 @@ mod tests {
     async fn extract_user_hooks_returns_none_for_missing_config() {
         let tmp = TempDir::new().expect("tmp");
         let hooks_dir = tmp.path().join("hooks");
-        let result = extract_user_hooks(
-            &tmp.path().join("nonexistent.json"),
-            "Stop",
-            &hooks_dir,
-        )
-        .await
-        .expect("extract");
+        let result = extract_user_hooks(&tmp.path().join("nonexistent.json"), "Stop", &hooks_dir)
+            .await
+            .expect("extract");
         assert!(result.is_none());
     }
 

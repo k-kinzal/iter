@@ -1,4 +1,4 @@
-//! Generated-input differential tests: build a random `RawFile` with
+//! Generated-input differential tests: build a random `CstFile` with
 //! `proptest`, pretty-print it to source with the test-only pretty printer,
 //! then re-parse the result with both the hand-written parser and the
 //! pest-based oracle; require that they accept and produce structurally
@@ -14,7 +14,7 @@ use proptest::prelude::*;
 
 use crate::oracle::{canonicalize, oracle_parse, pretty, strategy::file_strategy};
 
-fn assert_round_trips(mut original: iter_language::RawFile) {
+fn assert_round_trips(mut original: iter_language::CstFile) {
     let src = pretty(&original);
 
     let (hw_cst, hw_diag) = parse_to_cst(&src);

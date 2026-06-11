@@ -1,6 +1,6 @@
 //! AWS SQS-specific `queue sqs { ... }` AST types.
 
-use super::{DlqPolicyDecl, RetryPolicyDecl, TemplatedString};
+use super::{DlqPolicyDef, MetadataSource, RetryPolicyDef};
 use crate::ast::SecretExpr;
 
 /// Top-level `queue sqs { ... }` configuration.
@@ -37,9 +37,9 @@ pub struct SqsConfig {
     /// Consumer-side knobs (used when dequeuing).
     pub consumer: Option<SqsConsumer>,
     /// Retry policy for SDK API calls.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
     /// Dead-letter handling policy.
-    pub dlq: Option<DlqPolicyDecl>,
+    pub dlq: Option<DlqPolicyDef>,
 }
 
 /// SQS queue identity. One of `Url` or `NameWithAccount` must be
@@ -170,9 +170,9 @@ pub struct SqsProducer {
     /// Toggle the `AWSTraceHeader` X-Ray system attribute.
     pub trace_header: Option<bool>,
     /// FIFO `MessageGroupId` source.
-    pub message_group_id: Option<TemplatedString>,
+    pub message_group_id: Option<MetadataSource>,
     /// FIFO `MessageDeduplicationId` source.
-    pub message_deduplication_id: Option<TemplatedString>,
+    pub message_deduplication_id: Option<MetadataSource>,
     /// Batch up to this many messages per `SendMessageBatch` call
     /// (1–10 per AWS limit).
     pub batch_size: Option<i64>,

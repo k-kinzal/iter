@@ -5,7 +5,7 @@ mod config;
 mod guard;
 mod router;
 
-pub use config::{WebhookConfig, WebhookRoute, WebhookTriggerError};
+pub use config::{Subscription, WebhookConfig, WebhookTriggerError};
 
 use std::sync::Arc;
 
@@ -134,7 +134,7 @@ mod tests {
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
-    fn test_config(routes: Vec<WebhookRoute>) -> WebhookConfig {
+    fn test_config(routes: Vec<Subscription>) -> WebhookConfig {
         WebhookConfig {
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             path: "/hook".into(),
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn invalid_metadata_template_fails_at_new() {
         let queue = Arc::new(InMemoryQueue::new());
-        let route = WebhookRoute {
+        let route = Subscription {
             event_pattern: "push".into(),
             when: None,
             priority: Priority::NORMAL,
@@ -166,7 +166,7 @@ mod tests {
         // payload does not carry it. The router should surface that as a
         // 500 response rather than silently rendering empty.
         let queue = Arc::new(InMemoryQueue::new());
-        let route = WebhookRoute {
+        let route = Subscription {
             event_pattern: "push".into(),
             when: None,
             priority: Priority::NORMAL,
@@ -201,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn matching_route_enqueues_signal() {
         let queue = Arc::new(InMemoryQueue::new());
-        let route = WebhookRoute {
+        let route = Subscription {
             event_pattern: "push".into(),
             when: None,
             priority: Priority::NORMAL,

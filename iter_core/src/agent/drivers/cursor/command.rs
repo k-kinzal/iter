@@ -192,7 +192,8 @@ fn classify_failure(output: &CommandOutput, stdout: &str, exit_code: Option<i32>
 /// message from stdout, otherwise fall back to the tail of stderr.
 fn failure_detail(stdout: &str, stderr: &str) -> String {
     if let Some(event) = cli_json::last_event_of_type(stdout, "error")
-        && let Some(message) = string_field(&event, "message").or_else(|| string_field(&event, "error"))
+        && let Some(message) =
+            string_field(&event, "message").or_else(|| string_field(&event, "error"))
     {
         return message;
     }
@@ -257,7 +258,8 @@ mod tests {
     fn is_error_true_is_ignored_when_result_present() {
         // `is_error` is hard-coded and must NOT flip a present result to Err.
         let json = r#"{"type":"result","subtype":"success","is_error":true,"session_id":"s"}"#;
-        let res = interpret(&output(json, "", RawExit::Code(0))).expect("present result is success");
+        let res =
+            interpret(&output(json, "", RawExit::Code(0))).expect("present result is success");
         assert_eq!(res.session_id.as_deref(), Some("s"));
     }
 
@@ -307,15 +309,23 @@ mod tests {
 
     #[test]
     fn token_limit_in_stderr_is_detected() {
-        let err =
-            interpret(&output("", "Error: context window exceeded\n", RawExit::Code(1))).expect_err("err");
+        let err = interpret(&output(
+            "",
+            "Error: context window exceeded\n",
+            RawExit::Code(1),
+        ))
+        .expect_err("err");
         assert!(matches!(err, CursorError::TokenLimit(_)));
     }
 
     #[test]
     fn token_limit_in_stdout_is_detected() {
-        let err = interpret(&output("too many tokens for this model\n", "", RawExit::Code(1)))
-            .expect_err("err");
+        let err = interpret(&output(
+            "too many tokens for this model\n",
+            "",
+            RawExit::Code(1),
+        ))
+        .expect_err("err");
         assert!(matches!(err, CursorError::TokenLimit(_)));
     }
 
@@ -323,8 +333,8 @@ mod tests {
     fn token_limit_takes_precedence_over_exit_two() {
         // A below-min-version exit that also mentions a token limit refines to
         // the router-relevant TokenLimit, not BelowMinVersion.
-        let err = interpret(&output("", "context window exceeded", RawExit::Code(2)))
-            .expect_err("err");
+        let err =
+            interpret(&output("", "context window exceeded", RawExit::Code(2))).expect_err("err");
         assert!(matches!(err, CursorError::TokenLimit(_)));
     }
 

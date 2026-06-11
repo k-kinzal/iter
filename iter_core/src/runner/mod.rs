@@ -13,10 +13,10 @@ pub mod event;
 pub mod event_emitter;
 pub mod event_handler;
 mod events;
-pub mod shell_event_handler;
 pub mod iteration;
 pub mod lifecycle;
 pub mod observer;
+pub mod shell_event_handler;
 
 use std::sync::Arc;
 
@@ -38,8 +38,8 @@ pub use event_emitter::{EmitReport, EventEmitter};
 pub use event_handler::{BoxError, EventHandler};
 pub use iteration::{IterationContext, IterationState, PreviousResult};
 pub use lifecycle::{RedactedMetadata, RunnerLifecycle};
-pub use shell_event_handler::ShellEventHandler;
 pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
+pub use shell_event_handler::ShellEventHandler;
 
 use events::RunnerEvents;
 

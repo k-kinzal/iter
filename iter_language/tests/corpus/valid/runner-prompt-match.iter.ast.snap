@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: runner-prompt-match.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [],
     workspaces: [
@@ -42,7 +42,7 @@ Root {
     ],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "primary",
                 workspace: "dev",
@@ -82,7 +82,7 @@ Root {
                 },
                 events: [
                     Spanned {
-                        node: EventHandlerDecl {
+                        node: EventHandlerDef {
                             event: AgentFinished,
                             actions: [
                                 Shell(

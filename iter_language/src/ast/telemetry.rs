@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 /// OpenTelemetry configuration declared at `compose.iter` top level.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TelemetryDecl {
+pub struct TelemetryDef {
     /// Whether telemetry export is enabled. Defaults to `true` when the block
     /// is present.
     pub enabled: bool,

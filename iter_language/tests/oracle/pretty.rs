@@ -1,16 +1,16 @@
-//! Test-only pretty printer for `RawFile`.
+//! Test-only pretty printer for `CstFile`.
 //!
 //! This is NOT an authoritative formatter for the iter language — it only
 //! guarantees that the output re-parses (via both the hand-written and the
 //! oracle parsers) into a CST that is `canonicalize`-equal to the input.
 //! That property is what makes it useful for generated-input tests: we
-//! build a random `RawFile`, print it, re-parse it, and compare shapes.
+//! build a random `CstFile`, print it, re-parse it, and compare shapes.
 
 use iter_language::{
-    RawAction, RawBlock, RawCmpOp, RawField, RawFile, RawGuard, RawRoute, RawSection, RawValue,
+    CstAction, CstBlock, CstCmpOp, CstField, CstFile, CstGuard, CstRoute, CstSection, CstValue,
 };
 
-pub(crate) fn pretty(file: &RawFile) -> String {
+pub(crate) fn pretty(file: &CstFile) -> String {
     let mut out = String::new();
     for (i, section) in file.sections.iter().enumerate() {
         if i > 0 {
@@ -27,9 +27,9 @@ fn indent(out: &mut String, depth: usize) {
     }
 }
 
-fn pp_section(out: &mut String, s: &RawSection, depth: usize) {
+fn pp_section(out: &mut String, s: &CstSection, depth: usize) {
     match s {
-        RawSection::Block {
+        CstSection::Block {
             keyword,
             kind,
             kind2,
@@ -52,7 +52,7 @@ fn pp_section(out: &mut String, s: &RawSection, depth: usize) {
             }
             out.push('\n');
         }
-        RawSection::Prompt { guard, body, .. } => {
+        CstSection::Prompt { guard, body, .. } => {
             indent(out, depth);
             out.push_str("prompt");
             if let Some(g) = guard {
@@ -63,7 +63,7 @@ fn pp_section(out: &mut String, s: &RawSection, depth: usize) {
             pp_string(out, body);
             out.push('\n');
         }
-        RawSection::On { event, body, .. } => {
+        CstSection::On { event, body, .. } => {
             indent(out, depth);
             out.push_str("on ");
             out.push_str(&event.name);
@@ -74,7 +74,7 @@ fn pp_section(out: &mut String, s: &RawSection, depth: usize) {
     }
 }
 
-fn pp_block(out: &mut String, b: &RawBlock, depth: usize) {
+fn pp_block(out: &mut String, b: &CstBlock, depth: usize) {
     if b.fields.is_empty() && b.routes.is_empty() && b.actions.is_empty() {
         out.push_str("{}");
         return;
@@ -93,7 +93,7 @@ fn pp_block(out: &mut String, b: &RawBlock, depth: usize) {
     out.push('}');
 }
 
-fn pp_field(out: &mut String, f: &RawField, depth: usize) {
+fn pp_field(out: &mut String, f: &CstField, depth: usize) {
     indent(out, depth);
     if is_bareword_field_name(&f.name.name) {
         out.push_str(&f.name.name);
@@ -101,7 +101,7 @@ fn pp_field(out: &mut String, f: &RawField, depth: usize) {
         pp_string(out, &f.name.name);
     }
     match &f.value {
-        RawValue::Block(b) => {
+        CstValue::Block(b) => {
             out.push(' ');
             pp_block(out, b, depth);
             out.push('\n');
@@ -114,7 +114,7 @@ fn pp_field(out: &mut String, f: &RawField, depth: usize) {
     }
 }
 
-fn pp_route(out: &mut String, r: &RawRoute, depth: usize) {
+fn pp_route(out: &mut String, r: &CstRoute, depth: usize) {
     indent(out, depth);
     out.push_str("on ");
     pp_string(out, &r.event_pattern);
@@ -127,27 +127,27 @@ fn pp_route(out: &mut String, r: &RawRoute, depth: usize) {
     out.push('\n');
 }
 
-fn pp_action(out: &mut String, a: &RawAction, depth: usize) {
+fn pp_action(out: &mut String, a: &CstAction, depth: usize) {
     indent(out, depth);
     out.push_str("shell ");
     pp_string(out, &a.command);
     out.push('\n');
 }
 
-fn pp_value(out: &mut String, v: &RawValue, depth: usize) {
+fn pp_value(out: &mut String, v: &CstValue, depth: usize) {
     match v {
-        RawValue::String(s, _) => pp_string(out, s),
-        RawValue::Integer(n, _) => out.push_str(&n.to_string()),
+        CstValue::String(s, _) => pp_string(out, s),
+        CstValue::Integer(n, _) => out.push_str(&n.to_string()),
         // Durations are canonicalised to seconds on both sides. Pretty-print
         // back as `<n>s` so the re-parsed value equals the original.
-        RawValue::Duration(n, _) => {
+        CstValue::Duration(n, _) => {
             out.push_str(&n.to_string());
             out.push('s');
         }
-        RawValue::Bool(b, _) => out.push_str(if *b { "true" } else { "false" }),
-        RawValue::Null(_) => out.push_str("null"),
-        RawValue::Ident(name, _) => out.push_str(name),
-        RawValue::List(items, _) => {
+        CstValue::Bool(b, _) => out.push_str(if *b { "true" } else { "false" }),
+        CstValue::Null(_) => out.push_str("null"),
+        CstValue::Ident(name, _) => out.push_str(name),
+        CstValue::List(items, _) => {
             out.push('[');
             for (i, it) in items.iter().enumerate() {
                 if i > 0 {
@@ -157,8 +157,8 @@ fn pp_value(out: &mut String, v: &RawValue, depth: usize) {
             }
             out.push(']');
         }
-        RawValue::Block(b) => pp_block(out, b, depth),
-        RawValue::Call { name, args, .. } => {
+        CstValue::Block(b) => pp_block(out, b, depth),
+        CstValue::Call { name, args, .. } => {
             out.push_str(name);
             out.push('(');
             for (i, a) in args.iter().enumerate() {
@@ -212,22 +212,22 @@ fn pp_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
-fn pp_cmp_op(op: RawCmpOp) -> &'static str {
+fn pp_cmp_op(op: CstCmpOp) -> &'static str {
     match op {
-        RawCmpOp::Eq => "==",
-        RawCmpOp::Neq => "!=",
-        RawCmpOp::Lt => "<",
-        RawCmpOp::Le => "<=",
-        RawCmpOp::Gt => ">",
-        RawCmpOp::Ge => ">=",
+        CstCmpOp::Eq => "==",
+        CstCmpOp::Neq => "!=",
+        CstCmpOp::Lt => "<",
+        CstCmpOp::Le => "<=",
+        CstCmpOp::Gt => ">",
+        CstCmpOp::Ge => ">=",
     }
 }
 
-fn pp_guard(out: &mut String, g: &RawGuard, parent_prec: u8) {
+fn pp_guard(out: &mut String, g: &CstGuard, parent_prec: u8) {
     // Precedence: `||` = 1, `&&` = 2, atom = 3.
     let (prec, sep): (u8, &str) = match g {
-        RawGuard::Or(..) => (1, " || "),
-        RawGuard::And(..) => (2, " && "),
+        CstGuard::Or(..) => (1, " || "),
+        CstGuard::And(..) => (2, " && "),
         _ => (3, ""),
     };
     let needs_parens = prec < parent_prec;
@@ -235,19 +235,19 @@ fn pp_guard(out: &mut String, g: &RawGuard, parent_prec: u8) {
         out.push('(');
     }
     match g {
-        RawGuard::MetadataEq { key, value, .. } => {
+        CstGuard::MetadataEq { key, value, .. } => {
             out.push_str("metadata.");
             out.push_str(key);
             out.push_str(" == ");
             pp_string(out, value);
         }
-        RawGuard::MetadataNeq { key, value, .. } => {
+        CstGuard::MetadataNeq { key, value, .. } => {
             out.push_str("metadata.");
             out.push_str(key);
             out.push_str(" != ");
             pp_string(out, value);
         }
-        RawGuard::IterationCmp {
+        CstGuard::IterationCmp {
             field,
             modulus,
             op,
@@ -265,15 +265,15 @@ fn pp_guard(out: &mut String, g: &RawGuard, parent_prec: u8) {
             out.push(' ');
             out.push_str(&rhs.to_string());
         }
-        RawGuard::IterationResultEq { value, .. } => {
+        CstGuard::IterationResultEq { value, .. } => {
             out.push_str("iteration.previous_result == ");
             pp_string(out, value);
         }
-        RawGuard::IterationResultNeq { value, .. } => {
+        CstGuard::IterationResultNeq { value, .. } => {
             out.push_str("iteration.previous_result != ");
             pp_string(out, value);
         }
-        RawGuard::Or(l, r, _) | RawGuard::And(l, r, _) => {
+        CstGuard::Or(l, r, _) | CstGuard::And(l, r, _) => {
             pp_guard(out, l, prec);
             out.push_str(sep);
             pp_guard(out, r, prec);

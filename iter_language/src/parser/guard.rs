@@ -2,39 +2,39 @@
 //! `%`, parentheses).
 
 use super::Parser;
-use super::cst::{RawCmpOp, RawGuard};
+use super::cst::{CstCmpOp, CstGuard};
 use crate::ast::Span;
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
 impl Parser<'_> {
-    pub(super) fn parse_guard(&mut self) -> Option<RawGuard> {
+    pub(super) fn parse_guard(&mut self) -> Option<CstGuard> {
         self.parse_guard_or()
     }
 
-    pub(super) fn parse_guard_or(&mut self) -> Option<RawGuard> {
+    pub(super) fn parse_guard_or(&mut self) -> Option<CstGuard> {
         let mut left = self.parse_guard_and()?;
         while matches!(self.peek(), Some(Token::PipePipe)) {
             self.bump();
             let right = self.parse_guard_and()?;
             let span = left.span().start..right.span().end;
-            left = RawGuard::Or(Box::new(left), Box::new(right), span);
+            left = CstGuard::Or(Box::new(left), Box::new(right), span);
         }
         Some(left)
     }
 
-    pub(super) fn parse_guard_and(&mut self) -> Option<RawGuard> {
+    pub(super) fn parse_guard_and(&mut self) -> Option<CstGuard> {
         let mut left = self.parse_guard_atom()?;
         while matches!(self.peek(), Some(Token::AmpAmp)) {
             self.bump();
             let right = self.parse_guard_atom()?;
             let span = left.span().start..right.span().end;
-            left = RawGuard::And(Box::new(left), Box::new(right), span);
+            left = CstGuard::And(Box::new(left), Box::new(right), span);
         }
         Some(left)
     }
 
-    pub(super) fn parse_guard_atom(&mut self) -> Option<RawGuard> {
+    pub(super) fn parse_guard_atom(&mut self) -> Option<CstGuard> {
         if matches!(self.peek(), Some(Token::LParen)) {
             self.bump();
             let inner = self.parse_guard_or()?;
@@ -66,7 +66,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_guard_metadata(&mut self, start_span: Span) -> Option<RawGuard> {
+    fn parse_guard_metadata(&mut self, start_span: Span) -> Option<CstGuard> {
         if !self.expect(&Token::Dot, "`.`") {
             return None;
         }
@@ -75,12 +75,12 @@ impl Parser<'_> {
         let (s, _) = self.expect_string()?;
         let span = start_span.start..self.last_span().end;
         match op.token {
-            Token::EqEq => Some(RawGuard::MetadataEq {
+            Token::EqEq => Some(CstGuard::MetadataEq {
                 key: key.name,
                 value: s,
                 span,
             }),
-            Token::BangEq => Some(RawGuard::MetadataNeq {
+            Token::BangEq => Some(CstGuard::MetadataNeq {
                 key: key.name,
                 value: s,
                 span,
@@ -95,7 +95,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_guard_iteration(&mut self, start_span: Span, _head_span: Span) -> Option<RawGuard> {
+    fn parse_guard_iteration(&mut self, start_span: Span, _head_span: Span) -> Option<CstGuard> {
         if !self.expect(&Token::Dot, "`.`") {
             return None;
         }
@@ -129,12 +129,12 @@ impl Parser<'_> {
 
         let op_tok = self.bump()?.clone();
         let op = match op_tok.token {
-            Token::EqEq => RawCmpOp::Eq,
-            Token::BangEq => RawCmpOp::Neq,
-            Token::Lt => RawCmpOp::Lt,
-            Token::LtEq => RawCmpOp::Le,
-            Token::Gt => RawCmpOp::Gt,
-            Token::GtEq => RawCmpOp::Ge,
+            Token::EqEq => CstCmpOp::Eq,
+            Token::BangEq => CstCmpOp::Neq,
+            Token::Lt => CstCmpOp::Lt,
+            Token::LtEq => CstCmpOp::Le,
+            Token::Gt => CstCmpOp::Gt,
+            Token::GtEq => CstCmpOp::Ge,
             ref other => {
                 self.errors.push(Diagnostic::error(
                     op_tok.span.clone(),
@@ -151,7 +151,7 @@ impl Parser<'_> {
         let span_end_inclusive = rhs_tok.span.end;
         let span = start_span.start..span_end_inclusive;
         match rhs_tok.token {
-            Token::Integer(rhs) => Some(RawGuard::IterationCmp {
+            Token::Integer(rhs) => Some(CstGuard::IterationCmp {
                 field: field_name,
                 field_span,
                 modulus,
@@ -184,7 +184,7 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_result_string_rhs(&mut self, args: ResultStringRhs) -> Option<RawGuard> {
+    fn parse_result_string_rhs(&mut self, args: ResultStringRhs) -> Option<CstGuard> {
         let ResultStringRhs {
             field_name,
             field_span,
@@ -194,8 +194,8 @@ impl Parser<'_> {
             rhs_span,
             span,
         } = args;
-        let result_equals = matches!(op, RawCmpOp::Eq) && modulus.is_none();
-        let result_differs = matches!(op, RawCmpOp::Neq) && modulus.is_none();
+        let result_equals = matches!(op, CstCmpOp::Eq) && modulus.is_none();
+        let result_differs = matches!(op, CstCmpOp::Neq) && modulus.is_none();
         if !(result_equals || result_differs) {
             self.errors.push(
                 Diagnostic::error(
@@ -209,7 +209,7 @@ impl Parser<'_> {
             return None;
         }
         if result_equals {
-            Some(RawGuard::IterationResultEq {
+            Some(CstGuard::IterationResultEq {
                 field: field_name,
                 field_span,
                 value,
@@ -217,7 +217,7 @@ impl Parser<'_> {
                 span,
             })
         } else {
-            Some(RawGuard::IterationResultNeq {
+            Some(CstGuard::IterationResultNeq {
                 field: field_name,
                 field_span,
                 value,
@@ -232,7 +232,7 @@ struct ResultStringRhs {
     field_name: String,
     field_span: Span,
     modulus: Option<i64>,
-    op: RawCmpOp,
+    op: CstCmpOp,
     value: String,
     rhs_span: Span,
     span: Span,

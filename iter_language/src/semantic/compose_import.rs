@@ -3,18 +3,17 @@ use std::path::PathBuf;
 
 use super::Analyzer;
 use crate::ast::{
-    ComposeRoot, ComposeServiceOverride, ComposeTriggerOverride, NamedCompose, QueueRef, Span,
-    Spanned,
+    Compose, ComposeServiceOverride, ComposeTriggerOverride, NamedCompose, QueueRef, Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstIdent, CstValue};
 
-use super::compose::{ComposeSectionParts, COMPOSE_NO_KIND_HINT};
+use super::compose::{COMPOSE_NO_KIND_HINT, ComposeSectionParts};
 
 impl Analyzer {
     pub(super) fn lower_compose_compose(
         &mut self,
-        root: &mut ComposeRoot,
+        root: &mut Compose,
         compose_names: &mut BTreeMap<String, Span>,
         parts: ComposeSectionParts,
     ) {
@@ -61,8 +60,8 @@ impl Analyzer {
 
     pub(super) fn lower_compose_block(
         &mut self,
-        body: Option<RawBlock>,
-        name_ident: &RawIdent,
+        body: Option<CstBlock>,
+        name_ident: &CstIdent,
     ) -> Option<NamedCompose> {
         let Some(block) = body else {
             self.errors.push(Diagnostic::error(
@@ -80,7 +79,7 @@ impl Analyzer {
         for field in block.fields {
             match field.name.name.as_str() {
                 "build" => match field.value {
-                    RawValue::String(s, _) => {
+                    CstValue::String(s, _) => {
                         build_path = Some((s, field.span));
                     }
                     other => {
@@ -128,15 +127,15 @@ impl Analyzer {
 
     pub(super) fn lower_compose_queue_overrides(
         &mut self,
-        value: RawValue,
+        value: CstValue,
         overrides: &mut BTreeMap<String, QueueRef>,
     ) {
         match value {
-            RawValue::Block(b) => {
+            CstValue::Block(b) => {
                 for qf in b.fields {
                     let child_name = qf.name.name;
                     match qf.value {
-                        RawValue::Ident(parent_name, _) => {
+                        CstValue::Ident(parent_name, _) => {
                             overrides.insert(child_name, QueueRef::Named(parent_name));
                         }
                         other => {
@@ -159,20 +158,20 @@ impl Analyzer {
 
     pub(super) fn lower_compose_service_overrides(
         &mut self,
-        value: RawValue,
+        value: CstValue,
         overrides: &mut BTreeMap<String, ComposeServiceOverride>,
     ) {
         match value {
-            RawValue::Block(b) => {
+            CstValue::Block(b) => {
                 for sf in b.fields {
                     let child_name = sf.name.name;
                     match sf.value {
-                        RawValue::Block(sb) => {
+                        CstValue::Block(sb) => {
                             let mut queue: Option<QueueRef> = None;
                             for attr in sb.fields {
                                 if attr.name.name == "queue" {
                                     match attr.value {
-                                        RawValue::Ident(n, _) => {
+                                        CstValue::Ident(n, _) => {
                                             queue = Some(QueueRef::Named(n));
                                         }
                                         other => {
@@ -206,23 +205,23 @@ impl Analyzer {
 
     pub(super) fn lower_compose_trigger_overrides(
         &mut self,
-        value: RawValue,
+        value: CstValue,
         overrides: &mut BTreeMap<String, ComposeTriggerOverride>,
     ) {
         match value {
-            RawValue::Block(b) => {
+            CstValue::Block(b) => {
                 for tf in b.fields {
                     let child_name = tf.name.name;
                     match tf.value {
-                        RawValue::Null(_) => {
+                        CstValue::Null(_) => {
                             overrides.insert(child_name, ComposeTriggerOverride::Disabled);
                         }
-                        RawValue::Block(tb) => {
+                        CstValue::Block(tb) => {
                             let mut target: Option<QueueRef> = None;
                             for attr in tb.fields {
                                 if attr.name.name == "target" {
                                     match attr.value {
-                                        RawValue::Ident(n, _) => {
+                                        CstValue::Ident(n, _) => {
                                             target = Some(QueueRef::Named(n));
                                         }
                                         other => {

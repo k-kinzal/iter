@@ -5,14 +5,14 @@ use std::collections::BTreeMap;
 use super::{Analyzer, MODE_HINT, TemplatePosition, closest, parse_priority};
 use crate::ast::{AgentMode, OnErrorKeyword, PriorityKeyword, SecretExpr, Span};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawField, RawIdent, RawValue};
+use crate::parser::{CstField, CstIdent, CstValue};
 use std::path::PathBuf;
 
 impl Analyzer {
     pub(super) fn collect_fields(
         &mut self,
-        body: Option<crate::parser::RawBlock>,
-    ) -> BTreeMap<String, RawField> {
+        body: Option<crate::parser::CstBlock>,
+    ) -> BTreeMap<String, CstField> {
         let mut map = BTreeMap::new();
         if let Some(body) = body {
             for field in body.fields {
@@ -31,11 +31,11 @@ impl Analyzer {
 
     pub(super) fn require_kind(
         &mut self,
-        kind: Option<RawIdent>,
+        kind: Option<CstIdent>,
         keyword_span: &Span,
         section: &str,
         valid: &[&str],
-    ) -> Option<RawIdent> {
+    ) -> Option<CstIdent> {
         if let Some(k) = kind {
             Some(k)
         } else {
@@ -52,11 +52,11 @@ impl Analyzer {
 
     pub(super) fn reject_unknown_fields(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         valid: &[&str],
         context: &str,
     ) {
-        let leftover: Vec<RawField> = std::mem::take(fields).into_values().collect();
+        let leftover: Vec<CstField> = std::mem::take(fields).into_values().collect();
         for f in leftover {
             let mut diag = Diagnostic::error(
                 f.name.span.clone(),
@@ -73,7 +73,7 @@ impl Analyzer {
 
     pub(super) fn take_required_string(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
         context: &str,
@@ -89,7 +89,7 @@ impl Analyzer {
 
     pub(super) fn take_required_string_with_hint(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
         context: &str,
@@ -97,7 +97,7 @@ impl Analyzer {
     ) -> Option<String> {
         if let Some(field) = fields.remove(name) {
             match field.value {
-                RawValue::String(s, _) => Some(s),
+                CstValue::String(s, _) => Some(s),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
@@ -117,12 +117,12 @@ impl Analyzer {
 
     pub(super) fn take_optional_string(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<String> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::String(s, _) => Some(s),
+            CstValue::String(s, _) => Some(s),
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -135,12 +135,12 @@ impl Analyzer {
 
     pub(super) fn take_optional_int(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<i64> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Integer(n, _) => Some(n),
+            CstValue::Integer(n, _) => Some(n),
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -153,12 +153,12 @@ impl Analyzer {
 
     pub(super) fn take_optional_bool(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<bool> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Bool(b, _) => Some(b),
+            CstValue::Bool(b, _) => Some(b),
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -171,13 +171,13 @@ impl Analyzer {
 
     pub(super) fn take_optional_duration(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<i64> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Duration(secs, _) => Some(secs),
-            RawValue::Integer(n, _) => Some(n), // accept bare integer seconds
+            CstValue::Duration(secs, _) => Some(secs),
+            CstValue::Integer(n, _) => Some(n), // accept bare integer seconds
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -190,16 +190,16 @@ impl Analyzer {
 
     pub(super) fn take_optional_string_list(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<Vec<String>> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::List(items, _) => {
+            CstValue::List(items, _) => {
                 let mut out = Vec::new();
                 for item in items {
                     match item {
-                        RawValue::String(s, _) => out.push(s),
+                        CstValue::String(s, _) => out.push(s),
                         other => self.errors.push(Diagnostic::error(
                             other.span(),
                             format!("`{name}` list elements must be strings"),
@@ -220,7 +220,7 @@ impl Analyzer {
 
     pub(super) fn take_required_bool_explicit(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
         context: &str,
@@ -228,7 +228,7 @@ impl Analyzer {
     ) -> Option<bool> {
         if let Some(field) = fields.remove(name) {
             match field.value {
-                RawValue::Bool(b, _) => Some(b),
+                CstValue::Bool(b, _) => Some(b),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
@@ -248,7 +248,7 @@ impl Analyzer {
 
     pub(super) fn take_required_string_list_explicit(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
         context: &str,
@@ -256,11 +256,11 @@ impl Analyzer {
     ) -> Option<Vec<String>> {
         if let Some(field) = fields.remove(name) {
             match field.value {
-                RawValue::List(items, _) => {
+                CstValue::List(items, _) => {
                     let mut out = Vec::new();
                     for item in items {
                         match item {
-                            RawValue::String(s, _) => out.push(s),
+                            CstValue::String(s, _) => out.push(s),
                             other => self.errors.push(Diagnostic::error(
                                 other.span(),
                                 format!("`{name}` list elements must be strings"),
@@ -293,7 +293,7 @@ impl Analyzer {
     /// field is absent.
     pub(super) fn take_optional_secret(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<SecretExpr> {
         let field = fields.remove(name)?;
@@ -304,7 +304,7 @@ impl Analyzer {
     /// returns `None` when absent.
     pub(super) fn take_required_secret(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
         context: &str,
@@ -320,15 +320,15 @@ impl Analyzer {
         }
     }
 
-    fn parse_secret_value(&mut self, value: RawValue, name: &str) -> Option<SecretExpr> {
+    fn parse_secret_value(&mut self, value: CstValue, name: &str) -> Option<SecretExpr> {
         match value {
-            RawValue::String(s, _) => Some(SecretExpr::Literal(s)),
-            RawValue::Call {
+            CstValue::String(s, _) => Some(SecretExpr::Literal(s)),
+            CstValue::Call {
                 name: call_name,
                 args,
                 span,
             } if call_name == "env" => {
-                if let Some(RawValue::String(s, _)) = args.into_iter().next() {
+                if let Some(CstValue::String(s, _)) = args.into_iter().next() {
                     Some(SecretExpr::EnvVar(s))
                 } else {
                     self.errors.push(Diagnostic::error(
@@ -338,12 +338,12 @@ impl Analyzer {
                     None
                 }
             }
-            RawValue::Call {
+            CstValue::Call {
                 name: call_name,
                 args,
                 span,
             } if call_name == "file" => {
-                if let Some(RawValue::String(s, _)) = args.into_iter().next() {
+                if let Some(CstValue::String(s, _)) = args.into_iter().next() {
                     Some(SecretExpr::File(PathBuf::from(s)))
                 } else {
                     self.errors.push(Diagnostic::error(
@@ -368,12 +368,12 @@ impl Analyzer {
     /// Pop an optional `priority = <keyword>` field.
     pub(super) fn take_optional_priority(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<PriorityKeyword> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Ident(ident, span) => {
+            CstValue::Ident(ident, span) => {
                 if let Some(p) = parse_priority(&ident) {
                     Some(p)
                 } else {
@@ -397,12 +397,12 @@ impl Analyzer {
     /// Pop an optional `on_error = <keyword>` field.
     pub(super) fn take_optional_on_error(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<OnErrorKeyword> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Ident(ident, span) => match ident.as_str() {
+            CstValue::Ident(ident, span) => match ident.as_str() {
                 "continue" => Some(OnErrorKeyword::Continue),
                 "abort" => Some(OnErrorKeyword::Abort),
                 "skip" => Some(OnErrorKeyword::Skip),
@@ -427,12 +427,12 @@ impl Analyzer {
     /// Pop an optional `u64` field. Accepts a non-negative integer.
     pub(super) fn take_optional_u64(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<u64> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Integer(n, span) => {
+            CstValue::Integer(n, span) => {
                 if n < 0 {
                     self.errors.push(Diagnostic::error(
                         span,
@@ -458,17 +458,17 @@ impl Analyzer {
     /// `{{ ... }}` placeholders verbatim — they are template strings.
     pub(super) fn take_optional_metadata_block(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         position: TemplatePosition,
     ) -> Option<Vec<(String, String)>> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Block(block) => {
+            CstValue::Block(block) => {
                 let mut out = Vec::with_capacity(block.fields.len());
                 for f in block.fields {
                     match f.value {
-                        RawValue::String(s, span) => {
+                        CstValue::String(s, span) => {
                             self.validate_template(&s, &span, position);
                             out.push((f.name.name, s));
                         }
@@ -497,13 +497,13 @@ impl Analyzer {
     /// the dead-letter `reason_template` that are rendered later by core.
     pub(super) fn take_optional_template_text(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         position: TemplatePosition,
     ) -> Option<String> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::String(s, span) => {
+            CstValue::String(s, span) => {
                 self.validate_template(&s, &span, position);
                 Some(s)
             }
@@ -522,12 +522,12 @@ impl Analyzer {
     /// [`Self::collect_fields`] would.
     pub(super) fn take_optional_block(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
-    ) -> Option<BTreeMap<String, RawField>> {
+    ) -> Option<BTreeMap<String, CstField>> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Block(b) => Some(self.collect_fields(Some(b))),
+            CstValue::Block(b) => Some(self.collect_fields(Some(b))),
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -542,19 +542,19 @@ impl Analyzer {
     /// string literal or a single-argument `from_metadata("key")` call.
     pub(super) fn take_optional_templated_string(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
-    ) -> Option<crate::ast::TemplatedString> {
+    ) -> Option<crate::ast::MetadataSource> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::String(s, _) => Some(crate::ast::TemplatedString::Literal(s)),
-            RawValue::Call {
+            CstValue::String(s, _) => Some(crate::ast::MetadataSource::Literal(s)),
+            CstValue::Call {
                 name: call_name,
                 args,
                 span,
             } if call_name == "from_metadata" => {
-                if let Some(RawValue::String(s, _)) = args.into_iter().next() {
-                    Some(crate::ast::TemplatedString::FromMetadata(s))
+                if let Some(CstValue::String(s, _)) = args.into_iter().next() {
+                    Some(crate::ast::MetadataSource::FromMetadata(s))
                 } else {
                     self.errors.push(Diagnostic::error(
                         span,
@@ -578,16 +578,16 @@ impl Analyzer {
     /// `message_attributes` whose values are all scalars.
     pub(super) fn take_optional_string_string_block(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<Vec<(String, String)>> {
         let mut inner = self.take_optional_block(fields, name)?;
         let mut out = Vec::with_capacity(inner.len());
         // Take in deterministic order; BTreeMap iterates sorted by key.
-        let leftover: Vec<(String, RawField)> = std::mem::take(&mut inner).into_iter().collect();
+        let leftover: Vec<(String, CstField)> = std::mem::take(&mut inner).into_iter().collect();
         for (k, field) in leftover {
             match field.value {
-                RawValue::String(v, _) => out.push((k, v)),
+                CstValue::String(v, _) => out.push((k, v)),
                 other => self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}.{k}` must be a string"),
@@ -604,13 +604,13 @@ impl Analyzer {
     /// [`collect_fields`].
     pub(super) fn take_optional_env_block(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> BTreeMap<String, String> {
         let Some(mut inner) = self.take_optional_block(fields, "env") else {
             return BTreeMap::new();
         };
         let mut out = BTreeMap::new();
-        let leftover: Vec<(String, RawField)> = std::mem::take(&mut inner).into_iter().collect();
+        let leftover: Vec<(String, CstField)> = std::mem::take(&mut inner).into_iter().collect();
         for (k, field) in leftover {
             if !is_valid_env_name(&k) {
                 self.errors.push(
@@ -625,7 +625,7 @@ impl Analyzer {
                 continue;
             }
             match field.value {
-                RawValue::String(v, _) => {
+                CstValue::String(v, _) => {
                     out.insert(k, v);
                 }
                 other => self.errors.push(Diagnostic::error(
@@ -639,17 +639,17 @@ impl Analyzer {
 
     pub(super) fn take_optional_string_kv_block(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> BTreeMap<String, String> {
         let Some(mut inner) = self.take_optional_block(fields, name) else {
             return BTreeMap::new();
         };
         let mut out = BTreeMap::new();
-        let leftover: Vec<(String, RawField)> = std::mem::take(&mut inner).into_iter().collect();
+        let leftover: Vec<(String, CstField)> = std::mem::take(&mut inner).into_iter().collect();
         for (k, field) in leftover {
             match field.value {
-                RawValue::String(v, _) => {
+                CstValue::String(v, _) => {
                     out.insert(k, v);
                 }
                 other => self.errors.push(Diagnostic::error(
@@ -663,13 +663,13 @@ impl Analyzer {
 
     pub(super) fn take_required_agent_mode(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
         kind_name: &str,
     ) -> Option<AgentMode> {
         if let Some(field) = fields.remove("mode") {
             match field.value {
-                RawValue::Ident(ident, span) => self.parse_agent_mode(&ident, span),
+                CstValue::Ident(ident, span) => self.parse_agent_mode(&ident, span),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),

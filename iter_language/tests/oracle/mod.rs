@@ -7,11 +7,11 @@
 //! Responsibilities:
 //!   * expose a `pest`-driven second parser for the iter language
 //!     (`parser.rs`),
-//!   * lower the oracle's `Pairs` tree into the *same* `RawFile` CST shape
+//!   * lower the oracle's `Pairs` tree into the *same* `CstFile` CST shape
 //!     that the hand-written parser produces (`lowering.rs`),
 //!   * canonicalize spans so structural comparison is span-oblivious
 //!     (`canonicalize.rs`),
-//!   * render a `RawFile` back to source for round-trip and generated-input
+//!   * render a `CstFile` back to source for round-trip and generated-input
 //!     tests (`pretty.rs`), and
 //!   * supply `proptest` / `arbitrary` generation strategies
 //!     (`strategy.rs`).

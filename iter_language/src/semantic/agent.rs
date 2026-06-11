@@ -1,9 +1,9 @@
 //! `agent { ... }` lowerer plus mode/apply-back identifier parsers shared with field helpers.
 
 use super::{Analyzer, COMMAND_HINT};
-use crate::ast::{AgentDecl, AgentMode, CloneApplyBackMode, RouterStrategy, Span};
+use crate::ast::{AgentDef, AgentMode, CloneApplyBackMode, RouterStrategy, Span};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstIdent, CstValue};
 
 struct SimpleAgentParts {
     command: String,
@@ -14,10 +14,10 @@ struct SimpleAgentParts {
 impl Analyzer {
     pub(super) fn lower_agent(
         &mut self,
-        kind: Option<RawIdent>,
-        body: Option<RawBlock>,
+        kind: Option<CstIdent>,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<AgentDecl> {
+    ) -> Option<AgentDef> {
         let kind = self.require_kind(
             kind,
             keyword_span,
@@ -50,23 +50,23 @@ impl Analyzer {
             "cursor" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "cursor")?;
-                AgentDecl::Cursor { command, args, env }
+                AgentDef::Cursor { command, args, env }
             }
             "cline" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "cline")?;
-                AgentDecl::Cline { command, args, env }
+                AgentDef::Cline { command, args, env }
             }
             "opencode" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "opencode")?;
-                AgentDecl::OpenCode { command, args, env }
+                AgentDef::OpenCode { command, args, env }
             }
             "grok" => self.lower_grok_agent(&kind, &mut fields)?,
             "generic" => self.lower_generic_agent(&kind, &mut fields),
             "noop" => {
                 self.reject_unknown_fields(&mut fields, &[], "agent noop");
-                AgentDecl::Noop
+                AgentDef::Noop
             }
             "fake" => self.lower_fake_agent(&kind, &mut fields),
             other => {
@@ -87,9 +87,9 @@ impl Analyzer {
 
     fn lower_mode_agent(
         &mut self,
-        kind: &RawIdent,
-        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
-    ) -> Option<AgentDecl> {
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::CstField>,
+    ) -> Option<AgentDef> {
         let mode = self.take_required_agent_mode(fields, &kind.span, &kind.name);
         let command = self.take_required_string_with_hint(
             fields,
@@ -110,7 +110,7 @@ impl Analyzer {
                     &["mode", "command", "args", "session_id_file", "env"],
                     "agent claude",
                 );
-                Some(AgentDecl::Claude {
+                Some(AgentDef::Claude {
                     mode: mode?,
                     command: command?,
                     args,
@@ -124,7 +124,7 @@ impl Analyzer {
                     &["mode", "command", "args", "env"],
                     "agent codex",
                 );
-                Some(AgentDecl::Codex {
+                Some(AgentDef::Codex {
                     mode: mode?,
                     command: command?,
                     args,
@@ -137,7 +137,7 @@ impl Analyzer {
                     &["mode", "command", "args", "env"],
                     "agent gemini",
                 );
-                Some(AgentDecl::Gemini {
+                Some(AgentDef::Gemini {
                     mode: mode?,
                     command: command?,
                     args,
@@ -150,7 +150,7 @@ impl Analyzer {
                     &["mode", "command", "args", "env"],
                     "agent hermes",
                 );
-                Some(AgentDecl::Hermes {
+                Some(AgentDef::Hermes {
                     mode: mode?,
                     command: command?,
                     args,
@@ -164,7 +164,7 @@ impl Analyzer {
                     &["mode", "command", "args", "conversation_id", "env"],
                     "agent antigravity",
                 );
-                Some(AgentDecl::Antigravity {
+                Some(AgentDef::Antigravity {
                     mode: mode?,
                     command: command?,
                     args,
@@ -179,7 +179,7 @@ impl Analyzer {
                     &["mode", "command", "subcommand", "args", "env"],
                     "agent copilot",
                 );
-                Some(AgentDecl::Copilot {
+                Some(AgentDef::Copilot {
                     mode: mode?,
                     command: command?,
                     subcommand,
@@ -193,8 +193,8 @@ impl Analyzer {
 
     fn lower_simple_agent(
         &mut self,
-        kind: &RawIdent,
-        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::CstField>,
         label: &str,
     ) -> Option<SimpleAgentParts> {
         let command = self.take_required_string_with_hint(
@@ -222,9 +222,9 @@ impl Analyzer {
 
     fn lower_grok_agent(
         &mut self,
-        kind: &RawIdent,
-        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
-    ) -> Option<AgentDecl> {
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::CstField>,
+    ) -> Option<AgentDef> {
         let command = self.take_required_string_with_hint(
             fields,
             "command",
@@ -242,7 +242,7 @@ impl Analyzer {
             &["command", "args", "session_id_file", "env"],
             "agent grok",
         );
-        Some(AgentDecl::Grok {
+        Some(AgentDef::Grok {
             command: command?,
             args,
             session_id_file,
@@ -252,16 +252,16 @@ impl Analyzer {
 
     fn lower_generic_agent(
         &mut self,
-        kind: &RawIdent,
-        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
-    ) -> AgentDecl {
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::CstField>,
+    ) -> AgentDef {
         let command = if let Some(field) = fields.remove("command") {
             match field.value {
-                RawValue::List(items, _) => {
+                CstValue::List(items, _) => {
                     let mut out = Vec::new();
                     for item in items {
                         match item {
-                            RawValue::String(s, _) => out.push(s),
+                            CstValue::String(s, _) => out.push(s),
                             other => {
                                 self.errors.push(Diagnostic::error(
                                     other.span(),
@@ -289,14 +289,14 @@ impl Analyzer {
         };
         let env = self.take_optional_env_block(fields);
         self.reject_unknown_fields(fields, &["command", "env"], "agent generic");
-        AgentDecl::Generic { command, env }
+        AgentDef::Generic { command, env }
     }
 
     fn lower_fake_agent(
         &mut self,
-        kind: &RawIdent,
-        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
-    ) -> AgentDecl {
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::CstField>,
+    ) -> AgentDef {
         #[allow(clippy::cast_possible_truncation)]
         let exit_code = self
             .take_optional_int(fields, "exit_code")
@@ -314,7 +314,7 @@ impl Analyzer {
             &["exit_code", "delay_secs", "stdout", "stderr", "files"],
             &format!("agent {}", kind.name),
         );
-        AgentDecl::Fake {
+        AgentDef::Fake {
             exit_code,
             delay_secs,
             stdout,
@@ -324,14 +324,14 @@ impl Analyzer {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn lower_router_agent(&mut self, kind: &RawIdent, body: Option<RawBlock>) -> Option<AgentDecl> {
+    fn lower_router_agent(&mut self, kind: &CstIdent, body: Option<CstBlock>) -> Option<AgentDef> {
         let raw_fields = match body {
             Some(block) => block.fields,
             None => Vec::new(),
         };
 
         let mut strategy = RouterStrategy::Fallback;
-        let mut agents: Vec<(String, Box<AgentDecl>)> = Vec::new();
+        let mut agents: Vec<(String, Box<AgentDef>)> = Vec::new();
         let mut seen_names = std::collections::HashSet::new();
 
         for field in raw_fields {
@@ -346,7 +346,7 @@ impl Analyzer {
                     continue;
                 }
                 match field.value {
-                    RawValue::Ident(ref ident, ref span) => match ident.as_str() {
+                    CstValue::Ident(ref ident, ref span) => match ident.as_str() {
                         "fallback" => strategy = RouterStrategy::Fallback,
                         "rotate" => strategy = RouterStrategy::Rotate,
                         other => {
@@ -380,11 +380,11 @@ impl Analyzer {
             }
 
             match field.value {
-                RawValue::Block(block) => {
+                CstValue::Block(block) => {
                     let mut sub_fields = self.collect_fields(Some(block));
                     let sub_kind = if let Some(kind_field) = sub_fields.remove("kind") {
                         match kind_field.value {
-                            RawValue::Ident(s, _) => s,
+                            CstValue::Ident(s, _) => s,
                             other => {
                                 self.errors.push(Diagnostic::error(
                                     other.span(),
@@ -399,11 +399,13 @@ impl Analyzer {
                                 field.name.span.clone(),
                                 format!("router sub-agent `{name}` requires `kind`"),
                             )
-                            .with_hint("add `kind = claude` (or codex, gemini, grok, opencode, etc.)"),
+                            .with_hint(
+                                "add `kind = claude` (or codex, gemini, grok, opencode, etc.)",
+                            ),
                         );
                         continue;
                     };
-                    let sub_ident = RawIdent {
+                    let sub_ident = CstIdent {
                         name: sub_kind,
                         span: field.name.span.clone(),
                     };
@@ -434,14 +436,14 @@ impl Analyzer {
             return None;
         }
 
-        Some(AgentDecl::Router { agents, strategy })
+        Some(AgentDef::Router { agents, strategy })
     }
 
     fn lower_sub_agent(
         &mut self,
-        kind: &RawIdent,
-        fields: &mut std::collections::BTreeMap<String, crate::parser::RawField>,
-    ) -> Option<AgentDecl> {
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, crate::parser::CstField>,
+    ) -> Option<AgentDef> {
         match kind.name.as_str() {
             "claude" | "codex" | "gemini" | "hermes" | "antigravity" | "copilot" => {
                 self.lower_mode_agent(kind, fields)
@@ -449,23 +451,23 @@ impl Analyzer {
             "cursor" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(kind, fields, "cursor")?;
-                Some(AgentDecl::Cursor { command, args, env })
+                Some(AgentDef::Cursor { command, args, env })
             }
             "cline" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(kind, fields, "cline")?;
-                Some(AgentDecl::Cline { command, args, env })
+                Some(AgentDef::Cline { command, args, env })
             }
             "opencode" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(kind, fields, "opencode")?;
-                Some(AgentDecl::OpenCode { command, args, env })
+                Some(AgentDef::OpenCode { command, args, env })
             }
             "grok" => self.lower_grok_agent(kind, fields),
             "generic" => Some(self.lower_generic_agent(kind, fields)),
             "noop" => {
                 self.reject_unknown_fields(fields, &[], "agent noop");
-                Some(AgentDecl::Noop)
+                Some(AgentDef::Noop)
             }
             "fake" => Some(self.lower_fake_agent(kind, fields)),
             other => {

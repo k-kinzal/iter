@@ -26,9 +26,9 @@ use guard::lower_guard_pure;
 use suggest::{closest, parse_priority};
 pub(crate) use template::TemplatePosition;
 
-use crate::ast::{ArgDecl, NamedDef, NamedPrompt, PromptExpr, PromptValue, Root, Span, Spanned};
+use crate::ast::{ArgDef, Iterfile, NamedDef, NamedPrompt, PromptExpr, PromptValue, Span, Spanned};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawFile, RawIdent, RawSection};
+use crate::parser::{CstBlock, CstFile, CstIdent, CstSection};
 
 // Hint strings for diagnostics about removed project-shaped defaults. The
 // text is intentionally verbose because each explains *why* iter no longer
@@ -47,7 +47,7 @@ const CONTINUE_ON_ERROR_HINT: &str = "iter no longer picks a default — set `co
 const RUNNER_BEHAVIOR_HINT: &str = "iter no longer picks a default — set `behavior = wait` to park on the queue (queue required) or `behavior = loop { delay_secs = N }` to synthesise an empty signal each iteration.";
 const TRIGGER_IN_ITERFILE_HINT: &str = "trigger declarations belong in `compose.iter`, not in an Iterfile. Run `iter compose up` against a `compose.iter` that wires this trigger to a service.";
 
-pub(crate) fn lower_and_check(file: RawFile) -> (Option<Root>, Vec<Diagnostic>) {
+pub(crate) fn lower_and_check(file: CstFile) -> (Option<Iterfile>, Vec<Diagnostic>) {
     let mut analyzer = Analyzer::default();
     let result = analyzer.lower(file);
     let declared: std::collections::BTreeSet<String> =
@@ -87,7 +87,7 @@ impl Analyzer {
 }
 
 impl Analyzer {
-    /// Lower an Iterfile into the typed [`Root`] AST.
+    /// Lower an Iterfile into the typed [`Iterfile`] AST.
     ///
     /// The Iterfile grammar is named definitions (`agent`/`workspace`/`queue`
     /// and `prompt as <name>`) bound by a `runner { agent = ... workspace = ... }`
@@ -95,13 +95,13 @@ impl Analyzer {
     /// synthetic runner — is no longer supported; its constructs are reported
     /// as semantic errors that name the replacement.
     #[allow(clippy::too_many_lines)]
-    fn lower(&mut self, file: RawFile) -> Root {
-        let mut root = Root::default();
+    fn lower(&mut self, file: CstFile) -> Iterfile {
+        let mut root = Iterfile::default();
         let mut seen = SectionSeen::default();
 
         for section in file.sections {
             match section {
-                RawSection::Block {
+                CstSection::Block {
                     keyword,
                     keyword_span,
                     kind,
@@ -121,10 +121,19 @@ impl Analyzer {
                     }
                     match keyword.as_str() {
                         "arg" => {
-                            self.lower_arg_section(&mut root, &mut seen, kind, keyword_span, body, span);
+                            self.lower_arg_section(
+                                &mut root,
+                                &mut seen,
+                                kind,
+                                keyword_span,
+                                body,
+                                span,
+                            );
                         }
                         "queue" => {
-                            let def_name = alias.as_ref().map(|a| a.name.clone())
+                            let def_name = alias
+                                .as_ref()
+                                .map(|a| a.name.clone())
                                 .or_else(|| kind.as_ref().map(|k| k.name.clone()));
                             let Some(name) = def_name else {
                                 self.errors.push(Diagnostic::error(
@@ -133,19 +142,20 @@ impl Analyzer {
                                 ));
                                 continue;
                             };
-                            if self.reject_duplicate_name(&seen.queue_names, &name, &span, "queue") {
+                            if self.reject_duplicate_name(&seen.queue_names, &name, &span, "queue")
+                            {
                                 continue;
                             }
                             seen.queue_names.insert(name.clone(), span.clone());
                             if let Some(decl) = self.lower_queue(kind, body, &keyword_span) {
-                                root.queues.push(Spanned::new(
-                                    NamedDef { name, decl },
-                                    span,
-                                ));
+                                root.queues
+                                    .push(Spanned::new(NamedDef { name, decl }, span));
                             }
                         }
                         "workspace" => {
-                            let def_name = alias.as_ref().map(|a| a.name.clone())
+                            let def_name = alias
+                                .as_ref()
+                                .map(|a| a.name.clone())
                                 .or_else(|| kind.as_ref().map(|k| k.name.clone()));
                             let Some(name) = def_name else {
                                 self.errors.push(Diagnostic::error(
@@ -154,19 +164,24 @@ impl Analyzer {
                                 ));
                                 continue;
                             };
-                            if self.reject_duplicate_name(&seen.workspace_names, &name, &span, "workspace") {
+                            if self.reject_duplicate_name(
+                                &seen.workspace_names,
+                                &name,
+                                &span,
+                                "workspace",
+                            ) {
                                 continue;
                             }
                             seen.workspace_names.insert(name.clone(), span.clone());
                             if let Some(decl) = self.lower_workspace(kind, body, &keyword_span) {
-                                root.workspaces.push(Spanned::new(
-                                    NamedDef { name, decl },
-                                    span,
-                                ));
+                                root.workspaces
+                                    .push(Spanned::new(NamedDef { name, decl }, span));
                             }
                         }
                         "agent" => {
-                            let def_name = alias.as_ref().map(|a| a.name.clone())
+                            let def_name = alias
+                                .as_ref()
+                                .map(|a| a.name.clone())
                                 .or_else(|| kind.as_ref().map(|k| k.name.clone()));
                             let Some(name) = def_name else {
                                 self.errors.push(Diagnostic::error(
@@ -175,15 +190,14 @@ impl Analyzer {
                                 ));
                                 continue;
                             };
-                            if self.reject_duplicate_name(&seen.agent_names, &name, &span, "agent") {
+                            if self.reject_duplicate_name(&seen.agent_names, &name, &span, "agent")
+                            {
                                 continue;
                             }
                             seen.agent_names.insert(name.clone(), span.clone());
                             if let Some(decl) = self.lower_agent(kind, body, &keyword_span) {
-                                root.agents.push(Spanned::new(
-                                    NamedDef { name, decl },
-                                    span,
-                                ));
+                                root.agents
+                                    .push(Spanned::new(NamedDef { name, decl }, span));
                             }
                         }
                         "trigger" => {
@@ -197,7 +211,9 @@ impl Analyzer {
                             );
                         }
                         "runner" => {
-                            if let Some(decl) = self.lower_runner_new(kind.as_ref(), alias, body, &keyword_span) {
+                            if let Some(decl) =
+                                self.lower_runner_new(kind.as_ref(), alias, body, &keyword_span)
+                            {
                                 root.runners.push(Spanned::new(decl, span));
                             }
                         }
@@ -209,7 +225,7 @@ impl Analyzer {
                         }
                     }
                 }
-                RawSection::Prompt {
+                CstSection::Prompt {
                     name,
                     guard,
                     body,
@@ -225,12 +241,21 @@ impl Analyzer {
                             ));
                         }
                         self.validate_template(&body, &body_span, TemplatePosition::Prompt);
-                        if self.reject_duplicate_name(&seen.prompt_names, &name_ident.name, &span, "prompt") {
+                        if self.reject_duplicate_name(
+                            &seen.prompt_names,
+                            &name_ident.name,
+                            &span,
+                            "prompt",
+                        ) {
                             continue;
                         }
-                        seen.prompt_names.insert(name_ident.name.clone(), span.clone());
+                        seen.prompt_names
+                            .insert(name_ident.name.clone(), span.clone());
                         root.prompts.push(Spanned::new(
-                            NamedPrompt { name: name_ident.name, body },
+                            NamedPrompt {
+                                name: name_ident.name,
+                                body,
+                            },
                             span,
                         ));
                     } else {
@@ -240,7 +265,7 @@ impl Analyzer {
                         ));
                     }
                 }
-                RawSection::On { span, .. } => {
+                CstSection::On { span, .. } => {
                     self.errors.push(Diagnostic::error(
                         span,
                         "top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`",
@@ -254,13 +279,23 @@ impl Analyzer {
             if !root.agents.iter().any(|a| a.node.name == runner.node.agent) {
                 self.errors.push(Diagnostic::error(
                     runner.span.clone(),
-                    format!("runner references agent `{}` which is not defined", runner.node.agent),
+                    format!(
+                        "runner references agent `{}` which is not defined",
+                        runner.node.agent
+                    ),
                 ));
             }
-            if !root.workspaces.iter().any(|w| w.node.name == runner.node.workspace) {
+            if !root
+                .workspaces
+                .iter()
+                .any(|w| w.node.name == runner.node.workspace)
+            {
                 self.errors.push(Diagnostic::error(
                     runner.span.clone(),
-                    format!("runner references workspace `{}` which is not defined", runner.node.workspace),
+                    format!(
+                        "runner references workspace `{}` which is not defined",
+                        runner.node.workspace
+                    ),
                 ));
             }
             if let Some(ref q) = runner.node.queue {
@@ -272,7 +307,12 @@ impl Analyzer {
                 }
             }
             // Validate prompt references.
-            Self::validate_prompt_refs(&runner.node.prompt, &root.prompts, &runner.span, &mut self.errors);
+            Self::validate_prompt_refs(
+                &runner.node.prompt,
+                &root.prompts,
+                &runner.span,
+                &mut self.errors,
+            );
         }
 
         root
@@ -307,11 +347,11 @@ impl Analyzer {
 
     fn lower_arg_section(
         &mut self,
-        root: &mut Root,
+        root: &mut Iterfile,
         seen: &mut SectionSeen,
-        kind: Option<RawIdent>,
+        kind: Option<CstIdent>,
         keyword_span: Span,
-        body: Option<RawBlock>,
+        body: Option<CstBlock>,
         span: Span,
     ) {
         let Some(name_ident) = kind else {
@@ -352,7 +392,7 @@ impl Analyzer {
             val
         });
         root.args.push(Spanned::new(
-            ArgDecl {
+            ArgDef {
                 name: name_ident.name,
                 default,
             },
@@ -369,14 +409,11 @@ impl Analyzer {
     ) -> bool {
         if let Some(prev) = names.get(name) {
             self.errors.push(
-                Diagnostic::error(
-                    span.clone(),
-                    format!("duplicate {label} name `{name}`"),
-                )
-                .with_hint(format!(
-                    "previous declaration at bytes {}..{}",
-                    prev.start, prev.end,
-                )),
+                Diagnostic::error(span.clone(), format!("duplicate {label} name `{name}`"))
+                    .with_hint(format!(
+                        "previous declaration at bytes {}..{}",
+                        prev.start, prev.end,
+                    )),
             );
             true
         } else {
@@ -394,7 +431,6 @@ struct SectionSeen {
     agent_names: std::collections::BTreeMap<String, Span>,
     prompt_names: std::collections::BTreeMap<String, Span>,
 }
-
 
 pub(super) fn is_valid_arg_name(name: &str) -> bool {
     let mut chars = name.chars();

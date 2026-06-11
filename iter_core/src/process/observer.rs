@@ -41,11 +41,11 @@ use std::future::Future;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::process::error::ObserverError;
 use crate::log::LogStream;
+use crate::process::error::ObserverError;
 use crate::process::log::LogSender;
-use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::runner::BoxError;
+use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::signal::SignalId;
 
 pub use crate::runner::observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
@@ -507,8 +507,8 @@ mod tests {
 
     #[tokio::test]
     async fn dyn_observer_dispatch_works() {
-        use std::sync::Arc;
         use crate::runner::DynRunnerObserver;
+        use std::sync::Arc;
 
         let observer: Arc<dyn DynRunnerObserver> = Arc::new(
             LifecycleObserver::open_in(std::path::Path::new("/tmp"), None)

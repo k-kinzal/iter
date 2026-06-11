@@ -7,7 +7,7 @@
 //!
 //! # Stability
 //!
-//! The public API exposed from this crate (the [`Root`] AST, the
+//! The public API exposed from this crate (the [`Iterfile`] AST, the
 //! [`parse`] entry point, and the CST surface reached via [`parse_to_cst`])
 //! is part of the iter language v1 contract. The grammar version is
 //! [`GRAMMAR_VERSION`] and follows semantic versioning. The canonical
@@ -59,26 +59,25 @@ mod parser;
 mod semantic;
 
 pub use ast::{
-    Action, AgentDecl, AgentMode, ApplyBackDecl, ArgDecl, CloneApplyBackMode, CmpOp, ComposeRoot,
-    RouterStrategy,
-    ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDecl, DlqTargetDecl, EventHandlerDecl,
-    EventName, ExtractExpr, FilesSource, InlineService, IterationField, KafkaConfig, KafkaConsumer,
-    KafkaProducer, KafkaSecurity, KinesisCheckpoint, KinesisConfig, KinesisConsumer,
-    KinesisIdentity, KinesisProducer, KinesisShardListFilter, NamedCompose, NamedDef, NamedPrompt,
-    NamedQueue, NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDecl,
-    PromptExpr, PromptGuard, PromptValue, PubSubConfig, PubSubCredentialKind, PubSubCredentials,
-    PubSubInitialSeek, PubSubKeepalive, PubSubPublisher, PubSubSubscriber, QueueDecl, QueueRef,
-    RetryPolicyDecl, Root, RunnerBehavior, RunnerDecl, SandboxNetworkDecl, SandboxPolicyDecl,
-    SecretExpr, ServiceBusAuth, ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy,
-    ServiceBusReceiver, ServiceBusSender, ServiceBusSession, ServiceSource, Span, Spanned,
-    SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity,
-    SqsProducer, TelemetryDecl, TelemetryProtocol, TemplatedString, TriggerDecl, Value,
-    WatchEventKind, WebhookRoute, WorkspaceDecl,
+    Action, AgentDef, AgentMode, ApplyBackDef, ArgDef, CloneApplyBackMode, CmpOp, Compose,
+    ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef, DlqTargetDef, EventHandlerDef,
+    EventName, ExtractExpr, FilesSource, InlineService, IterationField, Iterfile, KafkaConfig,
+    KafkaConsumer, KafkaProducer, KafkaSecurity, KinesisCheckpoint, KinesisConfig, KinesisConsumer,
+    KinesisIdentity, KinesisProducer, KinesisShardListFilter, MetadataSource, NamedCompose,
+    NamedDef, NamedPrompt, NamedQueue, NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword,
+    PromptArm, PromptDef, PromptExpr, PromptGuard, PromptValue, PubSubConfig, PubSubCredentialKind,
+    PubSubCredentials, PubSubInitialSeek, PubSubKeepalive, PubSubPublisher, PubSubSubscriber,
+    QueueDef, QueueRef, RetryPolicyDef, RouterStrategy, RunnerBehavior, RunnerDef,
+    SandboxNetworkDef, SandboxPolicyDef, SecretExpr, ServiceBusAuth, ServiceBusAuthKind,
+    ServiceBusConfig, ServiceBusProxy, ServiceBusReceiver, ServiceBusSender, ServiceBusSession,
+    ServiceSource, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials,
+    SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef, TelemetryProtocol,
+    TriggerDef, Value, WatchEventKind, WorkspaceDef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{
-    RawAction, RawBlock, RawCmpOp, RawEventHandler, RawField, RawFile, RawGuard, RawIdent,
-    RawPromptMatchArm, RawRoute, RawSection, RawValue,
+    CstAction, CstBlock, CstCmpOp, CstEventHandler, CstField, CstFile, CstGuard, CstIdent,
+    CstPromptMatchArm, CstRoute, CstSection, CstValue,
 };
 
 /// Semantic version of the grammar implemented by this crate.
@@ -87,9 +86,9 @@ pub use parser::{
 ///
 /// 1. the surface syntax (as formally specified by `grammar/iter.pest`),
 /// 2. the concrete syntax tree returned by [`parse_to_cst`] (the
-///    [`RawFile`]/[`RawSection`]/[`RawValue`]/… hierarchy — their shape is
+///    [`CstFile`]/[`CstSection`]/[`CstValue`]/… hierarchy — their shape is
 ///    part of the contract, not just their presence), and
-/// 3. the semantic AST returned by [`parse`] ([`Root`] and friends).
+/// 3. the semantic AST returned by [`parse`] ([`Iterfile`] and friends).
 ///
 /// Any backwards-incompatible change (added or removed AST variants, changed
 /// reserved keywords, removed kinds, removed CST fields) bumps the major
@@ -98,7 +97,7 @@ pub use parser::{
 /// fixes and documentation changes bump the patch component.
 pub const GRAMMAR_VERSION: &str = "4.1.0";
 
-/// Parse the given source text into a validated [`Root`].
+/// Parse the given source text into a validated [`Iterfile`].
 ///
 /// The pipeline is `lexer → parser → semantic analyzer`. All three stages
 /// run with error recovery enabled, so a single call returns *every*
@@ -118,7 +117,7 @@ pub const GRAMMAR_VERSION: &str = "4.1.0";
 /// let result = parse("queue memory\nworkspace local { base = \".\" }\n");
 /// assert!(result.is_ok());
 /// ```
-pub fn parse(source: &str) -> Result<Root, Vec<Diagnostic>> {
+pub fn parse(source: &str) -> Result<Iterfile, Vec<Diagnostic>> {
     let (cst, mut diagnostics) = parse_to_cst(source);
 
     let root = match cst {
@@ -147,7 +146,7 @@ pub fn parse(source: &str) -> Result<Root, Vec<Diagnostic>> {
 /// *not* performed. A vector of zero error-severity diagnostics means the
 /// input is syntactically accepted.
 ///
-/// The [`RawFile`] shape is part of the grammar contract — see
+/// The [`CstFile`] shape is part of the grammar contract — see
 /// [`GRAMMAR_VERSION`].
 ///
 /// The returned [`Option`] is `Some` whenever the parser produced a CST.
@@ -165,7 +164,7 @@ pub fn parse(source: &str) -> Result<Root, Vec<Diagnostic>> {
 /// assert_eq!(cst.sections.len(), 1);
 /// ```
 #[must_use]
-pub fn parse_to_cst(source: &str) -> (Option<RawFile>, Vec<Diagnostic>) {
+pub fn parse_to_cst(source: &str) -> (Option<CstFile>, Vec<Diagnostic>) {
     let (tokens, lex_errors) = lexer::lex(source);
     let (cst, parse_errors) = parser::parse_tokens(&tokens, source.len());
 
@@ -177,7 +176,7 @@ pub fn parse_to_cst(source: &str) -> (Option<RawFile>, Vec<Diagnostic>) {
     (cst, diagnostics)
 }
 
-/// Parse a `compose.iter` source file into a validated [`ComposeRoot`].
+/// Parse a `compose.iter` source file into a validated [`Compose`].
 ///
 /// Shares the lexer + CST + per-kind builders with [`parse`], but interprets
 /// each top-level section under compose semantics: the first identifier is
@@ -192,7 +191,7 @@ pub fn parse_to_cst(source: &str) -> (Option<RawFile>, Vec<Diagnostic>) {
 /// Returns `Err(Vec<Diagnostic>)` containing every syntactic and semantic
 /// diagnostic surfaced by the pipeline. The vector is never empty when this
 /// function returns `Err`.
-pub fn parse_compose(source: &str) -> Result<ComposeRoot, Vec<Diagnostic>> {
+pub fn parse_compose(source: &str) -> Result<Compose, Vec<Diagnostic>> {
     let (cst, mut diagnostics) = parse_to_cst(source);
 
     let root = match cst {

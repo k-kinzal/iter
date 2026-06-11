@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: trigger-webhook-bind.iter
 ---
-ComposeRoot {
+Compose {
     telemetry: None,
     queues: [
         Spanned {

@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: queue-kafka-minimal.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -129,7 +129,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

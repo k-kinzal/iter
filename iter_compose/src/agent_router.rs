@@ -55,7 +55,10 @@ impl AgentRouter {
     /// Panics if `agents` is empty.
     #[must_use]
     pub fn new(agents: Vec<(String, AnyAgent)>, strategy: RoutingStrategy) -> Self {
-        assert!(!agents.is_empty(), "AgentRouter requires at least one agent");
+        assert!(
+            !agents.is_empty(),
+            "AgentRouter requires at least one agent"
+        );
         Self {
             agents,
             strategy,
@@ -135,15 +138,20 @@ impl Clone for AgentRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iter_core::Prompt;
     use iter_core::agent::{AgentMode, ClaudeAgent, ClaudeSettings, GenericAgent};
     use iter_core::signal::SignalId;
-    use iter_core::Prompt;
     use std::io::Write;
     use std::path::Path;
     use tokio_util::sync::CancellationToken;
 
     fn test_ctx(prompt: &Prompt) -> AgentRunContext<'_> {
-        AgentRunContext::new(Path::new("."), prompt, CancellationToken::new(), SignalId::new())
+        AgentRunContext::new(
+            Path::new("."),
+            prompt,
+            CancellationToken::new(),
+            SignalId::new(),
+        )
     }
 
     fn token_limit_script(dir: &Path) -> std::path::PathBuf {
@@ -175,8 +183,14 @@ mod tests {
     #[tokio::test]
     async fn rotate_cycles_through_agents() {
         let agents = vec![
-            ("a".into(), AnyAgent::Generic(GenericAgent::new(vec!["true".into()]))),
-            ("b".into(), AnyAgent::Generic(GenericAgent::new(vec!["true".into()]))),
+            (
+                "a".into(),
+                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
+            ),
+            (
+                "b".into(),
+                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
+            ),
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Rotate);
         let prompt = Prompt::from("x");
@@ -190,8 +204,14 @@ mod tests {
     #[tokio::test]
     async fn fallback_returns_first_success() {
         let agents = vec![
-            ("a".into(), AnyAgent::Generic(GenericAgent::new(vec!["true".into()]))),
-            ("b".into(), AnyAgent::Generic(GenericAgent::new(vec!["false".into()]))),
+            (
+                "a".into(),
+                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
+            ),
+            (
+                "b".into(),
+                AnyAgent::Generic(GenericAgent::new(vec!["false".into()])),
+            ),
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");
@@ -202,7 +222,10 @@ mod tests {
     async fn fallback_propagates_non_token_limit_errors() {
         let agents = vec![
             ("a".into(), AnyAgent::Generic(GenericAgent::new(vec![]))),
-            ("b".into(), AnyAgent::Generic(GenericAgent::new(vec!["true".into()]))),
+            (
+                "b".into(),
+                AnyAgent::Generic(GenericAgent::new(vec!["true".into()])),
+            ),
         ];
         let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
         let prompt = Prompt::from("x");

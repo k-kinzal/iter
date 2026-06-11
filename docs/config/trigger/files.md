@@ -2,7 +2,7 @@
 
 Drains one or more file-path sources (stdin or files on disk) and emits one Signal per path.
 
-AST: `TriggerDecl::Files` and `FilesSource` in `iter_language/src/ast/trigger.rs`.
+AST: `TriggerDef::Files` and `FilesSource` in `iter_language/src/ast/trigger.rs`.
 
 Standalone binary: `iter-files`.
 

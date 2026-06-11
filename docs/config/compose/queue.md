@@ -2,7 +2,7 @@
 
 Declares a **named** queue that services and triggers can refer to. One or more per `compose.iter`.
 
-AST: `NamedQueue` in `iter_language/src/ast/compose.rs`; the backend body reuses `QueueDecl` from `iter_language/src/ast/queue/mod.rs`.
+AST: `NamedQueue` in `iter_language/src/ast/compose.rs`; the backend body reuses `QueueDef` from `iter_language/src/ast/queue/mod.rs`.
 
 ## Syntax
 

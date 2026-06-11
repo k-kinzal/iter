@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use super::super::Analyzer;
 use crate::ast::{KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity, Span};
-use crate::parser::RawField;
+use crate::parser::CstField;
 
 const KAFKA_FIELDS: &[&str] = &[
     "bootstrap_servers",
@@ -129,7 +129,7 @@ const KAFKA_CONSUMER_FIELDS: &[&str] = &[
 impl Analyzer {
     pub(super) fn lower_kafka(
         &mut self,
-        body: BTreeMap<String, RawField>,
+        body: BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> KafkaConfig {
         let mut fields = body;
@@ -194,7 +194,7 @@ impl Analyzer {
 
     fn lower_kafka_security(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<KafkaSecurity> {
         let mut block = self.take_optional_block(fields, "security")?;
         let security_protocol = self.take_optional_string(&mut block, "security_protocol");
@@ -287,7 +287,7 @@ impl Analyzer {
 
     fn lower_kafka_producer(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<KafkaProducer> {
         let mut block = self.take_optional_block(fields, "producer")?;
         let topic = self.take_optional_string(&mut block, "topic");
@@ -357,7 +357,7 @@ impl Analyzer {
 
     fn lower_kafka_consumer(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<KafkaConsumer> {
         let mut block = self.take_optional_block(fields, "consumer")?;
         let topics = self.take_optional_string_list(&mut block, "topics");

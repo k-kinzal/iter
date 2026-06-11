@@ -1,7 +1,7 @@
 //! Token-stream cursor helpers and error-recovery routines.
 
 use super::Parser;
-use super::cst::RawIdent;
+use super::cst::CstIdent;
 use crate::ast::Span;
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{SpannedToken, Token};
@@ -43,13 +43,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub(super) fn expect_ident(&mut self) -> Option<RawIdent> {
+    pub(super) fn expect_ident(&mut self) -> Option<CstIdent> {
         match self.peek() {
             Some(Token::Ident(name)) => {
                 let name = name.clone();
                 let span = self.peek_span();
                 self.bump();
-                Some(RawIdent { name, span })
+                Some(CstIdent { name, span })
             }
             // Treat keywords-as-words by name when used in identifier
             // position. The lexer keeps `true`/`false`/`null` as their own
@@ -59,7 +59,7 @@ impl<'a> Parser<'a> {
             Some(Token::True) => {
                 let span = self.peek_span();
                 self.bump();
-                Some(RawIdent {
+                Some(CstIdent {
                     name: "true".into(),
                     span,
                 })
@@ -67,7 +67,7 @@ impl<'a> Parser<'a> {
             Some(Token::False) => {
                 let span = self.peek_span();
                 self.bump();
-                Some(RawIdent {
+                Some(CstIdent {
                     name: "false".into(),
                     span,
                 })
@@ -75,7 +75,7 @@ impl<'a> Parser<'a> {
             Some(Token::Null) => {
                 let span = self.peek_span();
                 self.bump();
-                Some(RawIdent {
+                Some(CstIdent {
                     name: "null".into(),
                     span,
                 })
@@ -98,12 +98,12 @@ impl<'a> Parser<'a> {
     /// key isn't a legal identifier (Kafka header names with `-`, librdkafka
     /// extra-config keys with `.`). The lowerer decides per call site whether
     /// to accept the string-keyed shape; here we just parse it.
-    pub(super) fn expect_field_name(&mut self) -> Option<RawIdent> {
+    pub(super) fn expect_field_name(&mut self) -> Option<CstIdent> {
         if let Some(Token::String(s)) = self.peek() {
             let name = s.clone();
             let span = self.peek_span();
             self.bump();
-            return Some(RawIdent { name, span });
+            return Some(CstIdent { name, span });
         }
         self.expect_ident()
     }
@@ -181,7 +181,10 @@ impl<'a> Parser<'a> {
                 }
                 Token::Ident(name)
                     if depth == 0
-                        && matches!(name.as_str(), "shell" | "on" | "metadata" | "iteration" | "queue" | "_") =>
+                        && matches!(
+                            name.as_str(),
+                            "shell" | "on" | "metadata" | "iteration" | "queue" | "_"
+                        ) =>
                 {
                     return;
                 }

@@ -68,7 +68,10 @@ impl Agent for FakeAgent {
 
         for (path, content) in &self.files {
             let rel = Path::new(path);
-            if rel.is_absolute() || rel.components().any(|c| c == std::path::Component::ParentDir)
+            if rel.is_absolute()
+                || rel
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir)
             {
                 return Err(AgentError::Launch(format!(
                     "fake agent file path must be relative without `..`: {path}"
@@ -151,10 +154,7 @@ mod tests {
             ..default_settings()
         });
         let prompt = Prompt::from("ignored");
-        agent
-            .run(ctx(tmp.path(), &prompt))
-            .await
-            .expect("run ok");
+        agent.run(ctx(tmp.path(), &prompt)).await.expect("run ok");
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("output/result.txt")).expect("read"),
             "content-a"
@@ -189,7 +189,10 @@ mod tests {
             .run(ctx(Path::new("."), &prompt))
             .await
             .expect_err("nonzero exit is an error");
-        assert!(matches!(err, AgentError::Failed { code: Some(1), .. }), "got {err:?}");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), .. }),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]

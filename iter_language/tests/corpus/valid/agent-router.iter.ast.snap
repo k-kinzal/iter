@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: agent-router.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -59,7 +59,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "router",
                 workspace: "local",

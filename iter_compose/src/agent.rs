@@ -12,12 +12,12 @@ use iter_core::agent::{
 };
 use iter_core::workspace::sandbox::agent_requirements;
 use iter_core::{Agent, AgentRun, AgentRunContext, SandboxRequirements};
-use iter_language::{AgentDecl, AgentMode as AstAgentMode};
+use iter_language::{AgentDef, AgentMode as AstAgentMode};
 use thiserror::Error;
 
 use crate::agent_router::{AgentRouter, RoutingStrategy};
 
-/// Errors produced while building an [`AnyAgent`] from an [`AgentDecl`].
+/// Errors produced while building an [`AnyAgent`] from an [`AgentDef`].
 #[derive(Debug, Error)]
 pub enum AgentBuildError {
     /// `agent generic { command = [] }` — a generic agent declaration with
@@ -154,7 +154,7 @@ fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
     }
 }
 
-/// Build an [`AnyAgent`] from an [`AgentDecl`].
+/// Build an [`AnyAgent`] from an [`AgentDef`].
 ///
 /// The compose layer is a pure 1:1 mapping: every field on the AST variant
 /// flows through to the corresponding `*Settings` struct without any
@@ -168,9 +168,9 @@ fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
 /// for the chosen variant — currently only the `generic { command = [] }`
 /// case.
 #[allow(clippy::too_many_lines)]
-pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
+pub fn build_agent(decl: &AgentDef) -> Result<AnyAgent, AgentBuildError> {
     Ok(match decl {
-        AgentDecl::Claude {
+        AgentDef::Claude {
             mode,
             command,
             args,
@@ -183,7 +183,7 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             session_id_file: session_id_file.as_ref().map(PathBuf::from),
             env: resolve_env(env),
         })),
-        AgentDecl::Codex {
+        AgentDef::Codex {
             mode,
             command,
             args,
@@ -194,7 +194,7 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             args: args.clone(),
             env: resolve_env(env),
         })),
-        AgentDecl::Gemini {
+        AgentDef::Gemini {
             mode,
             command,
             args,
@@ -205,7 +205,7 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             args: args.clone(),
             env: resolve_env(env),
         })),
-        AgentDecl::Hermes {
+        AgentDef::Hermes {
             mode,
             command,
             args,
@@ -216,7 +216,7 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             args: args.clone(),
             env: resolve_env(env),
         })),
-        AgentDecl::Antigravity {
+        AgentDef::Antigravity {
             mode,
             command,
             args,
@@ -229,7 +229,7 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             conversation_id: conversation_id.clone(),
             env: resolve_env(env),
         })),
-        AgentDecl::Copilot {
+        AgentDef::Copilot {
             mode,
             command,
             subcommand,
@@ -242,28 +242,26 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             args: args.clone(),
             env: resolve_env(env),
         })),
-        AgentDecl::Cursor { command, args, env } => {
+        AgentDef::Cursor { command, args, env } => {
             AnyAgent::Cursor(CursorAgent::new(CursorSettings {
                 command: command.clone(),
                 args: args.clone(),
                 env: resolve_env(env),
             }))
         }
-        AgentDecl::Cline { command, args, env } => {
-            AnyAgent::Cline(ClineAgent::new(ClineSettings {
-                command: command.clone(),
-                args: args.clone(),
-                env: resolve_env(env),
-            }))
-        }
-        AgentDecl::OpenCode { command, args, env } => {
+        AgentDef::Cline { command, args, env } => AnyAgent::Cline(ClineAgent::new(ClineSettings {
+            command: command.clone(),
+            args: args.clone(),
+            env: resolve_env(env),
+        })),
+        AgentDef::OpenCode { command, args, env } => {
             AnyAgent::OpenCode(OpenCodeAgent::new(OpenCodeSettings {
                 command: command.clone(),
                 args: args.clone(),
                 env: resolve_env(env),
             }))
         }
-        AgentDecl::Grok {
+        AgentDef::Grok {
             command,
             args,
             session_id_file,
@@ -274,8 +272,8 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             session_id_file: session_id_file.as_ref().map(PathBuf::from),
             env: resolve_env(env),
         })),
-        AgentDecl::Noop => AnyAgent::Noop(NoopAgent),
-        AgentDecl::Fake {
+        AgentDef::Noop => AnyAgent::Noop(NoopAgent),
+        AgentDef::Fake {
             exit_code,
             delay_secs,
             stdout,
@@ -288,7 +286,7 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             stderr: stderr.clone(),
             files: files.clone(),
         })),
-        AgentDecl::Generic { command, env } => {
+        AgentDef::Generic { command, env } => {
             if command.is_empty() {
                 return Err(AgentBuildError::GenericEmptyCommand);
             }
@@ -296,12 +294,12 @@ pub fn build_agent(decl: &AgentDecl) -> Result<AnyAgent, AgentBuildError> {
             agent.env = resolve_env(env);
             AnyAgent::Generic(agent)
         }
-        AgentDecl::Router { agents, strategy } => build_router(agents, *strategy)?,
+        AgentDef::Router { agents, strategy } => build_router(agents, *strategy)?,
     })
 }
 
 fn build_router(
-    agents: &[(String, Box<AgentDecl>)],
+    agents: &[(String, Box<AgentDef>)],
     strategy: iter_language::RouterStrategy,
 ) -> Result<AnyAgent, AgentBuildError> {
     if agents.is_empty() {
@@ -349,8 +347,8 @@ mod tests {
         BTreeMap::new()
     }
 
-    fn claude_decl(mode: AstAgentMode) -> AgentDecl {
-        AgentDecl::Claude {
+    fn claude_decl(mode: AstAgentMode) -> AgentDef {
+        AgentDef::Claude {
             mode,
             command: "claude".into(),
             args: Vec::new(),
@@ -359,8 +357,8 @@ mod tests {
         }
     }
 
-    fn codex_decl(mode: AstAgentMode) -> AgentDecl {
-        AgentDecl::Codex {
+    fn codex_decl(mode: AstAgentMode) -> AgentDef {
+        AgentDef::Codex {
             mode,
             command: "codex".into(),
             args: Vec::new(),
@@ -368,8 +366,8 @@ mod tests {
         }
     }
 
-    fn gemini_decl(mode: AstAgentMode) -> AgentDecl {
-        AgentDecl::Gemini {
+    fn gemini_decl(mode: AstAgentMode) -> AgentDef {
+        AgentDef::Gemini {
             mode,
             command: "gemini".into(),
             args: Vec::new(),
@@ -377,8 +375,8 @@ mod tests {
         }
     }
 
-    fn hermes_decl(mode: AstAgentMode) -> AgentDecl {
-        AgentDecl::Hermes {
+    fn hermes_decl(mode: AstAgentMode) -> AgentDef {
+        AgentDef::Hermes {
             mode,
             command: "hermes".into(),
             args: Vec::new(),
@@ -386,8 +384,8 @@ mod tests {
         }
     }
 
-    fn antigravity_decl(mode: AstAgentMode) -> AgentDecl {
-        AgentDecl::Antigravity {
+    fn antigravity_decl(mode: AstAgentMode) -> AgentDef {
+        AgentDef::Antigravity {
             mode,
             command: "agy".into(),
             args: Vec::new(),
@@ -396,8 +394,8 @@ mod tests {
         }
     }
 
-    fn copilot_decl(mode: AstAgentMode) -> AgentDecl {
-        AgentDecl::Copilot {
+    fn copilot_decl(mode: AstAgentMode) -> AgentDef {
+        AgentDef::Copilot {
             mode,
             command: "gh".into(),
             subcommand: None,
@@ -409,7 +407,7 @@ mod tests {
     #[test]
     fn maps_each_agent_decl_variant() {
         type Check = fn(&AnyAgent) -> bool;
-        let cases: [(AgentDecl, Check); 13] = [
+        let cases: [(AgentDef, Check); 13] = [
             (claude_decl(AstAgentMode::Print), |a| {
                 matches!(a, AnyAgent::Claude(_))
             }),
@@ -429,7 +427,7 @@ mod tests {
                 matches!(a, AnyAgent::Copilot(_))
             }),
             (
-                AgentDecl::Cursor {
+                AgentDef::Cursor {
                     command: "cursor-agent".into(),
                     args: Vec::new(),
                     env: empty_env(),
@@ -437,7 +435,7 @@ mod tests {
                 |a| matches!(a, AnyAgent::Cursor(_)),
             ),
             (
-                AgentDecl::Cline {
+                AgentDef::Cline {
                     command: "cline".into(),
                     args: Vec::new(),
                     env: empty_env(),
@@ -445,7 +443,7 @@ mod tests {
                 |a| matches!(a, AnyAgent::Cline(_)),
             ),
             (
-                AgentDecl::OpenCode {
+                AgentDef::OpenCode {
                     command: "opencode".into(),
                     args: Vec::new(),
                     env: empty_env(),
@@ -453,7 +451,7 @@ mod tests {
                 |a| matches!(a, AnyAgent::OpenCode(_)),
             ),
             (
-                AgentDecl::Grok {
+                AgentDef::Grok {
                     command: "grok".into(),
                     args: Vec::new(),
                     session_id_file: None,
@@ -462,15 +460,15 @@ mod tests {
                 |a| matches!(a, AnyAgent::Grok(_)),
             ),
             (
-                AgentDecl::Generic {
+                AgentDef::Generic {
                     command: vec!["echo".into(), "hi".into()],
                     env: empty_env(),
                 },
                 |a| matches!(a, AnyAgent::Generic(_)),
             ),
-            (AgentDecl::Noop, |a| matches!(a, AnyAgent::Noop(_))),
+            (AgentDef::Noop, |a| matches!(a, AnyAgent::Noop(_))),
             (
-                AgentDecl::Fake {
+                AgentDef::Fake {
                     exit_code: 0,
                     delay_secs: None,
                     stdout: Vec::new(),
@@ -488,7 +486,7 @@ mod tests {
 
     #[test]
     fn generic_with_empty_command_errors() {
-        let err = build_agent(&AgentDecl::Generic {
+        let err = build_agent(&AgentDef::Generic {
             command: vec![],
             env: empty_env(),
         })
@@ -538,7 +536,7 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines)]
     fn command_and_args_pass_through_to_every_agent() {
-        let claude = build_agent(&AgentDecl::Claude {
+        let claude = build_agent(&AgentDef::Claude {
             mode: AstAgentMode::Print,
             command: "/opt/bin/claude".into(),
             args: vec!["--model".into(), "opus".into()],
@@ -554,7 +552,7 @@ mod tests {
             other => panic!("expected Claude, got {other:?}"),
         }
 
-        let codex = build_agent(&AgentDecl::Codex {
+        let codex = build_agent(&AgentDef::Codex {
             mode: AstAgentMode::Print,
             command: "/opt/bin/codex".into(),
             args: vec!["--model".into(), "o1".into()],
@@ -569,7 +567,7 @@ mod tests {
             other => panic!("expected Codex, got {other:?}"),
         }
 
-        let gemini = build_agent(&AgentDecl::Gemini {
+        let gemini = build_agent(&AgentDef::Gemini {
             mode: AstAgentMode::Print,
             command: "/opt/bin/gemini".into(),
             args: vec!["--sandbox".into()],
@@ -584,7 +582,7 @@ mod tests {
             other => panic!("expected Gemini, got {other:?}"),
         }
 
-        let hermes = build_agent(&AgentDecl::Hermes {
+        let hermes = build_agent(&AgentDef::Hermes {
             mode: AstAgentMode::Print,
             command: "/opt/bin/hermes".into(),
             args: vec!["--yolo".into(), "--max-turns".into(), "30".into()],
@@ -602,7 +600,7 @@ mod tests {
             other => panic!("expected Hermes, got {other:?}"),
         }
 
-        let antigravity = build_agent(&AgentDecl::Antigravity {
+        let antigravity = build_agent(&AgentDef::Antigravity {
             mode: AstAgentMode::Print,
             command: "/opt/bin/agy".into(),
             args: vec!["--print-timeout".into(), "600".into()],
@@ -618,7 +616,7 @@ mod tests {
             other => panic!("expected Antigravity, got {other:?}"),
         }
 
-        let copilot = build_agent(&AgentDecl::Copilot {
+        let copilot = build_agent(&AgentDef::Copilot {
             mode: AstAgentMode::Print,
             command: "/opt/bin/copilot".into(),
             subcommand: Some(vec![]),
@@ -635,7 +633,7 @@ mod tests {
             other => panic!("expected Copilot, got {other:?}"),
         }
 
-        let cursor = build_agent(&AgentDecl::Cursor {
+        let cursor = build_agent(&AgentDef::Cursor {
             command: "/opt/bin/cursor".into(),
             args: vec!["--foo".into()],
             env: empty_env(),
@@ -649,7 +647,7 @@ mod tests {
             other => panic!("expected Cursor, got {other:?}"),
         }
 
-        let cline = build_agent(&AgentDecl::Cline {
+        let cline = build_agent(&AgentDef::Cline {
             command: "/opt/bin/cline".into(),
             args: vec!["--bar".into()],
             env: empty_env(),
@@ -663,7 +661,7 @@ mod tests {
             other => panic!("expected Cline, got {other:?}"),
         }
 
-        let opencode = build_agent(&AgentDecl::OpenCode {
+        let opencode = build_agent(&AgentDef::OpenCode {
             command: "/opt/bin/opencode".into(),
             args: vec!["--baz".into()],
             env: empty_env(),
@@ -677,7 +675,7 @@ mod tests {
             other => panic!("expected OpenCode, got {other:?}"),
         }
 
-        let grok = build_agent(&AgentDecl::Grok {
+        let grok = build_agent(&AgentDef::Grok {
             command: "/opt/bin/grok".into(),
             args: vec!["--output-format".into(), "json".into()],
             session_id_file: None,
@@ -695,7 +693,7 @@ mod tests {
 
     #[test]
     fn grok_session_id_file_is_forwarded() {
-        let without = build_agent(&AgentDecl::Grok {
+        let without = build_agent(&AgentDef::Grok {
             command: "grok".into(),
             args: Vec::new(),
             session_id_file: None,
@@ -707,7 +705,7 @@ mod tests {
             other => panic!("expected Grok, got {other:?}"),
         }
 
-        let with = build_agent(&AgentDecl::Grok {
+        let with = build_agent(&AgentDef::Grok {
             command: "grok".into(),
             args: Vec::new(),
             session_id_file: Some(".iter/session-id".into()),
@@ -727,7 +725,7 @@ mod tests {
     fn env_is_passed_through_to_agent() {
         let mut env = BTreeMap::new();
         env.insert("MY_VAR".to_string(), "my_value".to_string());
-        let decl = AgentDecl::Claude {
+        let decl = AgentDef::Claude {
             mode: AstAgentMode::Print,
             command: "claude".into(),
             args: Vec::new(),
@@ -747,7 +745,7 @@ mod tests {
     fn env_is_passed_through_to_generic_agent() {
         let mut env = BTreeMap::new();
         env.insert("FOO".to_string(), "bar".to_string());
-        let decl = AgentDecl::Generic {
+        let decl = AgentDef::Generic {
             command: vec!["echo".into()],
             env,
         };
@@ -803,7 +801,7 @@ mod tests {
 
     #[test]
     fn claude_session_id_file_is_forwarded() {
-        let without = build_agent(&AgentDecl::Claude {
+        let without = build_agent(&AgentDef::Claude {
             mode: AstAgentMode::Print,
             command: "claude".into(),
             args: Vec::new(),
@@ -816,7 +814,7 @@ mod tests {
             other => panic!("expected Claude, got {other:?}"),
         }
 
-        let with = build_agent(&AgentDecl::Claude {
+        let with = build_agent(&AgentDef::Claude {
             mode: AstAgentMode::Print,
             command: "claude".into(),
             args: Vec::new(),
@@ -835,7 +833,7 @@ mod tests {
 
     #[test]
     fn antigravity_conversation_id_is_forwarded() {
-        let without = build_agent(&AgentDecl::Antigravity {
+        let without = build_agent(&AgentDef::Antigravity {
             mode: AstAgentMode::Print,
             command: "agy".into(),
             args: Vec::new(),
@@ -848,7 +846,7 @@ mod tests {
             other => panic!("expected Antigravity, got {other:?}"),
         }
 
-        let with = build_agent(&AgentDecl::Antigravity {
+        let with = build_agent(&AgentDef::Antigravity {
             mode: AstAgentMode::Print,
             command: "agy".into(),
             args: Vec::new(),
@@ -867,11 +865,11 @@ mod tests {
     #[test]
     fn build_agent_router_fallback() {
         use iter_language::RouterStrategy;
-        let decl = AgentDecl::Router {
+        let decl = AgentDef::Router {
             agents: vec![
                 (
                     "primary".into(),
-                    Box::new(AgentDecl::Claude {
+                    Box::new(AgentDef::Claude {
                         mode: AstAgentMode::Print,
                         command: "claude".into(),
                         args: Vec::new(),
@@ -881,7 +879,7 @@ mod tests {
                 ),
                 (
                     "secondary".into(),
-                    Box::new(AgentDecl::Codex {
+                    Box::new(AgentDef::Codex {
                         mode: AstAgentMode::Print,
                         command: "codex".into(),
                         args: Vec::new(),
@@ -898,10 +896,10 @@ mod tests {
     #[test]
     fn build_agent_router_rotate() {
         use iter_language::RouterStrategy;
-        let decl = AgentDecl::Router {
+        let decl = AgentDef::Router {
             agents: vec![(
                 "only".into(),
-                Box::new(AgentDecl::Generic {
+                Box::new(AgentDef::Generic {
                     command: vec!["echo".into(), "hi".into()],
                     env: empty_env(),
                 }),
@@ -915,7 +913,7 @@ mod tests {
     #[test]
     fn build_agent_router_empty_errors() {
         use iter_language::RouterStrategy;
-        let decl = AgentDecl::Router {
+        let decl = AgentDef::Router {
             agents: vec![],
             strategy: RouterStrategy::Fallback,
         };

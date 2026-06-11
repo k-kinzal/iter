@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: runner-once-hook.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -23,7 +23,7 @@ Root {
                     excludes: [],
                     includes: [],
                     preserve_mtime: true,
-                    apply_back: ApplyBackDecl {
+                    apply_back: ApplyBackDef {
                         mode: Sync,
                         excludes: [],
                         includes: [],
@@ -51,7 +51,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "clone",
@@ -68,7 +68,7 @@ Root {
                 ),
                 events: [
                     Spanned {
-                        node: EventHandlerDecl {
+                        node: EventHandlerDef {
                             event: RunnerStarting,
                             actions: [
                                 Shell(
@@ -79,7 +79,7 @@ Root {
                         span: 326..413,
                     },
                     Spanned {
-                        node: EventHandlerDecl {
+                        node: EventHandlerDef {
                             event: RunnerFinished,
                             actions: [
                                 Shell(

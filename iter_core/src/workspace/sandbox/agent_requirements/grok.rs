@@ -107,9 +107,7 @@ mod tests {
     fn declares_xai_hosts_and_env_passthrough() {
         let reqs = grok(&agent("grok"));
         assert!(
-            reqs.network_hosts
-                .iter()
-                .any(|h| h.starts_with("api.x.ai")),
+            reqs.network_hosts.iter().any(|h| h.starts_with("api.x.ai")),
             "missing api.x.ai (inference) in {:?}",
             reqs.network_hosts,
         );

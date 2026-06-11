@@ -14,9 +14,9 @@ use std::collections::BTreeMap;
 
 use super::Analyzer;
 use super::TemplatePosition;
-use crate::ast::{DlqPolicyDecl, DlqTargetDecl, QueueDecl, RetryPolicyDecl, Span};
+use crate::ast::{DlqPolicyDef, DlqTargetDef, QueueDef, RetryPolicyDef, Span};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawField, RawIdent};
+use crate::parser::{CstBlock, CstField, CstIdent};
 
 const RETRY_FIELDS: &[&str] = &[
     "mode",
@@ -38,10 +38,10 @@ const DLQ_FIELDS: &[&str] = &[
 impl Analyzer {
     pub(super) fn lower_queue(
         &mut self,
-        kind: Option<RawIdent>,
-        body: Option<RawBlock>,
+        kind: Option<CstIdent>,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<QueueDecl> {
+    ) -> Option<QueueDef> {
         let kind = self.require_kind(
             kind,
             keyword_span,
@@ -62,18 +62,18 @@ impl Analyzer {
         let decl = match kind.name.as_str() {
             "memory" => {
                 self.reject_unknown_fields(&mut fields, &[], "queue memory");
-                QueueDecl::Memory
+                QueueDef::Memory
             }
             "file" => {
                 let path = self.take_required_string(&mut fields, "path", &kind.span, "queue file");
                 self.reject_unknown_fields(&mut fields, &["path"], "queue file");
-                QueueDecl::File { path: path? }
+                QueueDef::File { path: path? }
             }
             "redis" => {
                 let url = self.take_required_string(&mut fields, "url", &kind.span, "queue redis");
                 let key = self.take_required_string(&mut fields, "key", &kind.span, "queue redis");
                 self.reject_unknown_fields(&mut fields, &["url", "key"], "queue redis");
-                QueueDecl::Redis {
+                QueueDef::Redis {
                     url: url?,
                     key: key?,
                 }
@@ -98,7 +98,7 @@ impl Analyzer {
                     ],
                     "queue shell",
                 );
-                QueueDecl::Shell {
+                QueueDef::Shell {
                     enqueue: enqueue?,
                     dequeue: dequeue?,
                     close,
@@ -108,23 +108,23 @@ impl Analyzer {
             }
             "sqs" => {
                 let cfg = self.lower_sqs(std::mem::take(&mut fields), &kind.span);
-                QueueDecl::Sqs(Box::new(cfg))
+                QueueDef::Sqs(Box::new(cfg))
             }
             "kinesis" => {
                 let cfg = self.lower_kinesis(std::mem::take(&mut fields), &kind.span);
-                QueueDecl::Kinesis(Box::new(cfg))
+                QueueDef::Kinesis(Box::new(cfg))
             }
             "kafka" => {
                 let cfg = self.lower_kafka(std::mem::take(&mut fields), &kind.span);
-                QueueDecl::Kafka(Box::new(cfg))
+                QueueDef::Kafka(Box::new(cfg))
             }
             "pubsub" => {
                 let cfg = self.lower_pubsub(std::mem::take(&mut fields), &kind.span);
-                QueueDecl::PubSub(Box::new(cfg))
+                QueueDef::PubSub(Box::new(cfg))
             }
             "servicebus" => {
                 let cfg = self.lower_servicebus(std::mem::take(&mut fields), &kind.span);
-                QueueDecl::ServiceBus(Box::new(cfg))
+                QueueDef::ServiceBus(Box::new(cfg))
             }
             other => {
                 self.errors.push(
@@ -140,9 +140,9 @@ impl Analyzer {
 
     pub(in crate::semantic) fn lower_retry_policy(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
-    ) -> Option<RetryPolicyDecl> {
+    ) -> Option<RetryPolicyDef> {
         let mut block = self.take_optional_block(fields, name)?;
         let mode = self.take_optional_string(&mut block, "mode");
         let max_attempts = self.take_optional_int(&mut block, "max_attempts");
@@ -151,7 +151,7 @@ impl Analyzer {
         let try_timeout_secs = self.take_optional_duration(&mut block, "try_timeout");
         let retryable_codes = self.take_optional_string_list(&mut block, "retryable_codes");
         self.reject_unknown_fields(&mut block, RETRY_FIELDS, "retry");
-        Some(RetryPolicyDecl {
+        Some(RetryPolicyDef {
             mode,
             max_attempts,
             initial_backoff_secs,
@@ -163,10 +163,10 @@ impl Analyzer {
 
     pub(in crate::semantic) fn lower_dlq_policy(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
-    ) -> Option<DlqPolicyDecl> {
+    ) -> Option<DlqPolicyDef> {
         let mut block = self.take_optional_block(fields, name)?;
         let kind = self.take_optional_string(&mut block, "kind");
         let max_receive_count = self.take_optional_int(&mut block, "max_receive_count");
@@ -201,7 +201,7 @@ impl Analyzer {
             }
         }
 
-        Some(DlqPolicyDecl {
+        Some(DlqPolicyDef {
             kind,
             max_receive_count,
             reason_template,
@@ -212,10 +212,10 @@ impl Analyzer {
 
     fn lower_dlq_target(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let mut block = self.take_optional_block(fields, name)?;
         let Some(kind) = self.take_optional_string(&mut block, "kind") else {
             self.errors.push(
@@ -247,13 +247,13 @@ impl Analyzer {
 
     fn lower_dlq_sqs(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let queue_url = self.take_required_string(block, "queue_url", kind_span, "dlq target sqs");
         let region = self.take_optional_string(block, "region");
         self.reject_unknown_fields(block, &["kind", "queue_url", "region"], "dlq target sqs");
-        Some(DlqTargetDecl::Sqs {
+        Some(DlqTargetDef::Sqs {
             queue_url: queue_url?,
             region,
         })
@@ -261,9 +261,9 @@ impl Analyzer {
 
     fn lower_dlq_kinesis(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let stream_arn =
             self.take_required_string(block, "stream_arn", kind_span, "dlq target kinesis");
         let region = self.take_optional_string(block, "region");
@@ -272,7 +272,7 @@ impl Analyzer {
             &["kind", "stream_arn", "region"],
             "dlq target kinesis",
         );
-        Some(DlqTargetDecl::Kinesis {
+        Some(DlqTargetDef::Kinesis {
             stream_arn: stream_arn?,
             region,
         })
@@ -280,13 +280,13 @@ impl Analyzer {
 
     fn lower_dlq_kafka(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let brokers = self.take_required_string(block, "brokers", kind_span, "dlq target kafka");
         let topic = self.take_required_string(block, "topic", kind_span, "dlq target kafka");
         self.reject_unknown_fields(block, &["kind", "brokers", "topic"], "dlq target kafka");
-        Some(DlqTargetDecl::Kafka {
+        Some(DlqTargetDef::Kafka {
             brokers: brokers?,
             topic: topic?,
         })
@@ -294,9 +294,9 @@ impl Analyzer {
 
     fn lower_dlq_s3(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let bucket = self.take_required_string(block, "bucket", kind_span, "dlq target s3");
         let prefix = self.take_optional_string(block, "prefix");
         let region = self.take_optional_string(block, "region");
@@ -305,7 +305,7 @@ impl Analyzer {
             &["kind", "bucket", "prefix", "region"],
             "dlq target s3",
         );
-        Some(DlqTargetDecl::S3 {
+        Some(DlqTargetDef::S3 {
             bucket: bucket?,
             prefix,
             region,
@@ -314,23 +314,23 @@ impl Analyzer {
 
     fn lower_dlq_file(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let path = self.take_required_string(block, "path", kind_span, "dlq target file");
         self.reject_unknown_fields(block, &["kind", "path"], "dlq target file");
-        Some(DlqTargetDecl::File { path: path? })
+        Some(DlqTargetDef::File { path: path? })
     }
 
     fn lower_dlq_pubsub(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let project = self.take_required_string(block, "project", kind_span, "dlq target pubsub");
         let topic = self.take_required_string(block, "topic", kind_span, "dlq target pubsub");
         self.reject_unknown_fields(block, &["kind", "project", "topic"], "dlq target pubsub");
-        Some(DlqTargetDecl::PubSub {
+        Some(DlqTargetDef::PubSub {
             project: project?,
             topic: topic?,
         })
@@ -338,9 +338,9 @@ impl Analyzer {
 
     fn lower_dlq_servicebus(
         &mut self,
-        block: &mut BTreeMap<String, RawField>,
+        block: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
-    ) -> Option<DlqTargetDecl> {
+    ) -> Option<DlqTargetDef> {
         let namespace =
             self.take_required_string(block, "namespace", kind_span, "dlq target servicebus");
         let entity = self.take_required_string(block, "entity", kind_span, "dlq target servicebus");
@@ -349,7 +349,7 @@ impl Analyzer {
             &["kind", "namespace", "entity"],
             "dlq target servicebus",
         );
-        Some(DlqTargetDecl::ServiceBus {
+        Some(DlqTargetDef::ServiceBus {
             namespace: namespace?,
             entity: entity?,
         })

@@ -140,8 +140,7 @@ impl HookBundle {
 
         // Extract any pre-existing user Stop hooks into a sidecar.
         let hooks_dir = project_hooks_dir(cwd, service)?;
-        let user_hooks_sidecar =
-            extract_user_hooks(&settings_path, "Stop", &hooks_dir).await?;
+        let user_hooks_sidecar = extract_user_hooks(&settings_path, "Stop", &hooks_dir).await?;
 
         let hook_cmd = hook_script
             .to_str()

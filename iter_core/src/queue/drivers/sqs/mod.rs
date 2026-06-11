@@ -66,14 +66,14 @@ pub enum SqsIdentity {
 /// FIFO-only producer template selector. Either a literal string or a
 /// metadata key whose value is read from the `Signal` at enqueue time.
 #[derive(Debug, Clone)]
-pub enum TemplatedString {
+pub enum MetadataSource {
     /// Raw literal value.
     Literal(String),
     /// Look up the named metadata key on the signal at runtime.
     FromMetadata(String),
 }
 
-impl TemplatedString {
+impl MetadataSource {
     /// Resolve the template against a signal's metadata.
     ///
     /// # Errors
@@ -103,9 +103,9 @@ pub struct SqsProducerConfig {
     /// informational; iter does not propagate a trace context yet.
     pub trace_header: Option<bool>,
     /// FIFO `MessageGroupId` source. Required for FIFO queues.
-    pub message_group_id: Option<TemplatedString>,
+    pub message_group_id: Option<MetadataSource>,
     /// FIFO `MessageDeduplicationId` source.
-    pub message_deduplication_id: Option<TemplatedString>,
+    pub message_deduplication_id: Option<MetadataSource>,
     /// `SendMessageBatch` size (1–10). Currently informational; this
     /// implementation issues one `SendMessage` per `queue()` call.
     pub batch_size: Option<u32>,
@@ -699,18 +699,18 @@ mod tests {
         let signal = Signal::new(metadata);
 
         assert_eq!(
-            TemplatedString::Literal("static".into())
+            MetadataSource::Literal("static".into())
                 .resolve(&signal)
                 .expect("literal"),
             "static"
         );
         assert_eq!(
-            TemplatedString::FromMetadata("workspace".into())
+            MetadataSource::FromMetadata("workspace".into())
                 .resolve(&signal)
                 .expect("metadata"),
             "alpha"
         );
-        let err = TemplatedString::FromMetadata("missing".into())
+        let err = MetadataSource::FromMetadata("missing".into())
             .resolve(&signal)
             .expect_err("missing key");
         assert!(matches!(err, SqsQueueError::MissingTemplateMetadata { .. }));

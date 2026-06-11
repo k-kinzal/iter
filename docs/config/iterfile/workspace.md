@@ -2,7 +2,7 @@
 
 Declares the filesystem environment the agent operates in. Optional — zero or one block per `Iterfile`. Also usable inside a `compose.iter` inline service.
 
-AST: `WorkspaceDecl` in `iter_language/src/ast/workspace.rs`.
+AST: `WorkspaceDef` in `iter_language/src/ast/workspace.rs`.
 
 ## Syntax
 
@@ -167,7 +167,7 @@ All arguments of `workspace clone` plus:
 
 ### `policy` nested block
 
-AST: `SandboxPolicyDecl`.
+AST: `SandboxPolicyDef`.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
@@ -179,7 +179,7 @@ AST: `SandboxPolicyDecl`.
 
 #### `network` values
 
-AST: `SandboxNetworkDecl`.
+AST: `SandboxNetworkDef`.
 
 | Value | Meaning |
 | --- | --- |

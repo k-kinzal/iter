@@ -1,8 +1,8 @@
 //! `runner` declaration AST.
 
-use super::event::EventHandlerDecl;
-use super::prompt::PromptExpr;
 use super::Spanned;
+use super::event::EventHandlerDef;
+use super::prompt::PromptExpr;
 
 /// `runner { ... }` declaration — project-shaped runtime policy for the
 /// iter loop.
@@ -19,7 +19,7 @@ use super::Spanned;
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunnerDecl {
+pub struct RunnerDef {
     /// Optional runner name (for multi-runner files; currently unused at
     /// runtime but reserved in the AST for forward compatibility).
     pub name: Option<String>,
@@ -51,7 +51,7 @@ pub struct RunnerDecl {
     /// Prompt selection expression for this runner.
     pub prompt: PromptExpr,
     /// Event handlers scoped to this runner's lifecycle.
-    pub events: Vec<Spanned<EventHandlerDecl>>,
+    pub events: Vec<Spanned<EventHandlerDef>>,
 }
 
 /// Runner loop behaviour — what the runner does when no signal is

@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: agent-grok.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -46,7 +46,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "grok",
                 workspace: "local",

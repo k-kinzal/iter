@@ -9,7 +9,7 @@ pub(super) const DEFAULT_INTERPRETER: &str = "sh -c";
 
 /// Construction-time configuration for [`ShellQueue`](super::ShellQueue).
 ///
-/// Mirrors [`iter_language::QueueDecl::Shell`](iter_language::QueueDecl) one
+/// Mirrors [`iter_language::QueueDef::Shell`](iter_language::QueueDef) one
 /// for one. Convert via `ShellQueueConfig::from_decl_fields` inside the
 /// CLI compose layer; the field-by-field constructor exists so unit tests
 /// can build a config without round-tripping through the AST.

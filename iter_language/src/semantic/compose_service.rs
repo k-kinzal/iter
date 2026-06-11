@@ -2,20 +2,18 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use super::Analyzer;
-use crate::ast::{
-    InlineService, NamedService, QueueRef, RunnerDecl, ServiceSource, Span, Spanned,
-};
+use crate::ast::{InlineService, NamedService, QueueRef, RunnerDef, ServiceSource, Span, Spanned};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
 
 use super::compose::{ComposeSectionParts, SERVICE_NO_KIND_HINT};
 
-use crate::ast::ComposeRoot;
+use crate::ast::Compose;
 
 impl Analyzer {
     pub(super) fn lower_compose_service_section(
         &mut self,
-        root: &mut ComposeRoot,
+        root: &mut Compose,
         service_names: &mut BTreeMap<String, Span>,
         parts: ComposeSectionParts,
     ) {
@@ -68,8 +66,8 @@ impl Analyzer {
 
     pub(super) fn lower_compose_service(
         &mut self,
-        body: Option<RawBlock>,
-        name_ident: &RawIdent,
+        body: Option<CstBlock>,
+        name_ident: &CstIdent,
     ) -> Option<ServiceSource> {
         let Some(block) = body else {
             self.errors.push(Diagnostic::error(
@@ -82,15 +80,15 @@ impl Analyzer {
         let mut build_path: Option<(String, Span)> = None;
         let mut queue_ref: Option<QueueRef> = None;
         let mut arg_overrides: BTreeMap<String, String> = BTreeMap::new();
-        let mut workspace_section: Option<Spanned<crate::ast::WorkspaceDecl>> = None;
-        let mut agent_section: Option<Spanned<crate::ast::AgentDecl>> = None;
-        let mut runner_section: Option<Spanned<RunnerDecl>> = None;
-        let mut leftover_fields: Vec<RawField> = Vec::new();
+        let mut workspace_section: Option<Spanned<crate::ast::WorkspaceDef>> = None;
+        let mut agent_section: Option<Spanned<crate::ast::AgentDef>> = None;
+        let mut runner_section: Option<Spanned<RunnerDef>> = None;
+        let mut leftover_fields: Vec<CstField> = Vec::new();
 
         for field in block.fields {
             match field.name.name.as_str() {
                 "build" => match field.value {
-                    RawValue::String(s, span) => {
+                    CstValue::String(s, span) => {
                         build_path = Some((s, span));
                     }
                     other => {
@@ -101,7 +99,7 @@ impl Analyzer {
                     }
                 },
                 "queue" => match field.value {
-                    RawValue::Ident(name, _) => {
+                    CstValue::Ident(name, _) => {
                         queue_ref = Some(QueueRef::Named(name));
                     }
                     other => {
@@ -112,10 +110,10 @@ impl Analyzer {
                     }
                 },
                 "args" => match field.value {
-                    RawValue::Block(args_block) => {
+                    CstValue::Block(args_block) => {
                         for args_field in args_block.fields {
                             match args_field.value {
-                                RawValue::String(s, _) => {
+                                CstValue::String(s, _) => {
                                     arg_overrides.insert(args_field.name.name.clone(), s);
                                 }
                                 other => {
@@ -165,12 +163,12 @@ impl Analyzer {
 
     pub(super) fn lower_inline_service_field(
         &mut self,
-        field: RawField,
-        workspace_section: &mut Option<Spanned<crate::ast::WorkspaceDecl>>,
-        agent_section: &mut Option<Spanned<crate::ast::AgentDecl>>,
-        runner_section: &mut Option<Spanned<RunnerDecl>>,
+        field: CstField,
+        workspace_section: &mut Option<Spanned<crate::ast::WorkspaceDef>>,
+        agent_section: &mut Option<Spanned<crate::ast::AgentDef>>,
+        runner_section: &mut Option<Spanned<RunnerDef>>,
     ) {
-        let RawValue::Block(_) = field.value else {
+        let CstValue::Block(_) = field.value else {
             self.errors.push(Diagnostic::error(
                 field.span,
                 format!("unexpected field `{}` in service body", field.name.name),
@@ -180,7 +178,7 @@ impl Analyzer {
         let sub_keyword = field.name.name.clone();
         let sub_keyword_span = field.name.span.clone();
         let sub_body = match field.value {
-            RawValue::Block(b) => Some(b),
+            CstValue::Block(b) => Some(b),
             _ => unreachable!(),
         };
         match sub_keyword.as_str() {
@@ -191,7 +189,7 @@ impl Analyzer {
                     "workspace_sandbox" => "sandbox",
                     _ => unreachable!(),
                 };
-                let kind_ident = RawIdent {
+                let kind_ident = CstIdent {
                     name: kind_str.to_string(),
                     span: sub_keyword_span.clone(),
                 };
@@ -205,7 +203,7 @@ impl Analyzer {
             | "agent_antigravity" | "agent_copilot" | "agent_cursor" | "agent_cline"
             | "agent_opencode" | "agent_grok" | "agent_generic" => {
                 let kind_str = sub_keyword.strip_prefix("agent_").unwrap();
-                let kind_ident = RawIdent {
+                let kind_ident = CstIdent {
                     name: kind_str.to_string(),
                     span: sub_keyword_span.clone(),
                 };

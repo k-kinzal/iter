@@ -8,12 +8,12 @@
 //! compose root).
 
 use iter_language::{
-    ComposeRoot, ComposeTriggerOverride, EventName, NamedCompose, NamedQueue, NamedService,
-    NamedTrigger, PromptExpr, PromptValue, QueueDecl, QueueRef, ServiceSource, TelemetryProtocol,
-    TriggerDecl, WatchEventKind, parse_compose,
+    Compose, ComposeTriggerOverride, EventName, NamedCompose, NamedQueue, NamedService,
+    NamedTrigger, PromptExpr, PromptValue, QueueDef, QueueRef, ServiceSource, TelemetryProtocol,
+    TriggerDef, WatchEventKind, parse_compose,
 };
 
-fn parse(src: &str) -> ComposeRoot {
+fn parse(src: &str) -> Compose {
     match parse_compose(src) {
         Ok(root) => root,
         Err(diagnostics) => panic!(
@@ -88,7 +88,7 @@ fn named_queue_with_kind_lowers() {
     assert_eq!(root.queues.len(), 1);
     let NamedQueue { name, decl } = &root.queues[0].node;
     assert_eq!(name, "main");
-    assert!(matches!(decl, QueueDecl::File { path } if path == "./.iter/queue"));
+    assert!(matches!(decl, QueueDef::File { path } if path == "./.iter/queue"));
 }
 
 #[test]
@@ -236,7 +236,10 @@ fn inline_service_runner_supports_prompt_match() {
     };
     let runner = inline.runner.as_ref().expect("inline runner present");
     let PromptExpr::Match { arms, default } = &runner.node.prompt else {
-        panic!("expected prompt match expression, got {:?}", runner.node.prompt);
+        panic!(
+            "expected prompt match expression, got {:?}",
+            runner.node.prompt
+        );
     };
     assert_eq!(arms.len(), 1, "one guarded arm expected");
     assert!(matches!(default, PromptValue::Inline(s) if s == "refactor the module"));
@@ -260,8 +263,9 @@ fn inline_service_runner_rejects_prompt_ref() {
         "#,
     );
     assert!(
-        errs.iter().any(|m| m
-            .contains("named prompt reference `recovery` is not valid in an inline service runner")),
+        errs.iter().any(|m| m.contains(
+            "named prompt reference `recovery` is not valid in an inline service runner"
+        )),
         "got: {errs:#?}"
     );
 }
@@ -304,7 +308,7 @@ fn trigger_cron_with_target() {
         terminate_on_completion,
     } = &root.triggers[0].node;
     assert_eq!(name, "nightly");
-    assert!(matches!(decl, TriggerDecl::Cron { schedule, .. } if schedule == "0 0 * * *"));
+    assert!(matches!(decl, TriggerDef::Cron { schedule, .. } if schedule == "0 0 * * *"));
     assert!(matches!(target, QueueRef::Named(n) if n == "main"));
     assert!(!terminate_on_completion);
 }
@@ -574,7 +578,7 @@ fn watch_kinds_duplicate_deduplicates_in_ast() {
         "#,
     );
     let trigger = &root.triggers[0].node;
-    let TriggerDecl::Watch { ref kinds, .. } = trigger.decl else {
+    let TriggerDef::Watch { ref kinds, .. } = trigger.decl else {
         panic!("expected Watch trigger");
     };
     assert_eq!(

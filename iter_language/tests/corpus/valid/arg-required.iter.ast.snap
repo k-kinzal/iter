@@ -2,10 +2,10 @@
 source: iter_language/tests/conformance.rs
 description: arg-required.iter
 ---
-Root {
+Iterfile {
     args: [
         Spanned {
-            node: ArgDecl {
+            node: ArgDef {
                 name: "worktree_name",
                 default: None,
             },
@@ -50,7 +50,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

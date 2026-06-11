@@ -295,8 +295,8 @@ mod tests {
 
         // Second run: should only read line4
         let queue2 = Arc::new(InMemoryQueue::new());
-        let trigger2 = FilesTrigger::new(queue2.clone(), FilesSource::Path(input))
-            .with_state_dir(state_dir);
+        let trigger2 =
+            FilesTrigger::new(queue2.clone(), FilesSource::Path(input)).with_state_dir(state_dir);
         trigger2.run(CancellationToken::new()).await.unwrap();
 
         queue2.close().await.unwrap();

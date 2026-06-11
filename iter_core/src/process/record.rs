@@ -14,11 +14,11 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
+use crate::log::NdjsonReader;
 use crate::process::error::{ProcessError, Result};
 use crate::process::id::ProcessId;
-use crate::log::NdjsonReader;
-use crate::process::paths::names::LOG_NDJSON;
 use crate::process::metadata::ProcessMetadata;
+use crate::process::paths::names::LOG_NDJSON;
 use crate::process::paths::{ProcPaths, names, proc_root_default};
 use crate::process::pid_file::{self, PidFileState};
 use crate::process::status::ProcessStatus;
@@ -227,11 +227,7 @@ impl ProcessRecord {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    pub fn tail_log_ndjson(
-        &self,
-        follow: bool,
-        tail: Option<usize>,
-    ) -> Result<NdjsonReader> {
+    pub fn tail_log_ndjson(&self, follow: bool, tail: Option<usize>) -> Result<NdjsonReader> {
         let path = self.paths.dir().join(LOG_NDJSON);
         NdjsonReader::open(&path, follow, tail).map_err(|e| match e {
             crate::log::NdjsonReadError::Io(io) => ProcessError::Io(io),

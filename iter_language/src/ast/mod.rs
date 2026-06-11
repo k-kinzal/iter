@@ -20,7 +20,7 @@
 //!    Users do not enumerate per-agent paths or hosts in source files.
 //! 2. **Project-shaped decisions** — expressed in the source file. Every field in this module.
 //!
-//! The two are merged at workspace setup: the project's `SandboxPolicyDecl`
+//! The two are merged at workspace setup: the project's `SandboxPolicyDef`
 //! is the upper bound and the agent's requirements are the lower bound. This
 //! module describes only the project-shaped half — the declaration.
 //!
@@ -40,35 +40,34 @@ mod trigger;
 mod value;
 mod workspace;
 
-pub use agent::{AgentDecl, AgentMode, RouterStrategy};
-pub use arg::ArgDecl;
+pub use agent::{AgentDef, AgentMode, RouterStrategy};
+pub use arg::ArgDef;
 pub use compose::{
-    ComposeRoot, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,
+    Compose, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,
     NamedQueue, NamedService, NamedTrigger, QueueRef, ServiceSource,
 };
-pub use event::{Action, EventHandlerDecl, EventName};
+pub use event::{Action, EventHandlerDef, EventName};
 pub use prompt::{
-    CmpOp, IterationField, NamedPrompt, PriorityKeyword, PromptArm, PromptDecl, PromptExpr,
+    CmpOp, IterationField, NamedPrompt, PriorityKeyword, PromptArm, PromptDef, PromptExpr,
     PromptGuard, PromptValue,
 };
 pub use queue::{
-    DlqPolicyDecl, DlqTargetDecl, KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity,
+    DlqPolicyDef, DlqTargetDef, KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity,
     KinesisCheckpoint, KinesisConfig, KinesisConsumer, KinesisIdentity, KinesisProducer,
-    KinesisShardListFilter, PubSubConfig, PubSubCredentialKind, PubSubCredentials,
-    PubSubInitialSeek, PubSubKeepalive, PubSubPublisher, PubSubSubscriber, QueueDecl,
-    RetryPolicyDecl, ServiceBusAuth, ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy,
+    KinesisShardListFilter, MetadataSource, PubSubConfig, PubSubCredentialKind, PubSubCredentials,
+    PubSubInitialSeek, PubSubKeepalive, PubSubPublisher, PubSubSubscriber, QueueDef,
+    RetryPolicyDef, ServiceBusAuth, ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy,
     ServiceBusReceiver, ServiceBusSender, ServiceBusSession, SqsConfig, SqsConsumer,
-    SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, TemplatedString,
+    SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,
 };
-pub use runner::{RunnerBehavior, RunnerDecl};
-pub use telemetry::{TelemetryDecl, TelemetryProtocol};
+pub use runner::{RunnerBehavior, RunnerDef};
+pub use telemetry::{TelemetryDef, TelemetryProtocol};
 pub use trigger::{
-    ExtractExpr, FilesSource, OnErrorKeyword, SecretExpr, TriggerDecl, WatchEventKind,
-    WebhookRoute,
+    ExtractExpr, FilesSource, OnErrorKeyword, SecretExpr, Subscription, TriggerDef, WatchEventKind,
 };
 pub use value::Value;
 pub use workspace::{
-    ApplyBackDecl, CloneApplyBackMode, SandboxNetworkDecl, SandboxPolicyDecl, WorkspaceDecl,
+    ApplyBackDef, CloneApplyBackMode, SandboxNetworkDef, SandboxPolicyDef, WorkspaceDef,
 };
 
 /// Inclusive-exclusive byte range inside the original source text.
@@ -101,7 +100,7 @@ impl<T> Spanned<T> {
 /// Wrapper that pairs a named identifier with its declaration.
 ///
 /// Used for top-level definitions that carry a user-facing name:
-/// `agent claude as primary { ... }` → `NamedDef { name: "primary", decl: AgentDecl::Claude { ... } }`.
+/// `agent claude as primary { ... }` → `NamedDef { name: "primary", decl: AgentDef::Claude { ... } }`.
 /// When the `as <name>` clause is omitted, the kind doubles as the name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedDef<T> {
@@ -120,17 +119,17 @@ pub struct NamedDef<T> {
 /// `compose.iter`. A `trigger { ... }` block at Iterfile root is a semantic
 /// error guiding the user toward `compose.iter`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Root {
+pub struct Iterfile {
     /// `arg <name> [= "<default>"]` declarations in source order.
-    pub args: Vec<Spanned<ArgDecl>>,
+    pub args: Vec<Spanned<ArgDef>>,
     /// Named queue definitions: `queue <kind> [as <name>] { ... }`.
-    pub queues: Vec<Spanned<NamedDef<QueueDecl>>>,
+    pub queues: Vec<Spanned<NamedDef<QueueDef>>>,
     /// Named workspace definitions: `workspace <kind> [as <name>] { ... }`.
-    pub workspaces: Vec<Spanned<NamedDef<WorkspaceDecl>>>,
+    pub workspaces: Vec<Spanned<NamedDef<WorkspaceDef>>>,
     /// Named agent definitions: `agent <kind> [as <name>] { ... }`.
-    pub agents: Vec<Spanned<NamedDef<AgentDecl>>>,
+    pub agents: Vec<Spanned<NamedDef<AgentDef>>>,
     /// Named prompt templates: `prompt as <name> "..."`.
     pub prompts: Vec<Spanned<NamedPrompt>>,
     /// Runner declarations (each binds definitions by reference).
-    pub runners: Vec<Spanned<RunnerDecl>>,
+    pub runners: Vec<Spanned<RunnerDef>>,
 }

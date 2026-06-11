@@ -44,7 +44,7 @@ use crate::queue::Queue;
 use crate::queue::dlq::DlqPolicy;
 use crate::queue::drivers::aws::credentials::{AwsCredentials, CredentialsBuildError};
 use crate::queue::drivers::aws::http::AwsHttpClientConfig;
-use crate::queue::drivers::sqs::TemplatedString;
+use crate::queue::drivers::sqs::MetadataSource;
 use crate::queue::retry::RetryPolicy;
 use crate::signal::Signal;
 
@@ -61,7 +61,7 @@ pub enum KinesisIdentity {
 #[derive(Debug, Clone, Default)]
 pub struct KinesisProducerConfig {
     /// Partition key source. `None` → random.
-    pub partition_key_strategy: Option<TemplatedString>,
+    pub partition_key_strategy: Option<MetadataSource>,
     /// Per-message explicit hash key escape hatch.
     pub explicit_hash_key: Option<String>,
     /// `none` (default) or `strict_per_key`.

@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: queue-pubsub.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -82,7 +82,7 @@ Root {
                                     30,
                                 ),
                                 retry: Some(
-                                    RetryPolicyDecl {
+                                    RetryPolicyDef {
                                         mode: Some(
                                             "exponential",
                                         ),
@@ -142,7 +142,7 @@ Root {
                                 max_messages: None,
                                 return_immediately: None,
                                 retry: Some(
-                                    RetryPolicyDecl {
+                                    RetryPolicyDef {
                                         mode: Some(
                                             "exponential",
                                         ),
@@ -172,7 +172,7 @@ Root {
                             },
                         ),
                         dlq: Some(
-                            DlqPolicyDecl {
+                            DlqPolicyDef {
                                 kind: Some(
                                     "native",
                                 ),
@@ -217,7 +217,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

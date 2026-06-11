@@ -6,8 +6,8 @@ use iter_core::queue::gcp::{
     PubSubQueueConfig, PubSubSubscriberConfig as CorePubSubSubscriber,
 };
 use iter_language::{
-    PubSubConfig, PubSubCredentialKind, PubSubCredentials, PubSubInitialSeek, PubSubKeepalive,
-    PubSubPublisher, PubSubSubscriber, TemplatedString,
+    MetadataSource, PubSubConfig, PubSubCredentialKind, PubSubCredentials, PubSubInitialSeek,
+    PubSubKeepalive, PubSubPublisher, PubSubSubscriber,
 };
 
 use super::{
@@ -111,12 +111,12 @@ fn translate_pubsub_keepalive(k: &PubSubKeepalive) -> CorePubSubKeepalive {
 fn translate_pubsub_publisher(p: &PubSubPublisher) -> Result<CorePubSubPublisher, QueueBuildError> {
     let retry = p.retry.as_ref().map(translate_retry).transpose()?;
     let ordering_key_metadata = match p.ordering_key_strategy.as_ref() {
-        Some(TemplatedString::Literal(_)) => {
+        Some(MetadataSource::Literal(_)) => {
             return Err(QueueBuildError::invalid(
                 "publisher.ordering_key_strategy must use from_metadata(\"key\"); literal strings are not supported",
             ));
         }
-        Some(TemplatedString::FromMetadata(k)) => Some(k.clone()),
+        Some(MetadataSource::FromMetadata(k)) => Some(k.clone()),
         None => None,
     };
     Ok(CorePubSubPublisher {

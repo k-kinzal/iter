@@ -330,9 +330,7 @@ mod tests {
         drop(RunnerLifecycle::BootstrapStarted {
             started_at: Utc::now(),
         });
-        drop(RunnerLifecycle::BootstrapFailed {
-            error: "x".into(),
-        });
+        drop(RunnerLifecycle::BootstrapFailed { error: "x".into() });
 
         // Shared concept — both streams carry it in their own shape.
         drop(Event::AgentFinished {

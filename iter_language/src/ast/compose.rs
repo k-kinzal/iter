@@ -2,8 +2,8 @@
 //!
 //! `compose.iter` is the orchestration layer that wires together one or more
 //! services (each modelled by an `Iterfile`) and one or more triggers via
-//! shared queues. Where the [`Root`](super::Root) AST corresponds to a single
-//! self-contained iter unit, [`ComposeRoot`] corresponds to the multi-unit
+//! shared queues. Where the [`Iterfile`](super::Iterfile) AST corresponds to a single
+//! self-contained iter unit, [`Compose`] corresponds to the multi-unit
 //! deployment topology a Docker `compose.yml` would describe.
 //!
 //! # Top-level shape
@@ -11,7 +11,7 @@
 //! Five sections are recognised:
 //!
 //! - `queue <name> <kind> { ... }` — named queue declaration. The kind +
-//!   field grammar is identical to the Iterfile [`QueueDecl`](super::QueueDecl).
+//!   field grammar is identical to the Iterfile [`QueueDef`](super::QueueDef).
 //! - `service <name> { ... }` — named service. The body either points at an
 //!   external Iterfile via `build = "./Iterfile"` or inlines the same
 //!   sections an Iterfile would carry (`workspace`, `agent`, `runner`). As
@@ -19,7 +19,7 @@
 //!   lifecycle handlers live inside the inline `runner` block rather than
 //!   as independent sections.
 //! - `trigger <name> <kind> { ... }` — named trigger. Body uses the same
-//!   per-kind grammar as the Iterfile [`TriggerDecl`](super::TriggerDecl)
+//!   per-kind grammar as the Iterfile [`TriggerDef`](super::TriggerDef)
 //!   plus a required `target = <queue-name>` (omittable when there is a
 //!   single queue in the compose file).
 //! - `compose <name> { ... }` — reference to another `compose.iter` file.
@@ -36,15 +36,13 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{
-    AgentDecl, QueueDecl, RunnerDecl, Spanned, TelemetryDecl, TriggerDecl, WorkspaceDecl,
-};
+use super::{AgentDef, QueueDef, RunnerDef, Spanned, TelemetryDef, TriggerDef, WorkspaceDef};
 
 /// Validated root of a `compose.iter` source file.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ComposeRoot {
+pub struct Compose {
     /// Optional project-wide telemetry declaration.
-    pub telemetry: Option<Spanned<TelemetryDecl>>,
+    pub telemetry: Option<Spanned<TelemetryDef>>,
     /// Named queue declarations in source order.
     pub queues: Vec<Spanned<NamedQueue>>,
     /// Named service declarations in source order.
@@ -61,8 +59,8 @@ pub struct NamedQueue {
     /// User-facing identifier other sections refer to via `queue = <name>` /
     /// `target = <name>`.
     pub name: String,
-    /// Backend declaration. Re-uses the Iterfile [`QueueDecl`] grammar.
-    pub decl: QueueDecl,
+    /// Backend declaration. Re-uses the Iterfile [`QueueDef`] grammar.
+    pub decl: QueueDef,
 }
 
 /// One named entry in the compose file's `service` section.
@@ -103,14 +101,14 @@ pub struct InlineService {
     /// Compose-level queue binding.
     pub queue: Option<QueueRef>,
     /// Inline workspace declaration.
-    pub workspace: Option<Spanned<WorkspaceDecl>>,
+    pub workspace: Option<Spanned<WorkspaceDef>>,
     /// Inline agent declaration.
-    pub agent: Option<Spanned<AgentDecl>>,
+    pub agent: Option<Spanned<AgentDef>>,
     /// Inline runner declaration. In the new design this carries the
     /// service's prompt expression (`prompt = ...`) and lifecycle event
     /// handlers (`on <event> { ... }`) directly, binding them to the
     /// runner rather than holding them as independent top-level sections.
-    pub runner: Option<Spanned<RunnerDecl>>,
+    pub runner: Option<Spanned<RunnerDef>>,
 }
 
 /// One named entry in the compose file's `trigger` section.
@@ -118,9 +116,9 @@ pub struct InlineService {
 pub struct NamedTrigger {
     /// User-facing identifier.
     pub name: String,
-    /// Trigger configuration. Re-uses the Iterfile [`TriggerDecl`] grammar
+    /// Trigger configuration. Re-uses the Iterfile [`TriggerDef`] grammar
     /// minus the `loop` variant (now expressed as `runner.behavior = loop`).
-    pub decl: TriggerDecl,
+    pub decl: TriggerDef,
     /// Queue this trigger emits signals into.
     pub target: QueueRef,
     /// When `true`, the trigger enqueues a terminate signal on its

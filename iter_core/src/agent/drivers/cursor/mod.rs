@@ -221,7 +221,10 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = CursorAgent::new(settings(bin.to_string_lossy()));
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
-        let err = agent.run(ctx).await.expect_err("nonzero without result is an error");
+        let err = agent
+            .run(ctx)
+            .await
+            .expect_err("nonzero without result is an error");
         assert!(
             matches!(err, AgentError::Failed { code: Some(1), .. }),
             "got {err:?}",
@@ -230,8 +233,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
 
     #[tokio::test]
     async fn token_limit_maps_to_token_limit() {
-        let (_guard, bin) =
-            fake_binary_script("printf 'context window exceeded\\n' 1>&2; exit 1");
+        let (_guard, bin) = fake_binary_script("printf 'context window exceeded\\n' 1>&2; exit 1");
         let agent = CursorAgent::new(settings(bin.to_string_lossy()));
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);

@@ -2,7 +2,7 @@
 
 /// A `prompt [when <expr>] "<body>"` declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PromptDecl {
+pub struct PromptDef {
     /// Optional `when` guard expression.
     pub guard: Option<PromptGuard>,
     /// Raw template body. Placeholders such as `{{metadata.foo}}` are kept

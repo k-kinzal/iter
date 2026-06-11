@@ -12,8 +12,8 @@ use std::sync::Arc;
 use iter_core::process::ProcessRuntime;
 use iter_core::{Runner, RunnerBuilder, TemplateError};
 use iter_language::{
-    AgentDecl, EventHandlerDecl, NamedPrompt, PromptDecl, PromptExpr, PromptValue, RunnerDecl,
-    Spanned, WorkspaceDecl,
+    AgentDef, EventHandlerDef, NamedPrompt, PromptDef, PromptExpr, PromptValue, RunnerDef, Spanned,
+    WorkspaceDef,
 };
 use thiserror::Error;
 
@@ -62,11 +62,11 @@ pub enum AssemblyError {
 /// compilation, or event-handler template compilation fails.
 pub(crate) fn assemble_runner_builder(
     queue: Option<Arc<AnyQueue>>,
-    workspace_decl: &WorkspaceDecl,
-    agent_decl: &AgentDecl,
-    runner_decl: &RunnerDecl,
-    prompts: &[Spanned<PromptDecl>],
-    events: &[Spanned<EventHandlerDecl>],
+    workspace_decl: &WorkspaceDef,
+    agent_decl: &AgentDef,
+    runner_decl: &RunnerDef,
+    prompts: &[Spanned<PromptDef>],
+    events: &[Spanned<EventHandlerDef>],
     once: bool,
 ) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, AssemblyError> {
     let agent = build_agent(agent_decl)?;
@@ -88,14 +88,14 @@ pub(crate) fn assemble_runner_builder(
     Ok(builder)
 }
 
-/// Assemble a [`RunnerBuilder`] from the new-style `Root` AST where
+/// Assemble a [`RunnerBuilder`] from the new-style `Iterfile` AST where
 /// runner declarations carry their own references.
 ///
-/// Resolves agent/workspace/queue names from the `Root`'s definition
+/// Resolves agent/workspace/queue names from the `Iterfile`'s definition
 /// vectors and delegates to the existing assembly logic.
 pub(crate) fn assemble_from_root(
-    root: &iter_language::Root,
-    runner: &RunnerDecl,
+    root: &iter_language::Iterfile,
+    runner: &RunnerDef,
     queue_override: Option<Arc<AnyQueue>>,
     once: bool,
 ) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, AssemblyError> {
@@ -127,7 +127,8 @@ pub(crate) fn assemble_from_root(
             .map(|q| &q.node.decl)
             .expect("semantic analyzer validated queue reference");
         Some(Arc::new(
-            crate::queue::build_queue(queue_decl).map_err(|e| AssemblyError::QueueBuild(Box::new(e)))?,
+            crate::queue::build_queue(queue_decl)
+                .map_err(|e| AssemblyError::QueueBuild(Box::new(e)))?,
         ))
     } else {
         None
@@ -144,21 +145,21 @@ pub(crate) fn assemble_from_root(
     )
 }
 
-/// Convert a `PromptExpr` (from the new AST) back into `Vec<Spanned<PromptDecl>>`
+/// Convert a `PromptExpr` (from the new AST) back into `Vec<Spanned<PromptDef>>`
 /// for compatibility with the existing `build_prompt_selector_from_prompts`.
 ///
 /// Public alias for use by `prompt.rs`.
 pub(crate) fn build_prompt_decls_from_expr_pub(
     expr: &PromptExpr,
     named_prompts: &[Spanned<NamedPrompt>],
-) -> Vec<Spanned<PromptDecl>> {
+) -> Vec<Spanned<PromptDef>> {
     build_prompt_decls_from_expr(expr, named_prompts)
 }
 
 fn build_prompt_decls_from_expr(
     expr: &PromptExpr,
     named_prompts: &[Spanned<NamedPrompt>],
-) -> Vec<Spanned<PromptDecl>> {
+) -> Vec<Spanned<PromptDef>> {
     let resolve = |v: &PromptValue| -> String {
         match v {
             PromptValue::Inline(s) => s.clone(),
@@ -173,7 +174,7 @@ fn build_prompt_decls_from_expr(
     match expr {
         PromptExpr::Single(v) => {
             vec![Spanned::new(
-                PromptDecl {
+                PromptDef {
                     guard: None,
                     body: resolve(v),
                 },
@@ -184,7 +185,7 @@ fn build_prompt_decls_from_expr(
             let mut decls = Vec::new();
             for arm in arms {
                 decls.push(Spanned::new(
-                    PromptDecl {
+                    PromptDef {
                         guard: Some(arm.guard.clone()),
                         body: resolve(&arm.value),
                     },
@@ -192,7 +193,7 @@ fn build_prompt_decls_from_expr(
                 ));
             }
             decls.push(Spanned::new(
-                PromptDecl {
+                PromptDef {
                     guard: None,
                     body: resolve(default),
                 },
@@ -227,18 +228,18 @@ mod tests {
     use std::collections::BTreeMap;
 
     use iter_language::{
-        Action, AgentDecl, AgentMode, EventHandlerDecl, EventName, PromptDecl, PromptExpr,
-        PromptValue, RunnerBehavior, RunnerDecl, Spanned, WorkspaceDecl,
+        Action, AgentDef, AgentMode, EventHandlerDef, EventName, PromptDef, PromptExpr,
+        PromptValue, RunnerBehavior, RunnerDef, Spanned, WorkspaceDef,
     };
 
-    fn minimal_workspace() -> WorkspaceDecl {
-        WorkspaceDecl::Local {
+    fn minimal_workspace() -> WorkspaceDef {
+        WorkspaceDef::Local {
             base: "/tmp/assembly-test".into(),
         }
     }
 
-    fn minimal_agent() -> AgentDecl {
-        AgentDecl::Claude {
+    fn minimal_agent() -> AgentDef {
+        AgentDef::Claude {
             mode: AgentMode::Print,
             command: "claude".into(),
             args: Vec::new(),
@@ -247,8 +248,8 @@ mod tests {
         }
     }
 
-    fn minimal_runner() -> RunnerDecl {
-        RunnerDecl {
+    fn minimal_runner() -> RunnerDef {
+        RunnerDef {
             name: None,
             agent: "claude".into(),
             workspace: "local".into(),
@@ -261,9 +262,9 @@ mod tests {
         }
     }
 
-    fn minimal_prompts() -> Vec<Spanned<PromptDecl>> {
+    fn minimal_prompts() -> Vec<Spanned<PromptDef>> {
         vec![Spanned::new(
-            PromptDecl {
+            PromptDef {
                 guard: None,
                 body: "test prompt".into(),
             },
@@ -289,12 +290,12 @@ mod tests {
     #[test]
     fn assemble_produces_buildable_runner_with_queue() {
         let queue =
-            crate::queue::build_queue(&iter_language::QueueDecl::Memory).expect("in-memory queue");
+            crate::queue::build_queue(&iter_language::QueueDef::Memory).expect("in-memory queue");
         let builder = assemble_runner_builder(
             Some(Arc::new(queue)),
             &minimal_workspace(),
             &minimal_agent(),
-            &RunnerDecl {
+            &RunnerDef {
                 name: None,
                 agent: "claude".into(),
                 workspace: "local".into(),
@@ -316,7 +317,7 @@ mod tests {
     #[test]
     fn assemble_wires_event_handlers() {
         let events = vec![Spanned::new(
-            EventHandlerDecl {
+            EventHandlerDef {
                 event: EventName::RunnerStarting,
                 actions: vec![Action::Shell("echo start".into())],
             },
@@ -338,7 +339,7 @@ mod tests {
     #[test]
     fn assemble_rejects_invalid_event_template() {
         let events = vec![Spanned::new(
-            EventHandlerDecl {
+            EventHandlerDef {
                 event: EventName::RunnerStarting,
                 actions: vec![Action::Shell("echo {{".into())],
             },
@@ -377,7 +378,7 @@ mod tests {
         // Iterfile path: parse + assemble directly
         let root = iter_language::parse(iterfile_src).expect("parse iterfile");
         let queue =
-            crate::queue::build_queue(&iter_language::QueueDecl::Memory).expect("memory queue");
+            crate::queue::build_queue(&iter_language::QueueDef::Memory).expect("memory queue");
         let runner = root.runners.first().expect("should have a runner");
         let agent_decl = root
             .agents

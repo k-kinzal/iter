@@ -216,7 +216,10 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CopilotResult, Copilot
     // Presence of `session.error` is the failure signal. Look for it first as
     // a single-object stream, then as a line in a JSON-lines stream.
     let error_value = cli_json::single_object(&stdout)
-        .filter(|v| v.as_object().is_some_and(|obj| is_type(obj, "session.error")))
+        .filter(|v| {
+            v.as_object()
+                .is_some_and(|obj| is_type(obj, "session.error"))
+        })
         .or_else(|| cli_json::last_event_matching(&stdout, |obj| is_type(obj, "session.error")));
 
     if let Some(value) = error_value {
@@ -298,7 +301,8 @@ mod tests {
 
     #[test]
     fn parses_successful_result_with_session_and_usage() {
-        let json = r#"{"type":"result","sessionId":"sess-1","exitCode":0,"usage":{"premiumRequests":2}}"#;
+        let json =
+            r#"{"type":"result","sessionId":"sess-1","exitCode":0,"usage":{"premiumRequests":2}}"#;
         let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.exit_code, Some(0));
@@ -321,7 +325,10 @@ mod tests {
         let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
-            CopilotError::QuotaExhausted { status: Some(402), .. }
+            CopilotError::QuotaExhausted {
+                status: Some(402),
+                ..
+            }
         ));
     }
 
@@ -331,18 +338,23 @@ mod tests {
         let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
-            CopilotError::RateLimited { status: Some(429), .. }
+            CopilotError::RateLimited {
+                status: Some(429),
+                ..
+            }
         ));
     }
 
     #[test]
     fn auth_error_maps_to_auth() {
         for code in [401u16, 403] {
-            let json = format!(
-                r#"{{"type":"session.error","errorType":"auth","statusCode":{code}}}"#
-            );
+            let json =
+                format!(r#"{{"type":"session.error","errorType":"auth","statusCode":{code}}}"#);
             let err = interpret(&output(&json, RawExit::Code(1))).expect_err("err");
-            assert!(matches!(err, CopilotError::Auth { .. }), "code {code}: {err:?}");
+            assert!(
+                matches!(err, CopilotError::Auth { .. }),
+                "code {code}: {err:?}"
+            );
         }
     }
 
@@ -350,7 +362,13 @@ mod tests {
     fn server_error_maps_to_network() {
         let json = r#"{"type":"session.error","errorType":"upstream","statusCode":503}"#;
         let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
-        assert!(matches!(err, CopilotError::Network { status: Some(503), .. }));
+        assert!(matches!(
+            err,
+            CopilotError::Network {
+                status: Some(503),
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -365,8 +383,7 @@ mod tests {
 
     #[test]
     fn session_error_with_token_limit_text_refines_to_token_limit() {
-        let json =
-            r#"{"type":"session.error","errorType":"context window exceeded for model"}"#;
+        let json = r#"{"type":"session.error","errorType":"context window exceeded for model"}"#;
         let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, CopilotError::TokenLimit(_)));
     }
@@ -395,7 +412,8 @@ mod tests {
 
     #[test]
     fn token_limit_without_result_object_is_detected() {
-        let err = interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
+        let err =
+            interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, CopilotError::TokenLimit(_)));
     }
 }

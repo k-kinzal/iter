@@ -290,15 +290,21 @@ mod tests {
     fn other_nonzero_exit_maps_to_failed() {
         let err = interpret(&output("", RawExit::Code(3))).expect_err("err");
         assert!(
-            matches!(err, HermesError::Failed { exit_code: Some(3), .. }),
+            matches!(
+                err,
+                HermesError::Failed {
+                    exit_code: Some(3),
+                    ..
+                }
+            ),
             "got {err:?}",
         );
     }
 
     #[test]
     fn other_nonzero_exit_carries_stderr_detail() {
-        let err = interpret(&output_err("", "segfault in tool", RawExit::Code(139)))
-            .expect_err("err");
+        let err =
+            interpret(&output_err("", "segfault in tool", RawExit::Code(139))).expect_err("err");
         match err {
             HermesError::Failed { exit_code, detail } => {
                 assert_eq!(exit_code, Some(139));
@@ -312,7 +318,13 @@ mod tests {
     fn unknown_exit_maps_to_failed_with_no_code() {
         let err = interpret(&output("", RawExit::Unknown)).expect_err("err");
         assert!(
-            matches!(err, HermesError::Failed { exit_code: None, .. }),
+            matches!(
+                err,
+                HermesError::Failed {
+                    exit_code: None,
+                    ..
+                }
+            ),
             "got {err:?}",
         );
     }

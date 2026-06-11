@@ -15,7 +15,7 @@ const CORPUS: &[&str] = &[
     "trigger loop { max_iteration = 5 delay = 10s }\n",
 ];
 
-fn canon(src: &str) -> iter_language::RawFile {
+fn canon(src: &str) -> iter_language::CstFile {
     let (cst, _diag) = parse_to_cst(src);
     let mut cst = cst.expect("parser cst");
     canonicalize(&mut cst);

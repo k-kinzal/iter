@@ -4,21 +4,20 @@ use std::collections::BTreeMap;
 
 use super::{Analyzer, CONTINUE_ON_ERROR_HINT, RUNNER_BEHAVIOR_HINT, TemplatePosition};
 use crate::ast::{
-    EventHandlerDecl, PromptArm, PromptExpr, PromptValue, RunnerBehavior, RunnerDecl, Span,
-    Spanned,
+    EventHandlerDef, PromptArm, PromptExpr, PromptValue, RunnerBehavior, RunnerDef, Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawBlock, RawField, RawIdent, RawValue};
+use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
 
 impl Analyzer {
     /// Lower a `runner { agent = <ref> workspace = <ref> ... }` block.
     pub(super) fn lower_runner_new(
         &mut self,
-        kind: Option<&RawIdent>,
-        alias: Option<RawIdent>,
-        body: Option<RawBlock>,
+        kind: Option<&CstIdent>,
+        alias: Option<CstIdent>,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<RunnerDecl> {
+    ) -> Option<RunnerDef> {
         if let Some(kind) = kind {
             self.errors.push(Diagnostic::error(
                 kind.span.clone(),
@@ -35,7 +34,7 @@ impl Analyzer {
             return None;
         };
 
-        let mut events: Vec<Spanned<EventHandlerDecl>> = Vec::new();
+        let mut events: Vec<Spanned<EventHandlerDef>> = Vec::new();
 
         for route in &block.routes {
             self.errors.push(Diagnostic::error(
@@ -110,7 +109,7 @@ impl Analyzer {
             "runner",
         );
 
-        Some(RunnerDecl {
+        Some(RunnerDef {
             name,
             agent: agent?,
             workspace: workspace?,
@@ -133,15 +132,15 @@ impl Analyzer {
     /// policy, the prompt expression, and nested `on <event>` handlers,
     /// leaving the agent/workspace/queue reference fields empty.
     ///
-    /// This is what routes prompt and event data through `RunnerDecl` for
+    /// This is what routes prompt and event data through `RunnerDef` for
     /// inline services, matching the new Iterfile design where the runner
     /// binds prompt and lifecycle events rather than carrying them as
     /// independent top-level sections.
     pub(super) fn lower_runner_inline(
         &mut self,
-        body: Option<RawBlock>,
+        body: Option<CstBlock>,
         keyword_span: &Span,
-    ) -> Option<RunnerDecl> {
+    ) -> Option<RunnerDef> {
         let Some(block) = body else {
             self.errors.push(Diagnostic::error(
                 keyword_span.clone(),
@@ -150,7 +149,7 @@ impl Analyzer {
             return None;
         };
 
-        let mut events: Vec<Spanned<EventHandlerDecl>> = Vec::new();
+        let mut events: Vec<Spanned<EventHandlerDef>> = Vec::new();
 
         for route in &block.routes {
             self.errors.push(Diagnostic::error(
@@ -207,7 +206,7 @@ impl Analyzer {
             "runner",
         );
 
-        Some(RunnerDecl {
+        Some(RunnerDef {
             name: None,
             agent: String::new(),
             workspace: String::new(),
@@ -255,14 +254,14 @@ impl Analyzer {
     /// Extract a required identifier field (bareword reference).
     fn take_required_ident(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
         keyword_span: &Span,
         context: &str,
     ) -> Option<String> {
         if let Some(field) = fields.remove(name) {
             match field.value {
-                RawValue::Ident(s, _) | RawValue::String(s, _) => Some(s),
+                CstValue::Ident(s, _) | CstValue::String(s, _) => Some(s),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
@@ -273,11 +272,8 @@ impl Analyzer {
             }
         } else {
             self.errors.push(
-                Diagnostic::error(
-                    keyword_span.clone(),
-                    format!("{context} requires `{name}`"),
-                )
-                .with_hint(format!("add `{name} = <reference>`")),
+                Diagnostic::error(keyword_span.clone(), format!("{context} requires `{name}`"))
+                    .with_hint(format!("add `{name} = <reference>`")),
             );
             None
         }
@@ -286,12 +282,12 @@ impl Analyzer {
     /// Extract an optional identifier field.
     fn take_optional_ident(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         name: &str,
     ) -> Option<String> {
         let field = fields.remove(name)?;
         match field.value {
-            RawValue::Ident(s, _) | RawValue::String(s, _) => Some(s),
+            CstValue::Ident(s, _) | CstValue::String(s, _) => Some(s),
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -308,7 +304,7 @@ impl Analyzer {
     /// - `prompt { _ = "default" }` → Single(default or empty)
     fn take_prompt_expr(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         keyword_span: &Span,
     ) -> PromptExpr {
         let Some(field) = fields.remove("prompt") else {
@@ -320,12 +316,12 @@ impl Analyzer {
         };
 
         match field.value {
-            RawValue::String(s, span) => {
+            CstValue::String(s, span) => {
                 self.validate_template(&s, &span, TemplatePosition::Prompt);
                 PromptExpr::Single(PromptValue::Inline(s))
             }
-            RawValue::Ident(name, _) => PromptExpr::Single(PromptValue::Ref(name)),
-            RawValue::Block(block) => self.parse_prompt_match_block(block),
+            CstValue::Ident(name, _) => PromptExpr::Single(PromptValue::Ref(name)),
+            CstValue::Block(block) => self.parse_prompt_match_block(block),
             other => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
@@ -337,7 +333,7 @@ impl Analyzer {
     }
 
     /// Parse `prompt { guard => value, ... _ => default }`.
-    fn parse_prompt_match_block(&mut self, block: RawBlock) -> PromptExpr {
+    fn parse_prompt_match_block(&mut self, block: CstBlock) -> PromptExpr {
         // Legacy fallback: if the block has fields but no prompt_arms, accept
         // `_ = "default"` for backward compatibility.
         if block.prompt_arms.is_empty() {
@@ -349,11 +345,11 @@ impl Analyzer {
 
         for arm in block.prompt_arms {
             let value = match arm.value {
-                RawValue::String(s, span) => {
+                CstValue::String(s, span) => {
                     self.validate_template(&s, &span, TemplatePosition::Prompt);
                     PromptValue::Inline(s)
                 }
-                RawValue::Ident(name, _) => PromptValue::Ref(name),
+                CstValue::Ident(name, _) => PromptValue::Ref(name),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
@@ -423,7 +419,7 @@ impl Analyzer {
     }
 
     /// Legacy prompt match block: `prompt { _ = "default" }` using `=` syntax.
-    fn parse_prompt_match_block_legacy(&mut self, block: RawBlock) -> PromptExpr {
+    fn parse_prompt_match_block_legacy(&mut self, block: CstBlock) -> PromptExpr {
         for route in &block.routes {
             self.errors.push(Diagnostic::error(
                 route.span.clone(),
@@ -447,11 +443,11 @@ impl Analyzer {
 
         for field in block.fields {
             let value = match field.value {
-                RawValue::String(s, span) => {
+                CstValue::String(s, span) => {
                     self.validate_template(&s, &span, TemplatePosition::Prompt);
                     PromptValue::Inline(s)
                 }
-                RawValue::Ident(name, _) => PromptValue::Ref(name),
+                CstValue::Ident(name, _) => PromptValue::Ref(name),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
@@ -484,10 +480,7 @@ impl Analyzer {
         PromptExpr::Single(default.unwrap_or(PromptValue::Inline(String::new())))
     }
 
-    fn collect_fields_from_vec(
-        &mut self,
-        fields: Vec<RawField>,
-    ) -> BTreeMap<String, RawField> {
+    fn collect_fields_from_vec(&mut self, fields: Vec<CstField>) -> BTreeMap<String, CstField> {
         let mut map = BTreeMap::new();
         for field in fields {
             if map.contains_key(&field.name.name) {
@@ -504,7 +497,7 @@ impl Analyzer {
 
     fn take_iteration_timeout_secs(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<i64> {
         let span = fields.get("iteration_timeout_secs")?.value.span();
         let secs = self.take_optional_duration(fields, "iteration_timeout_secs")?;
@@ -520,13 +513,13 @@ impl Analyzer {
 
     fn take_required_runner_behavior(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         keyword_span: &Span,
     ) -> Option<RunnerBehavior> {
         if let Some(field) = fields.remove("behavior") {
             match field.value {
-                RawValue::Ident(name, span) => self.parse_runner_behavior_ident(&name, &span),
-                RawValue::Block(block) => self.parse_runner_behavior_block(block),
+                CstValue::Ident(name, span) => self.parse_runner_behavior_ident(&name, &span),
+                CstValue::Block(block) => self.parse_runner_behavior_block(block),
                 other => {
                     self.errors.push(
                     Diagnostic::error(
@@ -561,13 +554,13 @@ impl Analyzer {
         }
     }
 
-    fn parse_runner_behavior_block(&mut self, body: RawBlock) -> Option<RunnerBehavior> {
+    fn parse_runner_behavior_block(&mut self, body: CstBlock) -> Option<RunnerBehavior> {
         let body_span = body.span.clone();
         let mut inner = self.collect_fields(Some(body));
         let kind_field = inner.remove("kind");
         let kind = if let Some(field) = kind_field {
             match field.value {
-                RawValue::Ident(name, span) => Some((name, span)),
+                CstValue::Ident(name, span) => Some((name, span)),
                 other => {
                     self.errors.push(Diagnostic::error(
                         other.span(),

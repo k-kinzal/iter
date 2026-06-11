@@ -2,7 +2,7 @@
 //!
 //! Walks every `.iter` file under `tests/corpus/{valid,invalid}/`. Files in
 //! `valid/` must parse successfully and have a sibling `<file>.iter.ast.snap`
-//! describing the resulting [`iter_language::Root`] AST. Files in
+//! describing the resulting [`iter_language::Iterfile`] AST. Files in
 //! `invalid/` must fail and have a sibling `<file>.iter.err.snap` containing
 //! the rendered diagnostic output produced by [`iter_language::Diagnostic::report`].
 //!

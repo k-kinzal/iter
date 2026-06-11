@@ -42,7 +42,7 @@ use crate::queue::dlq::DlqPolicy;
 use crate::queue::drivers::servicebus::credentials::{
     ServiceBusCredentials, ServiceBusCredentialsError,
 };
-use crate::queue::drivers::sqs::TemplatedString;
+use crate::queue::drivers::sqs::MetadataSource;
 use crate::queue::retry::RetryPolicy;
 use crate::signal::Signal;
 
@@ -79,9 +79,9 @@ pub struct ServiceBusProxyConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ServiceBusSenderConfig {
     /// Per-message id template.
-    pub message_id: Option<TemplatedString>,
+    pub message_id: Option<MetadataSource>,
     /// Correlation id template.
-    pub correlation_id: Option<TemplatedString>,
+    pub correlation_id: Option<MetadataSource>,
     /// Static content type.
     pub content_type: Option<String>,
     /// Static subject.
@@ -95,9 +95,9 @@ pub struct ServiceBusSenderConfig {
     /// RFC3339 scheduled enqueue time.
     pub scheduled_enqueue_time: Option<String>,
     /// Partition key source.
-    pub partition_key_strategy: Option<TemplatedString>,
+    pub partition_key_strategy: Option<MetadataSource>,
     /// Session id source.
-    pub session_id_strategy: Option<TemplatedString>,
+    pub session_id_strategy: Option<MetadataSource>,
     /// Static application-property overlay.
     pub application_properties: Option<Vec<(String, String)>>,
     /// Batch size cap.

@@ -8,7 +8,7 @@ This crate turns `Iterfile` and `compose.iter` source text into typed ASTs
 that the operator-facing crates consume. It owns:
 
 - The grammar (parsed via `chumsky`).
-- The AST types (`Root`, `ComposeRoot`, declarations for queues, agents,
+- The AST types (`Iterfile`, `Compose`, definitions for queues, agents,
   workspaces, runners, services, triggers, prompts, and event handlers).
 - Semantic validation (e.g. resolving queue references, checking trigger
   schedule expressions).
@@ -26,5 +26,5 @@ None — leaf crate.
 
 ## Public API
 
-`parse`, AST types (`Root`, `ComposeRoot`, `QueueDecl`, `AgentDecl`,
-`WorkspaceDecl`, `TriggerDecl`, etc.), diagnostic rendering.
+`parse`, AST types (`Iterfile`, `Compose`, `QueueDef`, `AgentDef`,
+`WorkspaceDef`, `TriggerDef`, etc.), diagnostic rendering.

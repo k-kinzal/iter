@@ -1,17 +1,17 @@
 //! `on <event> { ... }` top-level handler lowering plus shell-action collection.
 
 use super::{Analyzer, TemplatePosition, closest};
-use crate::ast::{Action, EventHandlerDecl, EventName, Span, Spanned};
+use crate::ast::{Action, EventHandlerDef, EventName, Span, Spanned};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{RawAction, RawBlock, RawIdent};
+use crate::parser::{CstAction, CstBlock, CstIdent};
 
 impl Analyzer {
     pub(super) fn lower_event(
         &mut self,
-        event: &RawIdent,
-        body: &RawBlock,
+        event: &CstIdent,
+        body: &CstBlock,
         span: Span,
-    ) -> Option<Spanned<EventHandlerDecl>> {
+    ) -> Option<Spanned<EventHandlerDef>> {
         let event_name = if let Some((e, deprecated_alias)) =
             EventName::parse_with_deprecation(&event.name)
         {
@@ -71,7 +71,7 @@ impl Analyzer {
             ));
         }
         Some(Spanned::new(
-            EventHandlerDecl {
+            EventHandlerDef {
                 event: event_name,
                 actions,
             },
@@ -79,10 +79,10 @@ impl Analyzer {
         ))
     }
 
-    pub(super) fn lower_actions(&mut self, block: &RawBlock) -> Vec<Action> {
+    pub(super) fn lower_actions(&mut self, block: &CstBlock) -> Vec<Action> {
         let mut out = Vec::new();
         for raw in &block.actions {
-            let RawAction { command, .. } = raw;
+            let CstAction { command, .. } = raw;
             self.validate_template(command, &raw.span, TemplatePosition::ShellAction);
             out.push(Action::Shell(command.clone()));
         }

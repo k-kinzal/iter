@@ -1,6 +1,6 @@
-//! `build_prompt_selector` — pick prompts out of an [`Iterfile`](Root).
+//! `build_prompt_selector` — pick prompts out of an [`Iterfile`](Iterfile).
 //!
-//! Translates an Iterfile's `prompt [when ...] "..."` declarations into an
+//! Translates a runner's guarded `prompt` expression into an
 //! [`iter_core::PromptSelector`] the runner can evaluate per-signal. Guards
 //! are translated from [`iter_language::PromptGuard`] (a parse-tree type)
 //! into [`iter_core::PromptGuard`] (a runtime type) so the runtime layer
@@ -20,8 +20,8 @@ use iter_core::{
     PromptSelector, PromptTemplate, TemplateError,
 };
 use iter_language::{
-    CmpOp as LangCmpOp, IterationField as LangIterationField, PromptDecl,
-    PromptGuard as LangPromptGuard, Root, Spanned,
+    CmpOp as LangCmpOp, IterationField as LangIterationField, Iterfile, PromptDef,
+    PromptGuard as LangPromptGuard, Spanned,
 };
 
 /// Errors produced while assembling a [`PromptSelector`] from prompt
@@ -53,19 +53,17 @@ pub enum PromptBuildError {
 /// Build the [`PromptSelector`] the runner should use for `iterfile`.
 ///
 /// Extracts the prompt expression from the first runner and converts
-/// named prompt references into resolved `PromptDecl` entries for the
+/// named prompt references into resolved `PromptDef` entries for the
 /// existing `build_prompt_selector_from_prompts` pipeline.
 ///
 /// # Errors
 ///
 /// * The Iterfile contains no runner or no prompt.
 /// * The Iterfile declares more than one unguarded prompt.
-pub fn build_prompt_selector(iterfile: &Root) -> Result<PromptSelector, PromptBuildError> {
+pub fn build_prompt_selector(iterfile: &Iterfile) -> Result<PromptSelector, PromptBuildError> {
     let runner = iterfile.runners.first().ok_or(PromptBuildError::Missing)?;
-    let prompts = crate::assembly::build_prompt_decls_from_expr_pub(
-        &runner.node.prompt,
-        &iterfile.prompts,
-    );
+    let prompts =
+        crate::assembly::build_prompt_decls_from_expr_pub(&runner.node.prompt, &iterfile.prompts);
     build_prompt_selector_from_prompts(&prompts)
 }
 
@@ -78,7 +76,7 @@ pub fn build_prompt_selector(iterfile: &Root) -> Result<PromptSelector, PromptBu
 /// * `prompts` is empty.
 /// * More than one entry is unguarded.
 pub fn build_prompt_selector_from_prompts(
-    prompts: &[Spanned<PromptDecl>],
+    prompts: &[Spanned<PromptDef>],
 ) -> Result<PromptSelector, PromptBuildError> {
     if prompts.is_empty() {
         return Err(PromptBuildError::Missing);
@@ -173,11 +171,11 @@ fn translate_cmp_op(op: LangCmpOp) -> CoreCmpOp {
 mod tests {
     use super::*;
     use iter_core::{IterationContext, Metadata, MetadataKey, MetadataValue, Signal};
-    use iter_language::{PromptDecl, Spanned};
+    use iter_language::{PromptDef, Spanned};
 
-    fn prompt(body: &str, guard: Option<LangPromptGuard>) -> Spanned<PromptDecl> {
+    fn prompt(body: &str, guard: Option<LangPromptGuard>) -> Spanned<PromptDef> {
         Spanned::new(
-            PromptDecl {
+            PromptDef {
                 guard,
                 body: body.to_owned(),
             },
@@ -200,7 +198,7 @@ mod tests {
 
     #[test]
     fn missing_prompt_errors() {
-        let prompts: Vec<Spanned<PromptDecl>> = vec![];
+        let prompts: Vec<Spanned<PromptDef>> = vec![];
         let err = build_prompt_selector_from_prompts(&prompts).expect_err("must fail");
         assert!(err.to_string().contains("missing a `prompt`"));
     }

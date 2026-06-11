@@ -1,6 +1,6 @@
 //! Azure Service Bus `queue servicebus { ... }` AST types.
 
-use super::{DlqPolicyDecl, RetryPolicyDecl, TemplatedString};
+use super::{DlqPolicyDef, MetadataSource, RetryPolicyDef};
 use crate::ast::SecretExpr;
 
 /// Top-level `queue servicebus { ... }` configuration.
@@ -38,9 +38,9 @@ pub struct ServiceBusConfig {
     /// Session knobs (required when entity has `RequiresSession = true`).
     pub session: Option<ServiceBusSession>,
     /// SDK retry policy.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
     /// Native DLQ — typically observed via `sub_queue = dead_letter`.
-    pub dlq: Option<DlqPolicyDecl>,
+    pub dlq: Option<DlqPolicyDef>,
 }
 
 /// WebSocket proxy configuration.
@@ -116,9 +116,9 @@ pub enum ServiceBusAuthKind {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ServiceBusSender {
     /// Per-message id template.
-    pub message_id: Option<TemplatedString>,
+    pub message_id: Option<MetadataSource>,
     /// Correlation id template.
-    pub correlation_id: Option<TemplatedString>,
+    pub correlation_id: Option<MetadataSource>,
     /// Static content type.
     pub content_type: Option<String>,
     /// Static subject.
@@ -132,9 +132,9 @@ pub struct ServiceBusSender {
     /// RFC3339 scheduled enqueue time.
     pub scheduled_enqueue_time: Option<String>,
     /// `none` or `from_metadata("k")`.
-    pub partition_key_strategy: Option<TemplatedString>,
+    pub partition_key_strategy: Option<MetadataSource>,
     /// `none` or `from_metadata("k")` (used for sessions).
-    pub session_id_strategy: Option<TemplatedString>,
+    pub session_id_strategy: Option<MetadataSource>,
     /// Static application-property overlay.
     pub application_properties: Option<Vec<(String, String)>>,
     /// Batch size cap.
@@ -144,7 +144,7 @@ pub struct ServiceBusSender {
     /// Linger before flushing a partial batch (seconds).
     pub batch_linger_secs: Option<i64>,
     /// SDK retry policy.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
 }
 
 /// Receiver knobs.
@@ -171,7 +171,7 @@ pub struct ServiceBusReceiver {
     /// DLQ description template.
     pub dead_letter_description_template: Option<String>,
     /// SDK retry policy.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
 }
 
 /// Session knobs (required when entity has `RequiresSession = true`).

@@ -2,7 +2,7 @@
 
 Exposes an HTTP listener. Each incoming request is matched against per-event routes; matching routes emit a Signal.
 
-AST: `TriggerDecl::Webhook`, `WebhookRoute`, and `SecretExpr` in `iter_language/src/ast/trigger.rs`.
+AST: `TriggerDef::Webhook`, `Subscription`, and `SecretExpr` in `iter_language/src/ast/trigger.rs`.
 
 Standalone binary: `iter-webhook`.
 

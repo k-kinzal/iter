@@ -26,7 +26,7 @@ pub use sqs::{
 
 /// Queue backend declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QueueDecl {
+pub enum QueueDef {
     /// In-process FIFO/priority queue. No fields.
     Memory,
     /// File-backed queue. The `path` field is project-shaped and therefore
@@ -93,7 +93,7 @@ pub enum QueueDecl {
 /// Templated string value: either a literal or a single-argument
 /// `from_metadata("key")` call. Applied at send-time per signal.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TemplatedString {
+pub enum MetadataSource {
     /// Static literal value.
     Literal(String),
     /// `from_metadata("key")` — at send time the named metadata field
@@ -104,7 +104,7 @@ pub enum TemplatedString {
 /// `RetryPolicy` declaration. Mirrors the runtime retry policy one-for-one;
 /// the operator translates it when connecting the queue.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RetryPolicyDecl {
+pub struct RetryPolicyDef {
     /// One of `standard` | `adaptive` | `fixed` | `exponential`.
     pub mode: Option<String>,
     /// Max attempts.
@@ -122,7 +122,7 @@ pub struct RetryPolicyDecl {
 
 /// `DlqPolicy` declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct DlqPolicyDecl {
+pub struct DlqPolicyDef {
     /// One of `none` | `native` | `iter_republish`. Defaults to
     /// `none` when the block is absent and to `native` when only a
     /// `kind = "native"` is present.
@@ -135,7 +135,7 @@ pub struct DlqPolicyDecl {
     /// Whether to carry source headers/attributes across.
     pub include_headers: Option<bool>,
     /// Required when `kind = "iter_republish"`: the destination.
-    pub target: Option<DlqTargetDecl>,
+    pub target: Option<DlqTargetDef>,
 }
 
 /// `DlqTarget` declaration.
@@ -144,7 +144,7 @@ pub struct DlqPolicyDecl {
 /// needs; richer per-target surfaces (auth blocks, encryption keys,
 /// custom endpoints) land alongside the matching backend impl.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DlqTargetDecl {
+pub enum DlqTargetDef {
     /// SQS target — republish poison records to another SQS queue.
     Sqs {
         /// Target queue URL.

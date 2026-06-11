@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: agent-fake.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -52,7 +52,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "fake",
                 workspace: "local",

@@ -53,7 +53,8 @@ fn flat_iterfile_is_rejected_with_actionable_error() {
     let diags = parse(FLAT).expect_err("flat Iterfile must no longer validate");
     assert!(
         diags.iter().any(|d| {
-            d.message.contains("flat Iterfile syntax is no longer supported")
+            d.message
+                .contains("flat Iterfile syntax is no longer supported")
                 && d.message.contains("runner { agent = ... workspace = ... }")
         }),
         "expected the flat-syntax error naming the runner-binding replacement; got: {:?}",
@@ -65,9 +66,9 @@ fn flat_iterfile_is_rejected_with_actionable_error() {
 fn top_level_prompt_is_rejected() {
     let diags = parse(FLAT).expect_err("flat Iterfile must no longer validate");
     assert!(
-        diags
-            .iter()
-            .any(|d| d.message.contains("top-level `prompt \"...\"` is no longer supported")),
+        diags.iter().any(|d| d
+            .message
+            .contains("top-level `prompt \"...\"` is no longer supported")),
         "expected the top-level-prompt error; got: {:?}",
         diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
     );

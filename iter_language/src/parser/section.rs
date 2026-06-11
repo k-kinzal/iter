@@ -2,12 +2,12 @@
 //! agent / trigger / runner) and their shared block parser.
 
 use super::Parser;
-use super::cst::{RawBlock, RawField, RawFile, RawIdent, RawSection, RawValue};
+use super::cst::{CstBlock, CstField, CstFile, CstIdent, CstSection, CstValue};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
 impl Parser<'_> {
-    pub(super) fn parse_file(&mut self) -> RawFile {
+    pub(super) fn parse_file(&mut self) -> CstFile {
         let mut sections = Vec::new();
         while self.pos < self.tokens.len() {
             let saved = self.pos;
@@ -74,10 +74,10 @@ impl Parser<'_> {
                 None => break,
             }
         }
-        RawFile { sections }
+        CstFile { sections }
     }
 
-    pub(super) fn parse_block_section(&mut self) -> Option<RawSection> {
+    pub(super) fn parse_block_section(&mut self) -> Option<CstSection> {
         // Only consume a second ident if it is immediately followed by `{`
         // *and* it is not one of the reserved top-level section keywords.
         // The lexer drops newlines, so `queue memory\nrunner { ... }` would
@@ -148,7 +148,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        Some(RawSection::Block {
+        Some(CstSection::Block {
             keyword,
             keyword_span: keyword_span.clone(),
             kind,
@@ -161,10 +161,10 @@ impl Parser<'_> {
 
     /// Parse `arg <name> [= "<default>"]`.
     ///
-    /// Produces a [`RawSection::Block`] with keyword `"arg"`, kind set to
+    /// Produces a [`CstSection::Block`] with keyword `"arg"`, kind set to
     /// the argument name, and an optional body carrying a single `default`
     /// field when a `= "value"` follows the name.
-    pub(super) fn parse_arg_section(&mut self) -> Option<RawSection> {
+    pub(super) fn parse_arg_section(&mut self) -> Option<CstSection> {
         let keyword_tok = self.bump()?.clone();
         let keyword_span = keyword_tok.span;
         let name = self.expect_ident()?;
@@ -174,13 +174,13 @@ impl Parser<'_> {
             let (value, value_span) = self.expect_string()?;
             span_end = value_span.end;
             let field_span = name.span.start..value_span.end;
-            Some(RawBlock {
-                fields: vec![RawField {
-                    name: RawIdent {
+            Some(CstBlock {
+                fields: vec![CstField {
+                    name: CstIdent {
                         name: "default".to_string(),
                         span: value_span.clone(),
                     },
-                    value: RawValue::String(value, value_span),
+                    value: CstValue::String(value, value_span),
                     span: field_span,
                 }],
                 routes: Vec::new(),
@@ -192,7 +192,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        Some(RawSection::Block {
+        Some(CstSection::Block {
             keyword: "arg".to_string(),
             keyword_span: keyword_span.clone(),
             kind: Some(name),
@@ -204,10 +204,10 @@ impl Parser<'_> {
     }
 
     #[allow(clippy::too_many_lines)]
-    pub(super) fn parse_block(&mut self) -> RawBlock {
+    pub(super) fn parse_block(&mut self) -> CstBlock {
         let lbrace_span = self.peek_span();
         if !self.expect(&Token::LBrace, "`{`") {
-            return RawBlock {
+            return CstBlock {
                 fields: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
@@ -228,7 +228,7 @@ impl Parser<'_> {
                 Some(Token::RBrace) => {
                     let end = self.peek_span().end;
                     self.bump();
-                    return RawBlock {
+                    return CstBlock {
                         fields,
                         routes,
                         actions,
@@ -242,7 +242,7 @@ impl Parser<'_> {
                         self.eof_span(),
                         "unexpected end of file inside block; expected `}`",
                     ));
-                    return RawBlock {
+                    return CstBlock {
                         fields,
                         routes,
                         actions,
@@ -261,9 +261,7 @@ impl Parser<'_> {
                         }
                     }
                     // Guard expression start followed by `.` — prompt match arm.
-                    "metadata" | "iteration"
-                        if matches!(self.peek_at(1), Some(Token::Dot)) =>
-                    {
+                    "metadata" | "iteration" if matches!(self.peek_at(1), Some(Token::Dot)) => {
                         if let Some(arm) = self.parse_prompt_match_guard_arm() {
                             prompt_arms.push(arm);
                         } else {

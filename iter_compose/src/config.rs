@@ -15,9 +15,9 @@
 use std::time::Duration;
 
 use iter_core::{RunnerBehavior, RunnerConfig};
-use iter_language::{RunnerBehavior as DslRunnerBehavior, RunnerDecl};
+use iter_language::{RunnerBehavior as DslRunnerBehavior, RunnerDef};
 
-/// Build a [`RunnerConfig`] from a [`RunnerDecl`] plus the CLI `--once` flag.
+/// Build a [`RunnerConfig`] from a [`RunnerDef`] plus the CLI `--once` flag.
 ///
 /// `once` is plumbed through here (rather than mutated by the caller) so the
 /// composition layer is the single source of truth for "what does the runner
@@ -29,7 +29,7 @@ use iter_language::{RunnerBehavior as DslRunnerBehavior, RunnerDecl};
 /// violation that the semantic layer (`iter_language::semantic::runner`)
 /// catches before lowering. See the inline comment for the rationale.
 #[must_use]
-pub fn build_runner_config(runner: &RunnerDecl, once: bool) -> RunnerConfig {
+pub fn build_runner_config(runner: &RunnerDef, once: bool) -> RunnerConfig {
     RunnerConfig {
         once,
         continue_on_error: runner.continue_on_error,
@@ -38,7 +38,7 @@ pub fn build_runner_config(runner: &RunnerDecl, once: bool) -> RunnerConfig {
             Duration::from_secs(u64::try_from(s).expect(
                 "iteration_timeout_secs must be positive (the semantic layer \
                  enforces this; if you reached this panic you constructed a \
-                 RunnerDecl directly without going through the language pipeline)",
+                 RunnerDef directly without going through the language pipeline)",
             ))
         }),
     }
@@ -64,8 +64,8 @@ mod tests {
         continue_on_error: bool,
         behavior: DslRunnerBehavior,
         iteration_timeout_secs: Option<i64>,
-    ) -> RunnerDecl {
-        RunnerDecl {
+    ) -> RunnerDef {
+        RunnerDef {
             name: None,
             agent: String::new(),
             workspace: String::new(),

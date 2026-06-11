@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: queue-sqs.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -157,7 +157,7 @@ Root {
                             },
                         ),
                         retry: Some(
-                            RetryPolicyDecl {
+                            RetryPolicyDef {
                                 mode: Some(
                                     "adaptive",
                                 ),
@@ -177,7 +177,7 @@ Root {
                             },
                         ),
                         dlq: Some(
-                            DlqPolicyDecl {
+                            DlqPolicyDef {
                                 kind: Some(
                                     "native",
                                 ),
@@ -222,7 +222,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

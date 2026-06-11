@@ -12,7 +12,7 @@ use crate::ast::{
     KinesisShardListFilter, Span,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::RawField;
+use crate::parser::CstField;
 
 const KINESIS_FIELDS: &[&str] = &[
     "stream_arn",
@@ -67,7 +67,7 @@ const KINESIS_CHECKPOINT_FIELDS: &[&str] = &[
 impl Analyzer {
     pub(super) fn lower_kinesis(
         &mut self,
-        body: BTreeMap<String, RawField>,
+        body: BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> KinesisConfig {
         let mut fields = body;
@@ -100,7 +100,7 @@ impl Analyzer {
 
     fn lower_kinesis_identity(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> KinesisIdentity {
         let arn = self.take_optional_string(fields, "stream_arn");
@@ -133,7 +133,7 @@ impl Analyzer {
 
     fn lower_kinesis_producer(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<KinesisProducer> {
         let mut block = self.take_optional_block(fields, "producer")?;
         let partition_key_strategy =
@@ -158,7 +158,7 @@ impl Analyzer {
 
     fn lower_kinesis_consumer(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<KinesisConsumer> {
         let mut block = self.take_optional_block(fields, "consumer")?;
@@ -205,7 +205,7 @@ impl Analyzer {
 
     fn lower_kinesis_shard_filter(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
     ) -> Option<KinesisShardListFilter> {
         let mut block = self.take_optional_block(fields, "shard_list_filter")?;
         let kind = self.take_optional_string(&mut block, "type");
@@ -225,7 +225,7 @@ impl Analyzer {
 
     fn lower_kinesis_checkpoint(
         &mut self,
-        fields: &mut BTreeMap<String, RawField>,
+        fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<KinesisCheckpoint> {
         let mut block = self.take_optional_block(fields, "checkpoint")?;

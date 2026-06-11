@@ -9,14 +9,14 @@ use iter_core::process::{
     ProcessTerminationReason, spawn_detached,
 };
 use iter_core::{Queue, RunnerSummary};
-use iter_language::TelemetryDecl;
+use iter_language::TelemetryDef;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
 use super::plan::{ComposePlan, ComposeService};
-use super::service::{ComposeReport, FailurePolicy, OrchestratorContext, CompletedTask};
+use super::service::{CompletedTask, ComposeReport, FailurePolicy, OrchestratorContext};
 use super::supervisor;
 use crate::process_lifecycle::{
     self, RunRecordMetadata, derive_finalize_reason, leaves_record_non_terminal,
@@ -85,9 +85,9 @@ pub async fn run(
         let trigger_cancel = cancel.clone();
         let project = orchestrator.project.clone();
         let trig_name = trig.name.clone();
-        let state_dir = state_root.as_ref().map(|root| {
-            supervisor::trigger_state_dir(root, &project, &trig.name)
-        });
+        let state_dir = state_root
+            .as_ref()
+            .map(|root| supervisor::trigger_state_dir(root, &project, &trig.name));
         set.spawn(async move {
             let dir = state_dir.unwrap_or_else(|| {
                 std::env::temp_dir()
@@ -95,8 +95,7 @@ pub async fn run(
                     .join(&project)
                     .join(&trig_name)
             });
-            let supervised =
-                supervisor::supervise_trigger(trig, trigger_cancel, dir).await;
+            let supervised = supervisor::supervise_trigger(trig, trigger_cancel, dir).await;
             CompletedTask::Trigger {
                 name: supervised.name,
                 result: supervised.result,
@@ -143,7 +142,7 @@ async fn spawn_service_task(
     metadata: &RunRecordMetadata,
     parent_id: Option<ProcessId>,
     orchestrator: &OrchestratorContext,
-    telemetry: Option<&TelemetryDecl>,
+    telemetry: Option<&TelemetryDef>,
 ) {
     match try_spawn_service_subprocess(
         &service,
@@ -221,7 +220,7 @@ async fn try_spawn_service_subprocess(
     parent_id: Option<ProcessId>,
     debug: bool,
     orchestrator: &OrchestratorContext,
-    telemetry_decl: Option<&TelemetryDecl>,
+    telemetry_decl: Option<&TelemetryDef>,
 ) -> Result<ServiceSubprocessSpec, ServiceSpawnDecision> {
     if queue_to_url(&service.queue_decl).is_none() {
         return Err(ServiceSpawnDecision::Fallback(
@@ -457,8 +456,7 @@ pub async fn spawn_targeted_service(
         });
     }
 
-    let registry =
-        ProcessRegistry::open_default().map_err(TargetedSpawnError::OpenRegistry)?;
+    let registry = ProcessRegistry::open_default().map_err(TargetedSpawnError::OpenRegistry)?;
 
     let program = std::env::current_exe().map_err(TargetedSpawnError::Binary)?;
 

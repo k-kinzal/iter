@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use iter_core::process::{AdoptError, ProcessError, ProcessId, ProcessRuntime, ShutdownController};
 use iter_core::{BuilderError, RunnerExitError, RunnerSummary};
-use iter_language::{Diagnostic, Root, parse};
+use iter_language::{Diagnostic, Iterfile, parse};
 use thiserror::Error;
 use tracing::{error, info};
 
@@ -375,7 +375,7 @@ fn build_compose_service_builder(
     Ok((built.builder, built.iterfile_path))
 }
 
-fn load_and_parse(path: &Path) -> Result<Root, IterfileError> {
+fn load_and_parse(path: &Path) -> Result<Iterfile, IterfileError> {
     let source = std::fs::read_to_string(path).map_err(|source| IterfileError::Read {
         path: path.to_path_buf(),
         source,

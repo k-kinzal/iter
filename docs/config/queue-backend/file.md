@@ -2,7 +2,7 @@
 
 Persistent single-host queue backed by a filesystem path. Survives process restarts and can be shared by multiple processes on the same host.
 
-AST: `QueueDecl::File` in `iter_language/src/ast/queue/mod.rs`.
+AST: `QueueDef::File` in `iter_language/src/ast/queue/mod.rs`.
 
 ## Syntax
 

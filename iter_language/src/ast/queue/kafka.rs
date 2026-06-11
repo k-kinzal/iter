@@ -1,6 +1,6 @@
 //! Apache Kafka `queue kafka { ... }` AST types.
 
-use super::{DlqPolicyDecl, TemplatedString};
+use super::{DlqPolicyDef, MetadataSource};
 use crate::ast::SecretExpr;
 
 /// Top-level `queue kafka { ... }` configuration.
@@ -50,7 +50,7 @@ pub struct KafkaConfig {
     /// Untyped escape hatch — applied last, overrides any field.
     pub extra_config: Option<Vec<(String, String)>>,
     /// Iter-implemented DLQ (Kafka has no native DLQ).
-    pub dlq: Option<DlqPolicyDecl>,
+    pub dlq: Option<DlqPolicyDef>,
 }
 
 /// Security / SASL / TLS surface.
@@ -176,13 +176,13 @@ pub struct KafkaProducer {
     /// Max retry backoff.
     pub retry_backoff_max_ms: Option<i64>,
     /// Per-message key source.
-    pub key_strategy: Option<TemplatedString>,
+    pub key_strategy: Option<MetadataSource>,
     /// Static header overlay.
     pub headers: Option<Vec<(String, String)>>,
     /// `signal_created_at` (default) or `now`.
     pub timestamp_strategy: Option<String>,
     /// `partitioner_default` or `from_metadata("k")`.
-    pub partition_strategy: Option<TemplatedString>,
+    pub partition_strategy: Option<MetadataSource>,
 }
 
 /// Consumer knobs.

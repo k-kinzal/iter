@@ -2,7 +2,7 @@
 
 Escape-hatch backend: iter delegates enqueue and dequeue to user-provided shell commands. Use this to wrap any queue system iter does not ship first-class for.
 
-AST: `QueueDecl::Shell` in `iter_language/src/ast/queue/mod.rs`.
+AST: `QueueDef::Shell` in `iter_language/src/ast/queue/mod.rs`.
 
 ## Syntax
 

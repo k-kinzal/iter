@@ -375,16 +375,18 @@ mod tests {
 
     #[test]
     fn context_window_without_terminal_record_is_token_limit() {
-        let err =
-            interpret(&output("fatal: context window exceeded\n", RawExit::Code(1)))
-                .expect_err("err");
+        let err = interpret(&output(
+            "fatal: context window exceeded\n",
+            RawExit::Code(1),
+        ))
+        .expect_err("err");
         assert!(matches!(err, CodexError::TokenLimit(_)));
     }
 
     #[test]
     fn bad_args_exit_maps_to_bad_args() {
-        let err = interpret(&output("error: unexpected argument\n", RawExit::Code(2)))
-            .expect_err("err");
+        let err =
+            interpret(&output("error: unexpected argument\n", RawExit::Code(2))).expect_err("err");
         assert!(matches!(err, CodexError::BadArgs));
     }
 

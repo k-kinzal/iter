@@ -6,11 +6,11 @@
 //! Likewise for `false`, `on`, `shell`, `when`, `metadata`, and every
 //! block keyword.
 
-use iter_language::{RawSection, RawValue, parse_to_cst};
+use iter_language::{CstSection, CstValue, parse_to_cst};
 
 use crate::oracle::{canonicalize, oracle_parse};
 
-fn parse_both(source: &str) -> (iter_language::RawFile, iter_language::RawFile) {
+fn parse_both(source: &str) -> (iter_language::CstFile, iter_language::CstFile) {
     let (hw_cst, _) = parse_to_cst(source);
     let (oracle_cst, oracle_ok) = oracle_parse(source);
     assert!(oracle_ok, "oracle rejected input:\n{source}");
@@ -28,13 +28,13 @@ fn true_with_suffix_is_ident() {
     let (hw, _) = parse_both("queue memory\nworkspace local { base = truest }\n");
     // Navigate: second section is workspace, its body has field base = ident "truest".
     let section = &hw.sections[1];
-    let body = if let RawSection::Block { body, .. } = section {
+    let body = if let CstSection::Block { body, .. } = section {
         body.as_ref().unwrap()
     } else {
         panic!()
     };
     match &body.fields[0].value {
-        RawValue::Ident(name, _) => assert_eq!(name, "truest"),
+        CstValue::Ident(name, _) => assert_eq!(name, "truest"),
         other => panic!("expected ident truest, got {other:?}"),
     }
 }
@@ -42,13 +42,13 @@ fn true_with_suffix_is_ident() {
 #[test]
 fn false_with_suffix_is_ident() {
     let (hw, _) = parse_both("workspace local { base = falsehood }\n");
-    let body = if let RawSection::Block { body, .. } = &hw.sections[0] {
+    let body = if let CstSection::Block { body, .. } = &hw.sections[0] {
         body.as_ref().unwrap()
     } else {
         panic!()
     };
     match &body.fields[0].value {
-        RawValue::Ident(name, _) => assert_eq!(name, "falsehood"),
+        CstValue::Ident(name, _) => assert_eq!(name, "falsehood"),
         other => panic!("expected ident falsehood, got {other:?}"),
     }
 }
@@ -56,13 +56,13 @@ fn false_with_suffix_is_ident() {
 #[test]
 fn null_with_suffix_is_ident() {
     let (hw, _) = parse_both("workspace local { base = nullish }\n");
-    let body = if let RawSection::Block { body, .. } = &hw.sections[0] {
+    let body = if let CstSection::Block { body, .. } = &hw.sections[0] {
         body.as_ref().unwrap()
     } else {
         panic!()
     };
     match &body.fields[0].value {
-        RawValue::Ident(name, _) => assert_eq!(name, "nullish"),
+        CstValue::Ident(name, _) => assert_eq!(name, "nullish"),
         other => panic!("expected ident nullish, got {other:?}"),
     }
 }
@@ -70,13 +70,13 @@ fn null_with_suffix_is_ident() {
 #[test]
 fn exact_null_is_null() {
     let (hw, _) = parse_both("workspace local { base = null }\n");
-    let body = if let RawSection::Block { body, .. } = &hw.sections[0] {
+    let body = if let CstSection::Block { body, .. } = &hw.sections[0] {
         body.as_ref().unwrap()
     } else {
         panic!()
     };
     match &body.fields[0].value {
-        RawValue::Null(_) => {}
+        CstValue::Null(_) => {}
         other => panic!("expected null, got {other:?}"),
     }
 }
@@ -84,13 +84,13 @@ fn exact_null_is_null() {
 #[test]
 fn exact_true_is_bool() {
     let (hw, _) = parse_both("workspace local { preserve_mtime = true }\n");
-    let body = if let RawSection::Block { body, .. } = &hw.sections[0] {
+    let body = if let CstSection::Block { body, .. } = &hw.sections[0] {
         body.as_ref().unwrap()
     } else {
         panic!()
     };
     match &body.fields[0].value {
-        RawValue::Bool(true, _) => {}
+        CstValue::Bool(true, _) => {}
         other => panic!("expected bool true, got {other:?}"),
     }
 }

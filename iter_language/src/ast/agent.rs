@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 /// Agent backend declaration.
 ///
-/// Every named variant (all but [`AgentDecl::Generic`]) carries a required
+/// Every named variant (all but [`AgentDef::Generic`]) carries a required
 /// `command` field and an `args` pass-through list so authors can point the
 /// agent at a specific binary path and forward arbitrary flags to it without
 /// iter having to model each underlying CLI flag as a typed field. The iter
@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 /// the runner process environment; undeclared `ITER_*` variables are
 /// ignored.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgentDecl {
+pub enum AgentDef {
     /// Anthropic Claude Code agent.
     Claude {
         /// Invocation mode for the underlying CLI. Required.
@@ -187,7 +187,7 @@ pub enum AgentDecl {
     /// Multi-agent router that dispatches to sub-agents based on strategy.
     Router {
         /// Named sub-agent declarations in priority/rotation order.
-        agents: Vec<(String, Box<AgentDecl>)>,
+        agents: Vec<(String, Box<AgentDef>)>,
         /// How the router selects an agent each iteration.
         strategy: RouterStrategy,
     },

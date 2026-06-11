@@ -1,5 +1,5 @@
 //! Arg resolution: merge Iterfile `arg` defaults with CLI/compose overrides,
-//! then render `{{arg.*}}` in every string field of the parsed [`Root`].
+//! then render `{{arg.*}}` in every string field of the parsed [`Iterfile`].
 //!
 //! Substitution is a targeted textual expansion: only `{{arg.<name>}}`
 //! references are replaced. Other template references (`{{signal.*}}`,
@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use iter_language::Root;
+use iter_language::Iterfile;
 use thiserror::Error;
 
 /// Errors from arg resolution.
@@ -46,7 +46,10 @@ pub enum ArgError {
 /// and no override, [`ArgError::UnknownOverride`] when an override names an
 /// arg not declared in the Iterfile, or [`ArgError::UnknownReference`] when a
 /// `{{arg.<name>}}` reference names an undeclared arg.
-pub fn resolve_args(root: &mut Root, overrides: &BTreeMap<String, String>) -> Result<(), ArgError> {
+pub fn resolve_args(
+    root: &mut Iterfile,
+    overrides: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
     let declared: BTreeMap<&str, Option<&str>> = root
         .args
         .iter()
@@ -132,7 +135,7 @@ fn arg_name_end(s: &str) -> Option<usize> {
     None
 }
 
-fn render_root(root: &mut Root, values: &BTreeMap<String, String>) -> Result<(), ArgError> {
+fn render_root(root: &mut Iterfile, values: &BTreeMap<String, String>) -> Result<(), ArgError> {
     for ws in &mut root.workspaces {
         render_workspace(&mut ws.node.decl, values)?;
     }
@@ -181,14 +184,14 @@ fn render_prompt_value(
 }
 
 fn render_workspace(
-    ws: &mut iter_language::WorkspaceDecl,
+    ws: &mut iter_language::WorkspaceDef,
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     match ws {
-        iter_language::WorkspaceDecl::Local { base } => {
+        iter_language::WorkspaceDef::Local { base } => {
             render_str(base, values)?;
         }
-        iter_language::WorkspaceDecl::Clone {
+        iter_language::WorkspaceDef::Clone {
             base,
             remote,
             excludes,
@@ -206,7 +209,7 @@ fn render_workspace(
                 render_str(s, values)?;
             }
         }
-        iter_language::WorkspaceDecl::Sandbox {
+        iter_language::WorkspaceDef::Sandbox {
             base,
             excludes,
             includes,
@@ -225,38 +228,38 @@ fn render_workspace(
 }
 
 fn render_agent(
-    agent: &mut iter_language::AgentDecl,
+    agent: &mut iter_language::AgentDef,
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     match agent {
-        iter_language::AgentDecl::Claude {
+        iter_language::AgentDef::Claude {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Codex {
+        | iter_language::AgentDef::Codex {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Gemini {
+        | iter_language::AgentDef::Gemini {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Hermes {
+        | iter_language::AgentDef::Hermes {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Antigravity {
+        | iter_language::AgentDef::Antigravity {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Copilot {
+        | iter_language::AgentDef::Copilot {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Cursor {
+        | iter_language::AgentDef::Cursor {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Cline {
+        | iter_language::AgentDef::Cline {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::OpenCode {
+        | iter_language::AgentDef::OpenCode {
             command, args, env, ..
         }
-        | iter_language::AgentDecl::Grok {
+        | iter_language::AgentDef::Grok {
             command, args, env, ..
         } => {
             render_str(command, values)?;
@@ -267,7 +270,7 @@ fn render_agent(
                 render_str(v, values)?;
             }
         }
-        iter_language::AgentDecl::Generic { command, env } => {
+        iter_language::AgentDef::Generic { command, env } => {
             for c in command.iter_mut() {
                 render_str(c, values)?;
             }
@@ -275,8 +278,8 @@ fn render_agent(
                 render_str(v, values)?;
             }
         }
-        iter_language::AgentDecl::Noop => {}
-        iter_language::AgentDecl::Fake {
+        iter_language::AgentDef::Noop => {}
+        iter_language::AgentDef::Fake {
             stdout,
             stderr,
             files,
@@ -298,7 +301,7 @@ fn render_agent(
                 .collect::<Result<_, ArgError>>()?;
             *files = rendered_files;
         }
-        iter_language::AgentDecl::Router { agents, .. } => {
+        iter_language::AgentDef::Router { agents, .. } => {
             for (_name, sub_decl) in agents.iter_mut() {
                 render_agent(sub_decl, values)?;
             }
@@ -308,19 +311,19 @@ fn render_agent(
 }
 
 fn render_queue(
-    queue: &mut iter_language::QueueDecl,
+    queue: &mut iter_language::QueueDef,
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     match queue {
-        iter_language::QueueDecl::Memory => {}
-        iter_language::QueueDecl::File { path } => {
+        iter_language::QueueDef::Memory => {}
+        iter_language::QueueDef::File { path } => {
             render_str(path, values)?;
         }
-        iter_language::QueueDecl::Redis { url, key } => {
+        iter_language::QueueDef::Redis { url, key } => {
             render_str(url, values)?;
             render_str(key, values)?;
         }
-        iter_language::QueueDecl::Shell {
+        iter_language::QueueDef::Shell {
             enqueue,
             dequeue,
             close,
@@ -336,11 +339,11 @@ fn render_queue(
                 render_str(i, values)?;
             }
         }
-        iter_language::QueueDecl::Sqs(cfg) => render_sqs(cfg, values)?,
-        iter_language::QueueDecl::PubSub(cfg) => render_pubsub(cfg, values)?,
-        iter_language::QueueDecl::Kafka(cfg) => render_kafka(cfg, values)?,
-        iter_language::QueueDecl::Kinesis(cfg) => render_kinesis(cfg, values)?,
-        iter_language::QueueDecl::ServiceBus(cfg) => render_servicebus(cfg, values)?,
+        iter_language::QueueDef::Sqs(cfg) => render_sqs(cfg, values)?,
+        iter_language::QueueDef::PubSub(cfg) => render_pubsub(cfg, values)?,
+        iter_language::QueueDef::Kafka(cfg) => render_kafka(cfg, values)?,
+        iter_language::QueueDef::Kinesis(cfg) => render_kinesis(cfg, values)?,
+        iter_language::QueueDef::ServiceBus(cfg) => render_servicebus(cfg, values)?,
     }
     Ok(())
 }
@@ -417,7 +420,7 @@ fn render_opt(opt: &mut Option<String>, values: &BTreeMap<String, String>) -> Re
 }
 
 fn render_event(
-    event: &mut iter_language::EventHandlerDecl,
+    event: &mut iter_language::EventHandlerDef,
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     for action in &mut event.actions {
@@ -452,7 +455,7 @@ runner {
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
         match &root.workspaces.first().unwrap().node.decl {
-            iter_language::WorkspaceDecl::Local { base } => {
+            iter_language::WorkspaceDef::Local { base } => {
                 assert_eq!(base, "/path/to/default-name");
             }
             other => panic!("unexpected workspace: {other:?}"),
@@ -478,7 +481,7 @@ runner {
         overrides.insert("worktree_name".to_owned(), "override-name".to_owned());
         resolve_args(&mut root, &overrides).expect("resolve");
         match &root.workspaces.first().unwrap().node.decl {
-            iter_language::WorkspaceDecl::Local { base } => {
+            iter_language::WorkspaceDef::Local { base } => {
                 assert_eq!(base, "/path/to/override-name");
             }
             other => panic!("unexpected workspace: {other:?}"),
@@ -595,7 +598,7 @@ runner {
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
         let env = match &root.agents.first().unwrap().node.decl {
-            iter_language::AgentDecl::Claude { env, .. } => env,
+            iter_language::AgentDef::Claude { env, .. } => env,
             other => panic!("unexpected agent: {other:?}"),
         };
         assert_eq!(env.get("WORKTREE_NAME"), Some(&"exp-1".to_string()));
@@ -637,7 +640,7 @@ runner {
         overrides.insert("worktree_name".to_owned(), "supplied-name".to_owned());
         resolve_args(&mut root, &overrides).expect("resolve");
         match &root.workspaces.first().unwrap().node.decl {
-            iter_language::WorkspaceDecl::Local { base } => {
+            iter_language::WorkspaceDef::Local { base } => {
                 assert_eq!(base, "/path/to/supplied-name");
             }
             other => panic!("unexpected workspace: {other:?}"),
@@ -745,9 +748,12 @@ runner {
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
         match &root.agents.first().unwrap().node.decl {
-            iter_language::AgentDecl::Fake { stdout, files, .. } => {
+            iter_language::AgentDef::Fake { stdout, files, .. } => {
                 assert_eq!(stdout, &["result"]);
-                assert_eq!(files.get("output/result.txt"), Some(&"content for result".to_string()));
+                assert_eq!(
+                    files.get("output/result.txt"),
+                    Some(&"content for result".to_string())
+                );
                 assert!(!files.contains_key("output/{{arg.name}}.txt"));
             }
             other => panic!("unexpected agent: {other:?}"),

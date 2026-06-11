@@ -2,10 +2,10 @@
 source: iter_language/tests/conformance.rs
 description: arg-default.iter
 ---
-Root {
+Iterfile {
     args: [
         Spanned {
-            node: ArgDecl {
+            node: ArgDef {
                 name: "model",
                 default: Some(
                     "gpt-4o",
@@ -52,7 +52,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "claude",
                 workspace: "local",

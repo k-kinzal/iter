@@ -2,7 +2,7 @@
 source: iter_language/tests/conformance.rs
 description: named-definitions.iter
 ---
-Root {
+Iterfile {
     args: [],
     queues: [
         Spanned {
@@ -25,7 +25,7 @@ Root {
                     excludes: [],
                     includes: [],
                     preserve_mtime: false,
-                    apply_back: ApplyBackDecl {
+                    apply_back: ApplyBackDef {
                         mode: Discard,
                         excludes: [],
                         includes: [],
@@ -53,7 +53,7 @@ Root {
     prompts: [],
     runners: [
         Spanned {
-            node: RunnerDecl {
+            node: RunnerDef {
                 name: None,
                 agent: "primary",
                 workspace: "dev",

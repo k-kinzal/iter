@@ -1630,10 +1630,7 @@ fn record_service_name(record: &serde_json::Value) -> &str {
 
 /// Build a compose.iter with two services sharing distinct Iterfiles.
 /// Returns `(project_dir, service_a_name, service_b_name)`.
-fn write_two_service_compose_project(
-    home_dir: &Path,
-    name: &str,
-) -> (PathBuf, String, String) {
+fn write_two_service_compose_project(home_dir: &Path, name: &str) -> (PathBuf, String, String) {
     let project_dir = home_dir.join(name);
     std::fs::create_dir_all(&project_dir).expect("create project dir");
     let svc_a = format!("{name}_a").replace('-', "_");
@@ -1659,10 +1656,7 @@ service {svc_b} {{
 
 /// Build a compose.iter with a shell queue (non-addressable) for a
 /// single service. Used to verify targeted up fails with a diagnostic.
-fn write_non_addressable_compose_project(
-    home_dir: &Path,
-    name: &str,
-) -> (PathBuf, String) {
+fn write_non_addressable_compose_project(home_dir: &Path, name: &str) -> (PathBuf, String) {
     let project_dir = home_dir.join(name);
     std::fs::create_dir_all(&project_dir).expect("create project dir");
     let service = format!("{name}_svc").replace('-', "_");
@@ -1691,10 +1685,14 @@ fn compose_down_targeted_stops_only_named_service() {
     let home = TempDir::new().expect("home tempdir");
     let (project_dir, svc_a, svc_b) =
         write_two_service_compose_project(home.path(), "demo-tgt-down");
-    let (_guard, records) =
-        compose_up_and_wait_n(home.path(), &project_dir, "demo-tgt-down", 2);
+    let (_guard, records) = compose_up_and_wait_n(home.path(), &project_dir, "demo-tgt-down", 2);
 
-    assert_eq!(records.len(), 2, "expected 2 runners; got {}", records.len());
+    assert_eq!(
+        records.len(),
+        2,
+        "expected 2 runners; got {}",
+        records.len()
+    );
 
     let out = Command::new(iter_bin())
         .current_dir(&project_dir)
@@ -1731,10 +1729,8 @@ fn compose_down_targeted_stops_only_named_service() {
 #[test]
 fn compose_up_targeted_starts_only_named_service() {
     let home = TempDir::new().expect("home tempdir");
-    let (project_dir, svc_a, svc_b) =
-        write_two_service_compose_project(home.path(), "demo-tgt-up");
-    let (_guard, _records) =
-        compose_up_and_wait_n(home.path(), &project_dir, "demo-tgt-up", 2);
+    let (project_dir, svc_a, svc_b) = write_two_service_compose_project(home.path(), "demo-tgt-up");
+    let (_guard, _records) = compose_up_and_wait_n(home.path(), &project_dir, "demo-tgt-up", 2);
 
     // Stop svc_a
     let out = Command::new(iter_bin())
@@ -1802,10 +1798,14 @@ fn compose_down_source_resolves_by_iterfile_path() {
     let home = TempDir::new().expect("home tempdir");
     let (project_dir, svc_a, svc_b) =
         write_two_service_compose_project(home.path(), "demo-src-down");
-    let (_guard, records) =
-        compose_up_and_wait_n(home.path(), &project_dir, "demo-src-down", 2);
+    let (_guard, records) = compose_up_and_wait_n(home.path(), &project_dir, "demo-src-down", 2);
 
-    assert_eq!(records.len(), 2, "expected 2 runners; got {}", records.len());
+    assert_eq!(
+        records.len(),
+        2,
+        "expected 2 runners; got {}",
+        records.len()
+    );
 
     let out = Command::new(iter_bin())
         .current_dir(&project_dir)
@@ -1847,8 +1847,7 @@ fn compose_down_source_resolves_by_iterfile_path() {
 #[test]
 fn compose_up_targeted_non_addressable_queue_fails() {
     let home = TempDir::new().expect("home tempdir");
-    let (project_dir, service) =
-        write_non_addressable_compose_project(home.path(), "demo-noaddr");
+    let (project_dir, service) = write_non_addressable_compose_project(home.path(), "demo-noaddr");
 
     let out = Command::new(iter_bin())
         .current_dir(&project_dir)

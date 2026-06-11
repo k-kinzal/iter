@@ -76,7 +76,12 @@ impl Analyzer {
     /// are illegal for the position are errors; `{{arg.<name>}}` references
     /// are recorded for the later declared-name cross-check
     /// ([`Analyzer::finish_arg_refs`]).
-    pub(super) fn validate_template(&mut self, body: &str, span: &Span, position: TemplatePosition) {
+    pub(super) fn validate_template(
+        &mut self,
+        body: &str,
+        span: &Span,
+        position: TemplatePosition,
+    ) {
         let bytes = body.as_bytes();
         let mut i = 0;
         while i + 1 < bytes.len() {
@@ -140,7 +145,8 @@ impl Analyzer {
         if inner == "today" {
             if !position.allows_today() {
                 self.errors.push(
-                    Diagnostic::error(span, "`today` is not available here").with_hint(position.hint()),
+                    Diagnostic::error(span, "`today` is not available here")
+                        .with_hint(position.hint()),
                 );
             }
             return;
@@ -165,8 +171,11 @@ impl Analyzer {
         }
         if tail.is_empty() {
             self.errors.push(
-                Diagnostic::error(span, format!("`{head}` requires a field, e.g. `{head}.<field>`"))
-                    .with_hint(position.hint()),
+                Diagnostic::error(
+                    span,
+                    format!("`{head}` requires a field, e.g. `{head}.<field>`"),
+                )
+                .with_hint(position.hint()),
             );
             return;
         }
@@ -218,20 +227,32 @@ mod tests {
 
     #[test]
     fn webhook_subscription_accepts_event() {
-        assert!(accepts("{{event.repository.full_name}}", TemplatePosition::WebhookSubscription));
+        assert!(accepts(
+            "{{event.repository.full_name}}",
+            TemplatePosition::WebhookSubscription
+        ));
         assert!(accepts("{{today}}", TemplatePosition::WebhookSubscription));
     }
 
     #[test]
     fn trigger_base_metadata_rejects_event() {
-        assert!(!accepts("{{event.action}}", TemplatePosition::TriggerBaseMetadata));
+        assert!(!accepts(
+            "{{event.action}}",
+            TemplatePosition::TriggerBaseMetadata
+        ));
         assert!(accepts("{{today}}", TemplatePosition::TriggerBaseMetadata));
     }
 
     #[test]
     fn dead_letter_accepts_error_only() {
-        assert!(accepts("{{error.kind}}", TemplatePosition::DeadLetterReason));
-        assert!(!accepts("{{signal.id}}", TemplatePosition::DeadLetterReason));
+        assert!(accepts(
+            "{{error.kind}}",
+            TemplatePosition::DeadLetterReason
+        ));
+        assert!(!accepts(
+            "{{signal.id}}",
+            TemplatePosition::DeadLetterReason
+        ));
         assert!(!accepts("{{today}}", TemplatePosition::DeadLetterReason));
         assert!(!accepts("{{error}}", TemplatePosition::DeadLetterReason));
     }

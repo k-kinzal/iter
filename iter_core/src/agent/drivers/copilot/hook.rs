@@ -281,12 +281,8 @@ mod tests {
         let bundle = HookBundle::install(tmp.path(), "default")
             .await
             .expect("install");
-        assert!(
-            tmp.path().join(".github/hooks/copilot-loop.json").exists()
-        );
+        assert!(tmp.path().join(".github/hooks/copilot-loop.json").exists());
         bundle.finalize().await.expect("finalize");
-        assert!(
-            !tmp.path().join(".github/hooks/copilot-loop.json").exists()
-        );
+        assert!(!tmp.path().join(".github/hooks/copilot-loop.json").exists());
     }
 }

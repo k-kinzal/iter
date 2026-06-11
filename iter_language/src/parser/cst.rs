@@ -1,22 +1,22 @@
 //! Concrete Syntax Tree (CST) types produced by the parser.
 //!
 //! The CST is intentionally generic: each top-level section is captured as a
-//! [`RawSection`] tuple so that domain dispatch is a semantic concern, not a
+//! [`CstSection`] tuple so that domain dispatch is a semantic concern, not a
 //! grammar one. The types in this module are part of the public grammar
 //! contract alongside [`crate::GRAMMAR_VERSION`].
 
 use crate::ast::Span;
 
-/// Root of the concrete syntax tree produced by the parser.
+/// Top-level node of the concrete syntax tree produced by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawFile {
+pub struct CstFile {
     /// Top-level sections in source order.
-    pub sections: Vec<RawSection>,
+    pub sections: Vec<CstSection>,
 }
 
 /// A top-level section of a source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RawSection {
+pub enum CstSection {
     /// `queue <kind> [as <alias>] [{ ... }]`, `workspace <kind> [as <alias>] { ... }`, etc.
     ///
     /// The Iterfile grammar uses `<keyword> [<kind>] [as <alias>] { ... }`.
@@ -31,15 +31,15 @@ pub enum RawSection {
         keyword_span: Span,
         /// First identifier following the keyword. Iterfile semantics treat
         /// this as the kind; compose.iter treats it as the section name.
-        kind: Option<RawIdent>,
+        kind: Option<CstIdent>,
         /// Optional second identifier. compose.iter uses this to carry the
         /// kind (`queue main file { ... }`); Iterfile semantic rejects it.
-        kind2: Option<RawIdent>,
+        kind2: Option<CstIdent>,
         /// Optional `as <name>` alias. Iterfile uses this to name a
         /// definition: `agent claude as primary { ... }`.
-        alias: Option<RawIdent>,
+        alias: Option<CstIdent>,
         /// Optional brace-delimited body.
-        body: Option<RawBlock>,
+        body: Option<CstBlock>,
         /// Full span of the section.
         span: Span,
     },
@@ -48,9 +48,9 @@ pub enum RawSection {
         /// Source span of the `prompt` keyword.
         keyword_span: Span,
         /// Optional `as <name>` for named prompt definitions.
-        name: Option<RawIdent>,
+        name: Option<CstIdent>,
         /// Optional `when` guard (old syntax).
-        guard: Option<RawGuard>,
+        guard: Option<CstGuard>,
         /// Literal body of the prompt (triple-string contents are dedented).
         body: String,
         /// Source span of the body literal.
@@ -63,9 +63,9 @@ pub enum RawSection {
         /// Source span of the `on` keyword.
         keyword_span: Span,
         /// Event name identifier.
-        event: RawIdent,
+        event: CstIdent,
         /// Body block.
-        body: RawBlock,
+        body: CstBlock,
         /// Full span of the section.
         span: Span,
     },
@@ -73,7 +73,7 @@ pub enum RawSection {
 
 /// An identifier captured during parsing, with its span.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawIdent {
+pub struct CstIdent {
     /// Identifier text as it appeared in source.
     pub name: String,
     /// Source span.
@@ -82,36 +82,36 @@ pub struct RawIdent {
 
 /// A `{ ... }` body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawBlock {
+pub struct CstBlock {
     /// Field assignments such as `port = 8080`.
-    pub fields: Vec<RawField>,
+    pub fields: Vec<CstField>,
     /// Nested `on "..." { ... }` routes (used by webhook trigger).
-    pub routes: Vec<RawRoute>,
+    pub routes: Vec<CstRoute>,
     /// Nested `shell "<cmd>"` actions (used by top-level event handlers).
-    pub actions: Vec<RawAction>,
+    pub actions: Vec<CstAction>,
     /// Prompt match arms: `<guard> => <value>` entries (used inside runner
     /// prompt match blocks).
-    pub prompt_arms: Vec<RawPromptMatchArm>,
+    pub prompt_arms: Vec<CstPromptMatchArm>,
     /// Nested `on <ident> { ... }` event handlers (used inside runner blocks).
-    pub event_handlers: Vec<RawEventHandler>,
+    pub event_handlers: Vec<CstEventHandler>,
     /// Full span of the block including braces.
     pub span: Span,
 }
 
 /// A `name = value` (or `name { ... }`) entry inside a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawField {
+pub struct CstField {
     /// Field name identifier.
-    pub name: RawIdent,
+    pub name: CstIdent,
     /// Field value.
-    pub value: RawValue,
+    pub value: CstValue,
     /// Span covering the whole field.
     pub span: Span,
 }
 
 /// A literal or composite value on the right-hand side of a field.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RawValue {
+pub enum CstValue {
     /// String literal.
     String(String, Span),
     /// Integer literal.
@@ -126,34 +126,34 @@ pub enum RawValue {
     /// Bareword identifier value.
     Ident(String, Span),
     /// Heterogeneous list of values.
-    List(Vec<RawValue>, Span),
+    List(Vec<CstValue>, Span),
     /// Nested block.
-    Block(RawBlock),
+    Block(CstBlock),
     /// Function-call form, e.g. `env("VAR")`.
     Call {
         /// Callee name.
         name: String,
         /// Argument list in source order.
-        args: Vec<RawValue>,
+        args: Vec<CstValue>,
         /// Span covering the whole call expression.
         span: Span,
     },
 }
 
-impl RawValue {
+impl CstValue {
     /// Return the source span associated with this value.
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
-            RawValue::String(_, s)
-            | RawValue::Integer(_, s)
-            | RawValue::Duration(_, s)
-            | RawValue::Bool(_, s)
-            | RawValue::Null(s)
-            | RawValue::Ident(_, s)
-            | RawValue::List(_, s) => s.clone(),
-            RawValue::Block(b) => b.span.clone(),
-            RawValue::Call { span, .. } => span.clone(),
+            CstValue::String(_, s)
+            | CstValue::Integer(_, s)
+            | CstValue::Duration(_, s)
+            | CstValue::Bool(_, s)
+            | CstValue::Null(s)
+            | CstValue::Ident(_, s)
+            | CstValue::List(_, s) => s.clone(),
+            CstValue::Block(b) => b.span.clone(),
+            CstValue::Call { span, .. } => span.clone(),
         }
     }
 }
@@ -161,11 +161,11 @@ impl RawValue {
 /// A nested `on <ident> { <actions> }` event handler inside a block
 /// (e.g. runner body).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawEventHandler {
+pub struct CstEventHandler {
     /// Event name identifier.
-    pub event: RawIdent,
+    pub event: CstIdent,
     /// Body block containing actions.
-    pub body: RawBlock,
+    pub body: CstBlock,
     /// Full span of the event handler.
     pub span: Span,
 }
@@ -173,18 +173,18 @@ pub struct RawEventHandler {
 /// A `<guard> => <value>` arm inside a prompt match block. The default
 /// arm uses `_` as the guard.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawPromptMatchArm {
+pub struct CstPromptMatchArm {
     /// Guard expression (or `None` for the `_` wildcard default arm).
-    pub guard: Option<RawGuard>,
+    pub guard: Option<CstGuard>,
     /// Value — either a string literal or a bareword identifier reference.
-    pub value: RawValue,
+    pub value: CstValue,
     /// Full span of the arm.
     pub span: Span,
 }
 
 /// A nested `on "<pattern>" [when "<expr>"] { ... }` webhook route.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawRoute {
+pub struct CstRoute {
     /// Event-pattern string literal.
     pub event_pattern: String,
     /// Optional raw `when` guard string.
@@ -193,14 +193,14 @@ pub struct RawRoute {
     /// can point diagnostics at the guard rather than the whole route.
     pub when_span: Option<Span>,
     /// Body block.
-    pub body: RawBlock,
+    pub body: CstBlock,
     /// Full span of the route.
     pub span: Span,
 }
 
 /// A `shell "<command>"` action.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RawAction {
+pub struct CstAction {
     /// Source span of the `shell` keyword.
     pub keyword_span: Span,
     /// The literal command string.
@@ -211,7 +211,7 @@ pub struct RawAction {
 
 /// Boolean guard expression as captured by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RawGuard {
+pub enum CstGuard {
     /// `metadata.<key> == "<value>"`.
     MetadataEq {
         /// Metadata key being compared.
@@ -246,7 +246,7 @@ pub enum RawGuard {
         /// Span of the modulus literal when present.
         modulus_span: Option<Span>,
         /// Comparison operator as captured by the parser.
-        op: RawCmpOp,
+        op: CstCmpOp,
         /// Span of the comparison operator.
         op_span: Span,
         /// Right-hand-side integer literal.
@@ -292,14 +292,14 @@ pub enum RawGuard {
         span: Span,
     },
     /// Logical conjunction.
-    And(Box<RawGuard>, Box<RawGuard>, Span),
+    And(Box<CstGuard>, Box<CstGuard>, Span),
     /// Logical disjunction.
-    Or(Box<RawGuard>, Box<RawGuard>, Span),
+    Or(Box<CstGuard>, Box<CstGuard>, Span),
 }
 
 /// Comparison operator captured for `iteration.*` numeric predicates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RawCmpOp {
+pub enum CstCmpOp {
     /// `==`
     Eq,
     /// `!=`
@@ -314,18 +314,18 @@ pub enum RawCmpOp {
     Ge,
 }
 
-impl RawGuard {
+impl CstGuard {
     /// Return the source span associated with this guard.
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
-            RawGuard::MetadataEq { span, .. }
-            | RawGuard::MetadataNeq { span, .. }
-            | RawGuard::IterationCmp { span, .. }
-            | RawGuard::IterationResultEq { span, .. }
-            | RawGuard::IterationResultNeq { span, .. }
-            | RawGuard::And(_, _, span)
-            | RawGuard::Or(_, _, span) => span.clone(),
+            CstGuard::MetadataEq { span, .. }
+            | CstGuard::MetadataNeq { span, .. }
+            | CstGuard::IterationCmp { span, .. }
+            | CstGuard::IterationResultEq { span, .. }
+            | CstGuard::IterationResultNeq { span, .. }
+            | CstGuard::And(_, _, span)
+            | CstGuard::Or(_, _, span) => span.clone(),
         }
     }
 }

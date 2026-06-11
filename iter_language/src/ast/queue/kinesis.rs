@@ -1,7 +1,7 @@
 //! AWS Kinesis Data Streams `queue kinesis { ... }` AST types.
 
 use super::sqs::{SqsCredentials, SqsHttpClient};
-use super::{DlqPolicyDecl, RetryPolicyDecl, TemplatedString};
+use super::{DlqPolicyDef, MetadataSource, RetryPolicyDef};
 
 /// Top-level `queue kinesis { ... }` configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -23,9 +23,9 @@ pub struct KinesisConfig {
     /// Checkpoint store configuration. Required for stable consumption.
     pub checkpoint: Option<KinesisCheckpoint>,
     /// SDK retry policy.
-    pub retry: Option<RetryPolicyDecl>,
+    pub retry: Option<RetryPolicyDef>,
     /// Iter-implemented DLQ (Kinesis has no native DLQ).
-    pub dlq: Option<DlqPolicyDecl>,
+    pub dlq: Option<DlqPolicyDef>,
 }
 
 /// Stream identity (ARN preferred over plain name).
@@ -44,7 +44,7 @@ pub enum KinesisIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct KinesisProducer {
     /// `explicit`, `random` (default), or `from_metadata("k")`.
-    pub partition_key_strategy: Option<TemplatedString>,
+    pub partition_key_strategy: Option<MetadataSource>,
     /// Per-message explicit hash key escape hatch.
     pub explicit_hash_key: Option<String>,
     /// `none` (default) or `strict_per_key` — auto-chains

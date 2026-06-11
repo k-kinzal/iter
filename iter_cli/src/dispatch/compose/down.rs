@@ -382,12 +382,10 @@ async fn escalate_to_sigkill(
                 Ok(_) => Ok(KillResult::Delivered),
                 Err(ProcessError::IllegalTransition {
                     observed: Some(o), ..
-                }) if o.is_terminal() => {
-                    handle
-                        .force_kill()
-                        .map(KillResult::from_force_kill)
-                        .map_err(Into::into)
-                }
+                }) if o.is_terminal() => handle
+                    .force_kill()
+                    .map(KillResult::from_force_kill)
+                    .map_err(Into::into),
                 Err(err) => Err(err.into()),
             }
         };
