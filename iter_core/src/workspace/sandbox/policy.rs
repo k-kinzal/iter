@@ -6,7 +6,7 @@
 //! declarations meet:
 //!
 //! 1. **[`SandboxPolicy`] — the project's upper bound.** The policy comes
-//!    from the Iterfile (via the `workspace sandbox { policy { ... } }`
+//!    from the declaration (via the `workspace sandbox { policy { ... } }`
 //!    block) and describes *what the project is willing to let the agent
 //!    reach*. A policy with [`NetworkAccess::Off`] disables network
 //!    regardless of what the agent asks for.
@@ -15,7 +15,7 @@
 //!    lower bound.** Each supported agent declares, via
 //!    [`Agent::sandbox_requirements`](crate::Agent::sandbox_requirements),
 //!    the set of paths, hosts, and env vars its process needs to function
-//!    at all. iter ships this knowledge so Iterfile authors never have to
+//!    at all. iter ships this knowledge so declaration authors never have to
 //!    enumerate it themselves.
 //!
 //! The workspace merges both at setup. The merge is *intersection* on the

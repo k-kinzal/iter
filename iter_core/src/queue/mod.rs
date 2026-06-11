@@ -19,8 +19,8 @@
 //! The [`Queue`] trait is dyn-compatible: the runtime queue is always
 //! `Arc<dyn Queue>` — whichever backend the definition chose, usable as a
 //! Queue. The *closed* set of declarable backends lives at the definition
-//! layer (the grammar, in `iter_language`), not here; at run time the boundary
-//! is open behavior.
+//! layer (the grammar layer), not here; at run time the boundary is open
+//! behavior.
 //!
 //! # Backends
 //!

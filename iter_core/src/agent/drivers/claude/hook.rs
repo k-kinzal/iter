@@ -118,7 +118,7 @@ impl HookBundle {
     /// mode `0o755`.
     ///
     /// `isolation_key` is the per-exploration hook isolation key (the
-    /// operator-supplied compose service name, or `"default"` for standalone
+    /// operator-supplied per-exploration value, or `"default"` for standalone
     /// `iter run`).
     pub(crate) async fn install(cwd: &Path, isolation_key: &str) -> Result<Self, AgentError> {
         let claude_dir = cwd.join(CLAUDE_DIR);

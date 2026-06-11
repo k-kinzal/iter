@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 /// An iteration is one act — receive a Signal, render the prompt, set up the
 /// Workspace, run the Agent, tear the Workspace down — and `ErrorSource`
 /// answers *which of those operations failed*. It is a failure diagnostic,
-/// **not** a stage taxonomy: iter is not a workflow engine, nothing travels
-/// through phases, and a successful iteration has no parts to enumerate. The
-/// value exists only on the failure path.
+/// **not** a model of the run as a sequence of phases: iter is not a workflow
+/// system, nothing travels through phases, and a successful iteration has no
+/// parts to enumerate. The value exists only on the failure path.
 ///
 /// # Wire format
 ///

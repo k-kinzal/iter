@@ -1,7 +1,7 @@
 //! Serializable context types used as input to [`Template::render`](super::Template::render).
 //!
-//! [`SignalContext`] is the shape [`PromptTemplate`](crate::PromptTemplate) and
-//! the compose-side shell event handler render against. It exposes
+//! [`SignalContext`] is the shape both [`PromptTemplate`](crate::PromptTemplate)
+//! and the shell action render against. It exposes
 //! `{{today}}`, `{{signal.id}}`, `{{signal.created_at}}`, and every
 //! `{{metadata.*}}` key attached to a [`Signal`].
 //!

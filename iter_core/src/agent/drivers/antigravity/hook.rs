@@ -1,4 +1,4 @@
-//! Hook plumbing for [`AntigravityAgent`](super::AntigravityAgent)'s
+//! Hook installation for [`AntigravityAgent`](super::AntigravityAgent)'s
 //! interactive mode.
 //!
 //! Antigravity CLI uses JSON-defined lifecycle hooks (Inspect/blocking/

@@ -155,7 +155,7 @@ pub struct RunnerSummary {
     ///
     /// Parallel to [`Self::event_handler_error_count`] but for the
     /// **system** observer stream (the one that the runtime fans into
-    /// `~/.iter/proc/<id>/log.ndjson` via `tracing`). Per rev17 §F3 the
+    /// the per-process NDJSON log sink via `tracing`). Per rev17 §F3 the
     /// runner emits observer-first, then user-emitter; both error counts
     /// are surfaced independently so a backed-up writer task is visible
     /// without drowning out user-handler failures.

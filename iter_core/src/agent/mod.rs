@@ -22,7 +22,7 @@
 //!   own config directory).
 //! * **Print-only** — [`CursorAgent`], [`ClineAgent`], [`OpenCodeAgent`],
 //!   [`GrokAgent`], and [`GenericAgent`]. These tools run to completion on
-//!   every invocation with no hook plumbing. [`GrokAgent`] additionally
+//!   every invocation with no hook installation. [`GrokAgent`] additionally
 //!   persists a session id (Grok Build's `-s/--session-id`) for
 //!   continuous-context explorations.
 //! * **Built-in** — [`NoopAgent`] and [`FakeAgent`]. These require

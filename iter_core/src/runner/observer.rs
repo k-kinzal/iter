@@ -4,7 +4,7 @@
 //! The Runner emits two parallel output streams:
 //!
 //! 1. The user-defined [`HookEvent`](super::HookEvent) stream, which feeds
-//!    iterfile `on …` hooks. Failure of a hook is the user's problem.
+//!    declared `on …` hooks. Failure of a hook is the user's problem.
 //! 2. The system [`RunnerLifecycleEvent`](super::RunnerLifecycleEvent) stream, which
 //!    feeds process-runtime observers.
 //!

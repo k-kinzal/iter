@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// There is no `Default` impl. Headless vs Interactive is a project-shaped
 /// decision: iter has no honest default because some workflows need the
-/// TUI's hook bundle and others must run headless in CI. The Iterfile
+/// TUI's hook bundle and others must run headless in CI. The declaration
 /// must spell the choice out.
 ///
 /// The grammar keyword for [`AgentMode::Headless`] stays `print` — it is a

@@ -10,8 +10,8 @@ use crate::{Agent, AgentInvocation};
 ///
 /// Returns an empty [`AgentRun`] without touching the workspace, writing to
 /// stdio, or sleeping. Useful for verifying workspace setup/teardown, event
-/// handler wiring, runner overhead benchmarks, and dry-running Iterfile
-/// configuration.
+/// handler registration, runner overhead benchmarks, and dry-running a
+/// declaration.
 #[derive(Debug, Clone)]
 pub struct NoopAgent;
 

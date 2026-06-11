@@ -258,10 +258,10 @@ where
 /// Build the tracing layer that exports `tracing` events to OpenTelemetry
 /// logs while preserving trace/span IDs from the active `OTel` span.
 ///
-/// The OTel-internal targets (the exporter, transport, and bridge crates) are
-/// filtered out here so their own diagnostics never recurse back into the log
-/// pipeline. This is the single home for that predicate; callers attach the
-/// layer as-is.
+/// The OTel-internal targets (the exporter, transport, and log-appender
+/// crates) are filtered out here so their own diagnostics never recurse
+/// back into the log pipeline. This is the single home for that predicate;
+/// callers attach the layer as-is.
 #[must_use]
 pub fn otel_log_layer<S>(provider: &SdkLoggerProvider) -> impl Layer<S> + Send + Sync + 'static
 where

@@ -1,4 +1,4 @@
-//! Stop-hook installation plumbing and workspace-scoped state directory
+//! Stop-hook installation and workspace-scoped state directory
 //! helpers for the per-agent hook modules.
 //!
 //! All four hook-based agents — [`ClaudeAgent`](crate::agent::ClaudeAgent),
@@ -67,7 +67,7 @@ impl WorkspaceIdentity {
 /// `workspace_path` is the agent's working directory (the value of
 /// `AgentInvocation::workspace_path`). `isolation_key` is the per-exploration
 /// [`AgentInvocation::hook_isolation_key`](super::AgentInvocation): the
-/// operator-supplied compose service name in compose mode, or `"default"` for
+/// operator-supplied per-exploration value, or `"default"` for
 /// standalone `iter run`.
 ///
 /// # Errors

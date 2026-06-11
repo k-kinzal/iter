@@ -745,7 +745,7 @@ mod tests {
         unsafe {
             std::env::set_var(
                 "OTEL_RESOURCE_ATTRIBUTES",
-                "service.namespace=iter,iter.compose.project=obsidianvault",
+                "service.namespace=iter,deployment.environment=staging",
             );
         }
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -768,8 +768,8 @@ mod tests {
         let attrs = command_or_process_resource_attrs(&command);
         assert_eq!(attrs.get("service.namespace"), Some(&"iter".to_string()));
         assert_eq!(
-            attrs.get("iter.compose.project"),
-            Some(&"obsidianvault".to_string())
+            attrs.get("deployment.environment"),
+            Some(&"staging".to_string())
         );
         assert_eq!(attrs.get("iter.signal.id"), Some(&signal_id.to_string()));
         assert_eq!(attrs.get("iter.signal.kind"), Some(&"work".to_string()));

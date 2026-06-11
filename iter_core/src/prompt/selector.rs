@@ -19,7 +19,7 @@ use super::template::PromptTemplate;
 /// default it returns [`SelectorError::NoMatchingPrompt`].
 ///
 /// The default is a fallback regardless of where it appeared in the
-/// source Iterfile: guarded branches are always tried first.
+/// source declaration: guarded branches are always tried first.
 #[derive(Debug, Clone)]
 pub struct PromptSelector {
     branches: Vec<(PromptGuard, PromptTemplate)>,
@@ -39,7 +39,7 @@ impl PromptSelector {
     }
 
     /// Build a selector containing a single unguarded template. This is
-    /// the trivial form used when an Iterfile only declares one
+    /// the trivial form used when a declaration only declares one
     /// `prompt` block.
     #[must_use]
     pub fn single(template: PromptTemplate) -> Self {

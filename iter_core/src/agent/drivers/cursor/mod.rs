@@ -1,6 +1,6 @@
 //! [`CursorAgent`] — Cursor `cursor-agent` CLI integration.
 //!
-//! Cursor's CLI is process-restart based: it has no hook plumbing and runs
+//! Cursor's CLI is process-restart based: it has no hook installation and runs
 //! to completion on each invocation. This agent is therefore **print-only**
 //! — there is no interactive/TUI mode distinction.
 //!

@@ -20,7 +20,7 @@
 //! # The two sides of the sandbox contract
 //!
 //! Every [`SandboxWorkspace`] is constructed with both a
-//! [`SandboxPolicy`] (from the Iterfile) and a
+//! [`SandboxPolicy`] (from the declaration) and a
 //! [`SandboxRequirements`](crate::SandboxRequirements) (from the agent's
 //! [`Agent::sandbox_requirements`](crate::Agent::sandbox_requirements)).
 //! The policy is the project's **upper bound** — "this is what I'm

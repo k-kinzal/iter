@@ -70,7 +70,7 @@ impl Default for DlqPolicy {
     }
 }
 
-/// Top-level discriminator for `dlq.kind = "..."` Iterfile fields.
+/// Top-level discriminator for `dlq.kind = "..."` declaration fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DlqKind {

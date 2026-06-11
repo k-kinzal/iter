@@ -94,9 +94,9 @@ pub struct SandboxRequirements {
 impl SandboxRequirements {
     /// Construct an empty requirements set — nothing passes through.
     ///
-    /// This is the default any agent inherits automatically; the compose
-    /// layer dispatches per concrete agent type and returns an overridden
-    /// instance for agents that need extra capabilities.
+    /// This is the default any agent inherits automatically; agents that
+    /// need extra capabilities override this by returning an agent-specific
+    /// instance.
     #[must_use]
     pub fn new() -> Self {
         Self::default()

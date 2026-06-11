@@ -5,7 +5,7 @@
 //!
 //! - [`HookEvent`](crate::runner::HookEvent): user-facing, rich, hook-oriented.
 //!   Consumed by [`EventAction`](crate::runner::EventAction)
-//!   implementations wired through iterfile `on …` hooks. Carries full
+//!   implementations registered through declared `on …` hooks. Carries full
 //!   [`Signal`](crate::signal::Signal) payloads, workspace paths, rendered
 //!   prompts, and agent reports.
 //!

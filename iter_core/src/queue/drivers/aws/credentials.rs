@@ -26,7 +26,7 @@ use aws_credential_types::{Credentials, provider::SharedCredentialsProvider};
 use thiserror::Error;
 
 /// Resolved (literal-string) form of the Iterfile `credentials { ... }`
-/// block. The compose layer is responsible for resolving every
+/// block. The operator (CLI) is responsible for resolving every
 /// `SecretExpr` into a plain `String` before constructing this enum;
 /// `iter_core` stays free of the `SecretExpr` type so it can be reused
 /// outside the CLI.

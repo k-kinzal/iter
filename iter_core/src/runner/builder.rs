@@ -110,7 +110,7 @@ impl RunnerBuilder {
 
     /// Supply the [`PromptSelector`] used to render prompts.
     ///
-    /// Prefer this method when an Iterfile has declared guarded prompts;
+    /// Prefer this method when the declaration includes guarded prompts;
     /// use [`RunnerBuilder::prompt_template`] as a shortcut when the
     /// caller only has a single unguarded template.
     pub fn prompt_selector(mut self, selector: PromptSelector) -> Self {
@@ -171,7 +171,7 @@ impl RunnerBuilder {
     /// Observers run **before** the user-defined [`EventDispatcher`] handlers
     /// at every runner step (rev17 §F3) so a user-installed
     /// `on workspace_teardown_finished { shell "..." }` cannot mask the system
-    /// contract that backs `~/.iter/proc/<id>/log.ndjson`. Failures are
+    /// observer contract that backs the per-process log sink. Failures are
     /// best-effort — they are tallied into
     /// [`RunnerSummary::observer_error_count`](crate::RunnerSummary::observer_error_count)
     /// and logged via `tracing` at `warn` level, but do not halt the loop.

@@ -28,7 +28,7 @@
 //!
 //! Grok's TUI mode and its ACP (`grok agent stdio`) integration are out of
 //! scope for this driver; the headless path covers iter's spawn-per-iteration
-//! model without the project-local Stop-hook machinery the TUI drivers need.
+//! model without the project-local Stop-hook installation the TUI drivers need.
 //!
 //! # Authentication
 //!

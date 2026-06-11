@@ -1,7 +1,7 @@
 //! [`MetadataSource`] — a send-time value that is either a fixed literal or
 //! read from a [`Signal`]'s metadata.
 //!
-//! This is the runtime twin of `iter_language::MetadataSource`: the language
+//! This is the runtime twin of the language's `MetadataSource`: the language
 //! *describes* the value (`"lit"` or `from_metadata("key")`), core *resolves*
 //! it against a signal at send time. It performs **no** templating — it either
 //! returns the literal or looks up exactly one metadata key.

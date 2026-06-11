@@ -5,7 +5,7 @@
 //! workspace to a stable conversation across iterations. This is the
 //! narrowest exploration mode: the workspace, git history, and prior agent
 //! context all bias the next iteration toward the same path. The user declares a
-//! path in their Iterfile; iter reads the existing uuid from that path on
+//! path in their declaration; iter reads the existing uuid from that path on
 //! every run, or generates a fresh v4 uuid and writes it back on the first
 //! run.
 //!
@@ -19,7 +19,7 @@ use crate::agent::AgentError;
 
 /// A path that stores an agent session-id uuid across iter iterations.
 /// Relative paths are resolved against the workspace the spawned agent
-/// child will see, so a user-visible `".iter/session-id"` in an Iterfile
+/// child will see, so a user-visible `".iter/session-id"` in a declaration
 /// always points at the same file regardless of where iter is launched
 /// from.
 #[derive(Debug, Clone)]

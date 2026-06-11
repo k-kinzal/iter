@@ -13,10 +13,10 @@ use crate::signal::metadata::MetadataValue;
 /// pick which [`PromptTemplate`](super::PromptTemplate) to render for a
 /// given [`Signal`].
 ///
-/// The shape mirrors `iter_language::PromptGuard` — the language crate's
-/// AST type — but is kept private to `iter_core` so the runtime does not
-/// depend on the language crate. The composition layer in `iter_cli`
-/// translates the AST into this form before handing it to the runner.
+/// The shape mirrors the language's `PromptGuard` AST type but is kept
+/// private to `iter_core` so the runtime does not depend on the language
+/// crate. The operator (`iter_cli`) translates the AST into this form
+/// before handing it to the runner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PromptGuard {
     /// `metadata.<key> == "<value>"`. Evaluates to `true` when the signal

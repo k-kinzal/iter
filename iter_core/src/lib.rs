@@ -10,8 +10,8 @@
 //!
 //! The [`EventAction`] sink trait lives alongside the runner that emits
 //! into it ([`runner`]). The [`process`] module provides OS-level
-//! process lifecycle, registry, and shutdown management used by the CLI
-//! and compose layers. [`process_group`] owns a spawned process tree by its
+//! process lifecycle, registry, and shutdown management used by the operator
+//! surface (the CLI). [`process_group`] owns a spawned process tree by its
 //! OS process-group id so a cancel can SIGTERM/SIGKILL the whole tree; it is
 //! a primitive, distinct from the run-record concepts under [`process`].
 //!

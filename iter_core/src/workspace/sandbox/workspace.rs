@@ -81,7 +81,7 @@ impl SandboxWorkspace {
     ///
     /// Every knob is supplied by the caller. `settings` controls the
     /// clone-layer behaviour (mirrors [`CloneSettings`]). `policy` is the
-    /// project's upper-bound rule set from the Iterfile. `requirements`
+    /// project's upper-bound rule set from the declaration. `requirements`
     /// is the agent's lower-bound declaration shipped by iter.
     #[must_use]
     pub fn new(

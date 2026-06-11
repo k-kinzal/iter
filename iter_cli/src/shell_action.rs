@@ -14,7 +14,7 @@
 //! # Template rendering
 //!
 //! The command string is compiled once into a [`Template`] and rendered
-//! per-event against an [`IterationRenderContext`] — the same machinery the
+//! per-event against an [`IterationRenderContext`] — the same render path the
 //! runner uses for prompts. Template variables include `{{signal.id}}`,
 //! `{{signal.created_at}}`, `{{today}}`, every `{{metadata.*}}` key attached
 //! to the signal, and the per-iteration `{{iteration.*}}` snapshot.

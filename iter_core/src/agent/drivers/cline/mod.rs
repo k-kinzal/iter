@@ -1,7 +1,7 @@
 //! [`ClineAgent`] — Cline CLI integration.
 //!
 //! Cline is process-restart based: each invocation runs the agent to
-//! completion with no hook plumbing. This driver is print-only — it drives
+//! completion with no hook installation. This driver is print-only — it drives
 //! the CLI's `--oneshot` mode and reads the machine-readable `--json` stream.
 //!
 //! # Three-layer split

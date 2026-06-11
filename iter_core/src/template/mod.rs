@@ -2,7 +2,7 @@
 //! event handlers, and webhook metadata rendering.
 //!
 //! A [`Template`] is compiled once and rendered many times. The underlying
-//! engine is [`handlebars`] in strict mode with HTML escaping disabled, so a
+//! renderer is [`handlebars`] in strict mode with HTML escaping disabled, so a
 //! reference to a variable absent from the render context surfaces a
 //! [`TemplateError::UnknownVariable`] rather than rendering empty — the
 //! run-time backstop behind the analysis-time position checks. Rendered text

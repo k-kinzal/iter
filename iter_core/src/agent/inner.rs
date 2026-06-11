@@ -64,7 +64,7 @@ pub struct AgentInvocation<'a> {
     /// Per-exploration hook isolation key. Distinguishes one Runner's
     /// stop-hook installation from another's when both explore the same
     /// workspace path. `"default"` for standalone `iter run`; the operator
-    /// supplies the compose service name so that two services sharing a
+    /// supplies a per-exploration value so that two explorations sharing a
     /// workspace path get separate hook-installation directories.
     pub hook_isolation_key: String,
     /// Argv prefix the agent's child command must be launched under for the
@@ -141,7 +141,7 @@ impl<'a> AgentInvocation<'a> {
     }
 
     /// Set the per-exploration hook isolation key (the operator supplies the
-    /// compose service name; `"default"` for standalone `iter run`).
+    /// value; `"default"` for standalone `iter run`).
     #[must_use]
     pub fn with_hook_isolation_key(mut self, key: String) -> Self {
         self.hook_isolation_key = key;

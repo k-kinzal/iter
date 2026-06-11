@@ -216,7 +216,7 @@ fn render_process_exec(buf: &mut String, allow_exec: &[PathBuf]) {
 ///
 /// Content reads are restricted to: platform system paths, the
 /// workspace tmpdir, resolved `$TMPDIR`, agent-declared reads, and
-/// Iterfile `allow_read_outside`.
+/// the declaration's `allow_read_outside`.
 fn render_read_data(buf: &mut String, descriptor: &SandboxDescriptor<'_>) {
     let mut paths: Vec<PathBuf> = Vec::new();
 
@@ -240,12 +240,12 @@ fn render_read_data(buf: &mut String, descriptor: &SandboxDescriptor<'_>) {
         paths.push(canonical_or_self(p));
     }
 
-    // Iterfile `allow_read_outside`.
+    // The declaration's `allow_read_outside`.
     for p in &descriptor.policy.allow_read_outside {
         paths.push(canonical_or_self(p));
     }
 
-    // Iterfile `allow_exec` — the kernel must read a binary image to
+    // The declaration's `allow_exec` — the kernel must read a binary image to
     // exec it, so every allowed executable needs file-read-data too.
     // These are files, not directories, so they are emitted as
     // `(literal ...)` rather than `(subpath ...)`.
@@ -368,7 +368,7 @@ mod tests {
 
     /// Default-deny test policy: every field empty, network off. Tests
     /// construct this explicitly because the production code has no
-    /// `deny_all_policy()` — the Iterfile is the single source
+    /// `deny_all_policy()` — the declaration is the single source
     /// of truth for project-shaped sandbox settings.
     fn deny_all_policy() -> SandboxPolicy {
         SandboxPolicy {

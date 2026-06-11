@@ -9,10 +9,10 @@ pub(super) const DEFAULT_INTERPRETER: &str = "sh -c";
 
 /// Construction-time configuration for [`ShellQueue`](super::ShellQueue).
 ///
-/// Mirrors [`iter_language::QueueDef::Shell`](iter_language::QueueDef) one
-/// for one. Convert via `ShellQueueConfig::from_decl_fields` inside the
-/// CLI compose layer; the field-by-field constructor exists so unit tests
-/// can build a config without round-tripping through the AST.
+/// Mirrors the shell variant of the language's queue definition one for one.
+/// Convert via `ShellQueueConfig::from_decl_fields` inside the CLI; the
+/// field-by-field constructor exists so unit tests can build a config without
+/// round-tripping through the AST.
 #[derive(Debug, Clone)]
 pub struct ShellQueueConfig {
     /// Script run for every enqueue. Stdin receives the serialized envelope.

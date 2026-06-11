@@ -1,4 +1,4 @@
-//! Hook plumbing for [`HermesAgent`](super::HermesAgent)'s
+//! Hook installation for [`HermesAgent`](super::HermesAgent)'s
 //! interactive mode.
 //!
 //! Hermes has a rich JSON-based hook system with 14+ event types

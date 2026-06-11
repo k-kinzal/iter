@@ -46,7 +46,7 @@ pub fn render_argv(descriptor: &SandboxDescriptor<'_>) -> Vec<OsString> {
     // either selective bind-mounts (tricky: shared library dependencies)
     // or a seccomp filter (adds a dependency). Tracked as a follow-up.
 
-    // Read-only system plumbing. These are the minimum mounts a
+    // Read-only system mounts. These are the minimum mounts a
     // dynamically-linked CLI needs to start.
     for path in ["/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/etc"] {
         let p = Path::new(path);
@@ -153,7 +153,7 @@ mod tests {
 
     /// Default-deny test policy: every field empty, network off. The
     /// production codepath has no `deny_all_policy()` because the
-    /// project must spell out its posture in the Iterfile; tests use
+    /// project must spell out its posture in its declaration; tests use
     /// this helper instead.
     fn deny_all_policy() -> SandboxPolicy {
         SandboxPolicy {

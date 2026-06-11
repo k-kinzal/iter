@@ -166,7 +166,7 @@ impl CopilotAgent {
     /// Interactive-mode argv builder: binary + subcommand + args + positional
     /// prompt. The interactive TUI takes the prompt as its final positional
     /// argument; print mode instead uses the [`CopilotCommand`] builder, which
-    /// owns the `-p … --output-format json` shape. Run-mode-specific plumbing
+    /// owns the `-p … --output-format json` shape. Run-mode-specific setup
     /// (hook install, stdio inheritance) is layered on in the caller.
     fn build_command(&self, path: &Path, prompt: &Prompt) -> Command {
         let mut cmd = Command::new(&self.command);
