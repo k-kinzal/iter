@@ -7,9 +7,9 @@
 //! * `File { path }` → `file://<path>`.
 //! * `Redis { url, key }` → `<url>?key=<key>` (key encoded as a query parameter).
 //!
-//! Cloud and shell-driven queues (`Sqs`, `PubSub`, `Kafka`, `Kinesis`,
-//! `ServiceBus`, `Shell`) require the full Iterfile to reconstruct, so they
-//! return `None`; the caller is expected to fall back to the in-process path.
+//! The `Sqs` and `Shell` queues require the full definition to reconstruct
+//! (no single-URL form), so they return `None`; the caller is expected to fall
+//! back to the in-process path.
 
 use iter_language::QueueDef;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
@@ -31,15 +31,9 @@ pub fn queue_to_url(decl: &QueueDef) -> Option<String> {
                 Some(format!("{url}{separator}key={encoded_key}"))
             }
         }
-        // Memory is in-process only; cloud and shell backends require the
-        // full Iterfile to reconstruct (no single-URL form).
-        QueueDef::Memory
-        | QueueDef::Shell { .. }
-        | QueueDef::Sqs(_)
-        | QueueDef::PubSub(_)
-        | QueueDef::Kafka(_)
-        | QueueDef::Kinesis(_)
-        | QueueDef::ServiceBus(_) => None,
+        // Memory is in-process only; SQS and shell backends require the
+        // full definition to reconstruct (no single-URL form).
+        QueueDef::Memory | QueueDef::Shell { .. } | QueueDef::Sqs(_) => None,
     }
 }
 

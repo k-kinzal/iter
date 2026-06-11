@@ -7,12 +7,12 @@ use iter_language::{InlineService, Iterfile, QueueDef, ServiceSource, parse};
 use super::error::ComposeError;
 use super::plan::{ComposeService, lookup_queue};
 use crate::assembly;
-use crate::queue::AnyQueue;
+use iter_core::Queue;
 
 pub(super) fn build_service(
     name: &str,
     source: &ServiceSource,
-    queues: &BTreeMap<String, Arc<AnyQueue>>,
+    queues: &BTreeMap<String, Arc<dyn Queue>>,
     compose_dir: &Path,
     compose_path: &Path,
     once: bool,
@@ -66,7 +66,7 @@ pub(super) fn build_service(
 fn build_service_from_root(
     name: &str,
     root: &Iterfile,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     iterfile_path: PathBuf,
     once: bool,
     queue_decl: QueueDef,
@@ -110,7 +110,7 @@ fn build_service_from_root(
 fn build_service_from_inline(
     name: &str,
     inline: &InlineService,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     iterfile_path: PathBuf,
     once: bool,
     queue_decl: QueueDef,

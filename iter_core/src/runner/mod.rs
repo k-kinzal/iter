@@ -52,8 +52,8 @@ use events::RunnerEvents;
 /// operate without a queue, synthesising signals on each iteration. The
 /// builder rejects the inconsistent `(queue=None, behavior=Wait)`
 /// combination.
-pub struct Runner<Q: Queue, W: Workspace, A: Agent> {
-    pub(crate) queue: Option<Arc<Q>>,
+pub struct Runner<W: Workspace, A: Agent> {
+    pub(crate) queue: Option<Arc<dyn Queue>>,
     pub(crate) workspaces: Arc<dyn Fn() -> W + Send + Sync>,
     pub(crate) agent: A,
     pub(crate) prompt_selector: PromptSelector,
@@ -75,14 +75,13 @@ pub struct Runner<Q: Queue, W: Workspace, A: Agent> {
     pub(crate) stdio_sink: Arc<dyn crate::log::OutputSink>,
 }
 
-impl<Q, W, A> Runner<Q, W, A>
+impl<W, A> Runner<W, A>
 where
-    Q: Queue + 'static,
     W: Workspace + 'static,
     A: Agent + 'static,
 {
     /// Start a fluent [`RunnerBuilder`].
-    pub fn builder() -> RunnerBuilder<Q, W, A> {
+    pub fn builder() -> RunnerBuilder<W, A> {
         RunnerBuilder::new()
     }
 
@@ -392,8 +391,8 @@ fn with_counters(
 /// dequeue against synthesise, or synthesise outright depending on
 /// `(queue, behavior)`. Pure acquisition — no events, no I/O on the
 /// emitter.
-async fn next_signal<Q: Queue + 'static>(
-    queue: Option<&Q>,
+async fn next_signal(
+    queue: Option<&dyn Queue>,
     behavior: &RunnerBehavior,
     cancel: &CancellationToken,
     iteration_count: u32,
@@ -791,8 +790,8 @@ where
 /// `process_signal` errors bump the counter and update streak state.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
-async fn run_loop<Q, W, A>(
-    queue: Option<&Q>,
+async fn run_loop<W, A>(
+    queue: Option<&dyn Queue>,
     workspace_factory: &(dyn Fn() -> W + Send + Sync),
     agent: &A,
     prompt_selector: &PromptSelector,
@@ -805,7 +804,6 @@ async fn run_loop<Q, W, A>(
     last_signal_id: &mut Option<SignalId>,
 ) -> Result<RunnerSummary, RunnerExitError>
 where
-    Q: Queue + 'static,
     W: Workspace + 'static,
     A: Agent + 'static,
 {

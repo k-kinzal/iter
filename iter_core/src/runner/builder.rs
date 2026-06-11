@@ -32,8 +32,8 @@ pub enum BuilderError {
 
 /// Fluent builder for [`Runner`].
 #[must_use = "call `build()` to produce a Runner"]
-pub struct RunnerBuilder<Q: Queue, W: Workspace, A: Agent> {
-    queue: Option<Arc<Q>>,
+pub struct RunnerBuilder<W: Workspace, A: Agent> {
+    queue: Option<Arc<dyn Queue>>,
     workspaces: Option<Arc<dyn Fn() -> W + Send + Sync>>,
     agent: Option<A>,
     prompt_selector: Option<PromptSelector>,
@@ -43,7 +43,7 @@ pub struct RunnerBuilder<Q: Queue, W: Workspace, A: Agent> {
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
 }
 
-impl<Q: Queue, W: Workspace, A: Agent> Default for RunnerBuilder<Q, W, A> {
+impl<W: Workspace, A: Agent> Default for RunnerBuilder<W, A> {
     fn default() -> Self {
         Self {
             queue: None,
@@ -58,7 +58,7 @@ impl<Q: Queue, W: Workspace, A: Agent> Default for RunnerBuilder<Q, W, A> {
     }
 }
 
-impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
+impl<W: Workspace, A: Agent> RunnerBuilder<W, A> {
     /// Create a new empty builder.
     pub fn new() -> Self {
         Self::default()
@@ -71,7 +71,7 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
     /// instead of pulling them from upstream). Combining
     /// `behavior = wait` with no queue is rejected at [`Self::build`]
     /// time because there is nothing to park on.
-    pub fn queue(mut self, queue: Arc<Q>) -> Self {
+    pub fn queue(mut self, queue: Arc<dyn Queue>) -> Self {
         self.queue = Some(queue);
         self
     }
@@ -201,7 +201,7 @@ impl<Q: Queue, W: Workspace, A: Agent> RunnerBuilder<Q, W, A> {
     /// Every driver now uses [`AgentError`](crate::agent::AgentError)
     /// directly — the `Agent` trait has no associated error type — so this
     /// builder needs no extra bound beyond the struct's `A: Agent`.
-    pub fn build(self) -> Result<Runner<Q, W, A>, BuilderError> {
+    pub fn build(self) -> Result<Runner<W, A>, BuilderError> {
         let workspaces = self
             .workspaces
             .ok_or(BuilderError::MissingField("workspaces"))?;

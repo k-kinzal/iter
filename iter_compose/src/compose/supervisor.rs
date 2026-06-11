@@ -278,10 +278,9 @@ mod tests {
     use iter_core::queue::InMemoryQueue;
     use iter_language::TriggerDef;
 
-    use crate::queue::AnyQueue;
 
     fn make_trigger(name: &str, decl: TriggerDef) -> ComposeTrigger {
-        let queue = Arc::new(AnyQueue::InMemory(InMemoryQueue::new()));
+        let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
         ComposeTrigger {
             name: name.to_string(),
             decl,
@@ -419,7 +418,7 @@ mod tests {
         let input_file = dir.path().join("input.txt");
         std::fs::write(&input_file, "line1\n").unwrap();
 
-        let queue = Arc::new(AnyQueue::InMemory(InMemoryQueue::new()));
+        let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
         let trigger = ComposeTrigger {
             name: "term_test".to_string(),
             decl: finite_files_decl(input_file.to_str().unwrap()),
@@ -437,12 +436,9 @@ mod tests {
 
         // Verify terminate signal was enqueued
         let dq_cancel = CancellationToken::new();
-        let AnyQueue::InMemory(inner_queue) = queue.as_ref() else {
-            panic!("expected InMemory queue");
-        };
-        inner_queue.close().await.unwrap();
+        queue.close().await.unwrap();
         let mut found_terminate = false;
-        while let Ok(Some(signal)) = inner_queue.dequeue(dq_cancel.clone()).await {
+        while let Ok(Some(signal)) = queue.dequeue(dq_cancel.clone()).await {
             if signal.is_terminate() {
                 found_terminate = true;
             }
@@ -495,7 +491,7 @@ mod tests {
         let trigger = ComposeTrigger {
             name: "restart_test".to_string(),
             decl: finite_files_decl("/nonexistent/error_path.txt"),
-            queue: Arc::new(AnyQueue::InMemory(InMemoryQueue::new())),
+            queue: Arc::new(InMemoryQueue::new()),
             terminate_on_completion: false,
             state_dir: None,
         };
@@ -536,7 +532,7 @@ mod tests {
         let trigger = ComposeTrigger {
             name: "restart_no_term".to_string(),
             decl: finite_files_decl("/nonexistent/path/to/input.txt"),
-            queue: Arc::new(AnyQueue::InMemory(InMemoryQueue::new())),
+            queue: Arc::new(InMemoryQueue::new()),
             terminate_on_completion: true,
             state_dir: None,
         };

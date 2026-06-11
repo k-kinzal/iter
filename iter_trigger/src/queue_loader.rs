@@ -1,6 +1,7 @@
 //! Queue connection from a URL.
 
-use iter_core::queue::{FileQueue, InMemoryQueue, Priority, Queue};
+use async_trait::async_trait;
+use iter_core::queue::{FileQueue, InMemoryQueue, Priority, Queue, QueueError};
 use iter_core::signal::Signal;
 use percent_encoding::percent_decode_str;
 use thiserror::Error;
@@ -52,58 +53,32 @@ pub enum QueueHandle {
     Redis(iter_core::queue::RedisQueue),
 }
 
-/// Aggregated error for [`QueueHandle`]'s [`Queue`] impl.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum QueueHandleError {
-    /// In-memory queue error.
-    #[error(transparent)]
-    Memory(iter_core::queue::InMemoryQueueError),
-    /// File queue error.
-    #[error(transparent)]
-    File(iter_core::queue::FileQueueError),
-    /// Redis queue error.
-    #[cfg(feature = "driver-redis")]
-    #[error(transparent)]
-    Redis(iter_core::queue::RedisQueueError),
-}
-
+#[async_trait]
 impl Queue for QueueHandle {
-    type Error = QueueHandleError;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
         match self {
-            Self::Memory(q) => q
-                .queue(signal, priority)
-                .await
-                .map_err(QueueHandleError::Memory),
-            Self::File(q) => q
-                .queue(signal, priority)
-                .await
-                .map_err(QueueHandleError::File),
+            Self::Memory(q) => q.enqueue(signal, priority).await,
+            Self::File(q) => q.enqueue(signal, priority).await,
             #[cfg(feature = "driver-redis")]
-            Self::Redis(q) => q
-                .queue(signal, priority)
-                .await
-                .map_err(QueueHandleError::Redis),
+            Self::Redis(q) => q.enqueue(signal, priority).await,
         }
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
         match self {
-            Self::Memory(q) => q.dequeue(cancel).await.map_err(QueueHandleError::Memory),
-            Self::File(q) => q.dequeue(cancel).await.map_err(QueueHandleError::File),
+            Self::Memory(q) => q.dequeue(cancel).await,
+            Self::File(q) => q.dequeue(cancel).await,
             #[cfg(feature = "driver-redis")]
-            Self::Redis(q) => q.dequeue(cancel).await.map_err(QueueHandleError::Redis),
+            Self::Redis(q) => q.dequeue(cancel).await,
         }
     }
 
-    async fn close(&self) -> Result<(), Self::Error> {
+    async fn close(&self) -> Result<(), QueueError> {
         match self {
-            Self::Memory(q) => q.close().await.map_err(QueueHandleError::Memory),
-            Self::File(q) => q.close().await.map_err(QueueHandleError::File),
+            Self::Memory(q) => q.close().await,
+            Self::File(q) => q.close().await,
             #[cfg(feature = "driver-redis")]
-            Self::Redis(q) => q.close().await.map_err(QueueHandleError::Redis),
+            Self::Redis(q) => q.close().await,
         }
     }
 }

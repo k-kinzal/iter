@@ -13,7 +13,9 @@ use std::collections::BinaryHeap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use crate::queue::QueueError;
 use crate::{Priority, Queue, Signal};
+use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
@@ -89,7 +91,7 @@ struct State {
 ///
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let queue = InMemoryQueue::new();
-/// queue.queue(Signal::new(Metadata::new()), Priority::HIGH).await?;
+/// queue.enqueue(Signal::new(Metadata::new()), Priority::HIGH).await?;
 /// let signal = queue.dequeue(CancellationToken::new()).await?;
 /// assert!(signal.is_some());
 /// # Ok(()) }
@@ -125,14 +127,13 @@ impl InMemoryQueue {
     }
 }
 
+#[async_trait]
 impl Queue for InMemoryQueue {
-    type Error = InMemoryQueueError;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
         {
             let mut state = self.inner.state.lock().await;
             if state.closed {
-                return Err(InMemoryQueueError::Closed);
+                return Err(QueueError::new(InMemoryQueueError::Closed));
             }
             let seq = state.next_seq;
             state.next_seq = state.next_seq.wrapping_add(1);
@@ -149,7 +150,7 @@ impl Queue for InMemoryQueue {
         Ok(())
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
         loop {
             // Fast path: pop under the lock if anything is queued, or
             // observe the drained-and-closed terminal state.
@@ -194,7 +195,7 @@ impl Queue for InMemoryQueue {
         }
     }
 
-    async fn close(&self) -> Result<(), Self::Error> {
+    async fn close(&self) -> Result<(), QueueError> {
         {
             let mut state = self.inner.state.lock().await;
             if state.closed {
@@ -246,7 +247,7 @@ mod tests {
         let queue = InMemoryQueue::new();
         for i in 0..5 {
             queue
-                .queue(signal_with(&format!("s{i}")), Priority::NORMAL)
+                .enqueue(signal_with(&format!("s{i}")), Priority::NORMAL)
                 .await
                 .expect("queue ok");
         }
@@ -267,19 +268,19 @@ mod tests {
         // Insert in reverse priority order to ensure ordering is by priority
         // and not by insertion order.
         queue
-            .queue(signal_with("low"), Priority::LOW)
+            .enqueue(signal_with("low"), Priority::LOW)
             .await
             .expect("queue ok");
         queue
-            .queue(signal_with("normal"), Priority::NORMAL)
+            .enqueue(signal_with("normal"), Priority::NORMAL)
             .await
             .expect("queue ok");
         queue
-            .queue(signal_with("high"), Priority::HIGH)
+            .enqueue(signal_with("high"), Priority::HIGH)
             .await
             .expect("queue ok");
         queue
-            .queue(signal_with("critical"), Priority::CRITICAL)
+            .enqueue(signal_with("critical"), Priority::CRITICAL)
             .await
             .expect("queue ok");
 
@@ -314,7 +315,7 @@ mod tests {
         // Give the dequeue task a moment to park.
         tokio::time::sleep(Duration::from_millis(20)).await;
         queue
-            .queue(signal_with("late"), Priority::NORMAL)
+            .enqueue(signal_with("late"), Priority::NORMAL)
             .await
             .expect("queue ok");
 
@@ -358,7 +359,7 @@ mod tests {
             let q = queue.clone();
             producer_handles.push(tokio::spawn(async move {
                 for i in 0..per_producer {
-                    q.queue(signal_with(&format!("p{p}-{i}")), Priority::NORMAL)
+                    q.enqueue(signal_with(&format!("p{p}-{i}")), Priority::NORMAL)
                         .await
                         .expect("queue ok");
                 }

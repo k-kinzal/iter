@@ -4,10 +4,6 @@
 //! the top-level dispatch plus the retry/DLQ helpers that every backend
 //! with an SDK retry/dead-letter surface shares.
 
-pub(super) mod kafka;
-pub(super) mod kinesis;
-pub(super) mod pubsub;
-pub(super) mod servicebus;
 pub(super) mod sqs;
 
 use std::collections::BTreeMap;
@@ -46,17 +42,7 @@ impl Analyzer {
             kind,
             keyword_span,
             "queue",
-            &[
-                "memory",
-                "file",
-                "redis",
-                "shell",
-                "sqs",
-                "kinesis",
-                "kafka",
-                "pubsub",
-                "servicebus",
-            ],
+            &["memory", "file", "redis", "shell", "sqs"],
         )?;
         let mut fields = self.collect_fields(body);
         let decl = match kind.name.as_str() {
@@ -110,27 +96,10 @@ impl Analyzer {
                 let cfg = self.lower_sqs(std::mem::take(&mut fields), &kind.span);
                 QueueDef::Sqs(Box::new(cfg))
             }
-            "kinesis" => {
-                let cfg = self.lower_kinesis(std::mem::take(&mut fields), &kind.span);
-                QueueDef::Kinesis(Box::new(cfg))
-            }
-            "kafka" => {
-                let cfg = self.lower_kafka(std::mem::take(&mut fields), &kind.span);
-                QueueDef::Kafka(Box::new(cfg))
-            }
-            "pubsub" => {
-                let cfg = self.lower_pubsub(std::mem::take(&mut fields), &kind.span);
-                QueueDef::PubSub(Box::new(cfg))
-            }
-            "servicebus" => {
-                let cfg = self.lower_servicebus(std::mem::take(&mut fields), &kind.span);
-                QueueDef::ServiceBus(Box::new(cfg))
-            }
             other => {
                 self.errors.push(
-                    Diagnostic::error(kind.span, format!("unknown queue kind `{other}`")).with_hint(
-                        "valid kinds: memory, file, redis, shell, sqs, kinesis, kafka, pubsub, servicebus",
-                    ),
+                    Diagnostic::error(kind.span, format!("unknown queue kind `{other}`"))
+                        .with_hint("valid kinds: memory, file, redis, shell, sqs"),
                 );
                 return None;
             }
@@ -220,25 +189,21 @@ impl Analyzer {
         let Some(kind) = self.take_optional_string(&mut block, "kind") else {
             self.errors.push(
                 Diagnostic::error(kind_span.clone(), "dlq target requires `kind = \"...\"`")
-                    .with_hint("valid kinds: sqs, kinesis, kafka, s3, file, pubsub, servicebus"),
+                    .with_hint("valid kinds: sqs, s3, file"),
             );
             return None;
         };
         match kind.as_str() {
             "sqs" => self.lower_dlq_sqs(&mut block, kind_span),
-            "kinesis" => self.lower_dlq_kinesis(&mut block, kind_span),
-            "kafka" => self.lower_dlq_kafka(&mut block, kind_span),
             "s3" => self.lower_dlq_s3(&mut block, kind_span),
             "file" => self.lower_dlq_file(&mut block, kind_span),
-            "pubsub" => self.lower_dlq_pubsub(&mut block, kind_span),
-            "servicebus" => self.lower_dlq_servicebus(&mut block, kind_span),
             other => {
                 self.errors.push(
                     Diagnostic::error(
                         kind_span.clone(),
                         format!("unknown dlq target kind `{other}`"),
                     )
-                    .with_hint("valid kinds: sqs, kinesis, kafka, s3, file, pubsub, servicebus"),
+                    .with_hint("valid kinds: sqs, s3, file"),
                 );
                 None
             }
@@ -256,39 +221,6 @@ impl Analyzer {
         Some(DlqTargetDef::Sqs {
             queue_url: queue_url?,
             region,
-        })
-    }
-
-    fn lower_dlq_kinesis(
-        &mut self,
-        block: &mut BTreeMap<String, CstField>,
-        kind_span: &Span,
-    ) -> Option<DlqTargetDef> {
-        let stream_arn =
-            self.take_required_string(block, "stream_arn", kind_span, "dlq target kinesis");
-        let region = self.take_optional_string(block, "region");
-        self.reject_unknown_fields(
-            block,
-            &["kind", "stream_arn", "region"],
-            "dlq target kinesis",
-        );
-        Some(DlqTargetDef::Kinesis {
-            stream_arn: stream_arn?,
-            region,
-        })
-    }
-
-    fn lower_dlq_kafka(
-        &mut self,
-        block: &mut BTreeMap<String, CstField>,
-        kind_span: &Span,
-    ) -> Option<DlqTargetDef> {
-        let brokers = self.take_required_string(block, "brokers", kind_span, "dlq target kafka");
-        let topic = self.take_required_string(block, "topic", kind_span, "dlq target kafka");
-        self.reject_unknown_fields(block, &["kind", "brokers", "topic"], "dlq target kafka");
-        Some(DlqTargetDef::Kafka {
-            brokers: brokers?,
-            topic: topic?,
         })
     }
 
@@ -320,38 +252,5 @@ impl Analyzer {
         let path = self.take_required_string(block, "path", kind_span, "dlq target file");
         self.reject_unknown_fields(block, &["kind", "path"], "dlq target file");
         Some(DlqTargetDef::File { path: path? })
-    }
-
-    fn lower_dlq_pubsub(
-        &mut self,
-        block: &mut BTreeMap<String, CstField>,
-        kind_span: &Span,
-    ) -> Option<DlqTargetDef> {
-        let project = self.take_required_string(block, "project", kind_span, "dlq target pubsub");
-        let topic = self.take_required_string(block, "topic", kind_span, "dlq target pubsub");
-        self.reject_unknown_fields(block, &["kind", "project", "topic"], "dlq target pubsub");
-        Some(DlqTargetDef::PubSub {
-            project: project?,
-            topic: topic?,
-        })
-    }
-
-    fn lower_dlq_servicebus(
-        &mut self,
-        block: &mut BTreeMap<String, CstField>,
-        kind_span: &Span,
-    ) -> Option<DlqTargetDef> {
-        let namespace =
-            self.take_required_string(block, "namespace", kind_span, "dlq target servicebus");
-        let entity = self.take_required_string(block, "entity", kind_span, "dlq target servicebus");
-        self.reject_unknown_fields(
-            block,
-            &["kind", "namespace", "entity"],
-            "dlq target servicebus",
-        );
-        Some(DlqTargetDef::ServiceBus {
-            namespace: namespace?,
-            entity: entity?,
-        })
     }
 }

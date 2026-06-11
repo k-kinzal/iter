@@ -1,11 +1,11 @@
 //! Composition layer turning an [`iter_language::Iterfile`] into the concrete
 //! types fed to [`iter_core::Runner`].
 //!
-//! This crate bridges the open-ended world of "implementation crates" and the
-//! [`Runner<Q, W, A>`](iter_core::Runner) generic. We define `AnyQueue`,
-//! `AnyWorkspace`, and `AnyAgent` enums that wrap each concrete implementation
-//! and forward trait methods via match dispatch. The CLI always instantiates
-//! `Runner<AnyQueue, AnyWorkspace, AnyAgent>`.
+//! This crate turns the open-ended world of "implementation crates" into the
+//! [`Runner<W, A>`](iter_core::Runner) generic. The queue axis is already a
+//! trait object (`Arc<dyn Queue>`); `AnyWorkspace` and `AnyAgent` enums still
+//! wrap each concrete workspace / agent and forward trait methods via match
+//! dispatch. The CLI instantiates `Runner<AnyWorkspace, AnyAgent>`.
 //!
 //! Trigger CLIs are separate binaries (`iter-cron`, `iter-watch`, etc.)
 //! that depend on [`iter_trigger`] for queue connection and signal
@@ -56,7 +56,7 @@ pub use process_lifecycle::{
 pub use project::{ENV_PROJECT_NAME, ProjectSlugError, SlugValidationError, project_slug};
 pub use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
 pub use prompt::{build_prompt_selector, build_prompt_selector_from_prompts};
-pub use queue::{AnyQueue, AnyQueueError, build_queue};
+pub use queue::{QueueBuildError, build_queue};
 pub use secrets::resolve_secret;
 pub use signals::install_shutdown_handler;
 pub use trigger_argv::queue_to_url;

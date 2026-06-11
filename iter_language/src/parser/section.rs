@@ -309,7 +309,7 @@ impl Parser<'_> {
                         }
                     }
                 },
-                // String-keyed field (e.g. Kafka headers `"x-source" = "..."`).
+                // String-keyed field (e.g. header maps `"x-source" = "..."`).
                 Some(Token::String(_)) => {
                     if let Some(field) = self.parse_field() {
                         fields.push(field);

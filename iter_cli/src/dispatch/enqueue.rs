@@ -13,8 +13,9 @@
 //! the runner template renderer interpolates everything as strings anyway.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use iter_compose::{AnyQueue, ComposeError, build_queue, is_compose_filename, load_compose};
+use iter_compose::{ComposeError, build_queue, is_compose_filename, load_compose};
 use iter_core::queue::Priority;
 use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
 use iter_core::{Config, Queue};
@@ -130,7 +131,7 @@ pub async fn run_enqueue(args: EnqueueArgs, config: Config) -> Result<(), Enqueu
     let id = signal.id();
 
     queue
-        .queue(signal, priority)
+        .enqueue(signal, priority)
         .await
         .map_err(|e| EnqueueCmdError::Queue(e.to_string()))?;
 
@@ -159,7 +160,7 @@ fn parse_metadata(items: &[String]) -> Result<Metadata, EnqueueCmdError> {
     Ok(metadata)
 }
 
-fn resolve_queue(args: &EnqueueArgs) -> Result<AnyQueue, EnqueueCmdError> {
+fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
     if let Some(url) = args.queue_url.as_deref() {
         if args.queue.is_some() {
             return Err(EnqueueCmdError::QueueFlagNotApplicable);
@@ -186,7 +187,7 @@ fn resolve_queue(args: &EnqueueArgs) -> Result<AnyQueue, EnqueueCmdError> {
     }
 }
 
-fn queue_from_url(url: &str) -> Result<AnyQueue, EnqueueCmdError> {
+fn queue_from_url(url: &str) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
     if url == "memory://" || url == "memory:" {
         return Ok(build_queue(&QueueDef::Memory).map_err(ComposeError::from)?);
     }
@@ -253,7 +254,7 @@ fn autodetect_file() -> Option<PathBuf> {
 fn resolve_from_compose(
     path: &Path,
     queue_name: Option<&str>,
-) -> Result<AnyQueue, EnqueueCmdError> {
+) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
     let root: Compose = load_compose(path)?;
     if root.queues.is_empty() {
         return Err(EnqueueCmdError::NoQueuesInCompose {
@@ -337,21 +338,57 @@ mod tests {
         assert_eq!(map_priority(EnqueuePriority::Critical), Priority::CRITICAL);
     }
 
+    /// Pin keyword-set parity between core's canonical
+    /// [`Priority::from_keyword`]/[`Priority::keyword`] mapping and the
+    /// language's [`iter_language::PriorityKeyword`]. Lives cli-side because it
+    /// is the one place that sees both crates. The exhaustive `match` forces a
+    /// compile error if a `PriorityKeyword` variant is added without updating
+    /// core's keyword mapping here.
+    #[test]
+    fn priority_keyword_parity_with_language() {
+        use iter_language::PriorityKeyword;
+
+        fn keyword_of(kw: PriorityKeyword) -> &'static str {
+            match kw {
+                PriorityKeyword::Low => "low",
+                PriorityKeyword::Normal => "normal",
+                PriorityKeyword::High => "high",
+                PriorityKeyword::Critical => "critical",
+            }
+        }
+
+        let pairs = [
+            (PriorityKeyword::Low, Priority::LOW),
+            (PriorityKeyword::Normal, Priority::NORMAL),
+            (PriorityKeyword::High, Priority::HIGH),
+            (PriorityKeyword::Critical, Priority::CRITICAL),
+        ];
+        for (kw, expected) in pairs {
+            let s = keyword_of(kw);
+            // Core accepts every language keyword, mapping to the same level…
+            assert_eq!(Priority::from_keyword(s), Some(expected));
+            // …and rounds back to the same keyword string.
+            assert_eq!(expected.keyword(), s);
+        }
+        // Core accepts no keyword the language does not, and rejects unknowns.
+        assert_eq!(Priority::from_keyword("bogus"), None);
+    }
+
     #[test]
     fn queue_from_url_memory_colon_alias() {
         let q = queue_from_url("memory:").expect("memory: alias");
-        assert!(matches!(q, AnyQueue::InMemory(_)));
+        drop(q);
     }
 
     #[test]
     fn queue_from_url_memory_scheme() {
         let q = queue_from_url("memory://").expect("memory://");
-        assert!(matches!(q, AnyQueue::InMemory(_)));
+        drop(q);
     }
 
     #[test]
     fn queue_from_url_file_requires_path() {
-        let err = queue_from_url("file://").expect_err("must fail");
+        let err = queue_from_url("file://").err().expect("must fail");
         assert!(matches!(err, EnqueueCmdError::FileUrlMissingPath));
     }
 
@@ -361,12 +398,12 @@ mod tests {
         let path = tmp.path().join("queue");
         let url = format!("file://{}", path.display());
         let q = queue_from_url(&url).expect("file queue");
-        assert!(matches!(q, AnyQueue::File(_)));
+        drop(q);
     }
 
     #[test]
     fn queue_from_url_unknown_scheme_errors() {
-        let err = queue_from_url("kafka://x").expect_err("must fail");
+        let err = queue_from_url("amqp://x").err().expect("must fail");
         assert!(matches!(err, EnqueueCmdError::UnsupportedQueueUrl(_)));
     }
 

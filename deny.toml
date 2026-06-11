@@ -12,13 +12,11 @@ feature-depth = 1
 unmaintained = "all"
 unsound = "all"
 ignore = [
-    { id = "RUSTSEC-2024-0384", reason = "instant v0.1.13 via fluvio-wasm-timer; track azservicebus update" },
-    { id = "RUSTSEC-2024-0436", reason = "paste v1.0.15 via google-cloud-*; track google-cloud-pubsub update" },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile v1.0.4/v2.2.0 via hyper-rustls/aws-*; track rustls ecosystem update" },
     { id = "RUSTSEC-2026-0098", reason = "rustls-webpki v0.101.7/v0.103.12 via aws-smithy-http-client; track aws-smithy update" },
     { id = "RUSTSEC-2026-0099", reason = "rustls-webpki v0.101.7/v0.103.12 via aws-smithy-http-client; track aws-smithy update" },
     { id = "RUSTSEC-2026-0104", reason = "rustls-webpki v0.101.7/v0.103.12 via aws-smithy-http-client; track aws-smithy update" },
-    { id = "RUSTSEC-2026-0002", reason = "lru v0.12.5 IterMut soundness; transitive via google-cloud stack; upgrade to >=0.16.3" },
+    { id = "RUSTSEC-2026-0002", reason = "lru v0.12.5 IterMut soundness; transitive dep; upgrade to >=0.16.3" },
     { id = "RUSTSEC-2026-0097", reason = "rand thread_rng unsoundness; only triggers with custom logger + reseed; transitive dep" },
 ]
 
@@ -62,20 +60,15 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
 deny = [
-    { crate = "openssl-sys", wrappers = ["native-tls", "openssl", "rdkafka-sys", "sasl2-sys"] },
+    { crate = "openssl-sys", wrappers = ["native-tls", "openssl"] },
 ]
 
 # All duplicates below are transitive; driven by upstream dependency version
-# mismatches across AWS SDK, Google Cloud, Azure, and rdkafka ecosystems.
+# mismatches in the AWS SDK / legacy hyper-0.14 http stack.
 skip-tree = [
-    { crate = "google-cloud-auth@0.17.2", reason = "old version pulled by google-cloud-gax 0.19; awaiting google-cloud update" },
-    { crate = "google-cloud-auth@0.18.0", reason = "intermediate version pulled by google-cloud-gax 0.20; awaiting google-cloud update" },
-    { crate = "google-cloud-gax@0.19.2", reason = "old version pulled by google-cloud-googleapis 0.16; awaiting google-cloud update" },
-    { crate = "azure_core@0.21.0", reason = "old version pulled by azservicebus 0.21; awaiting azservicebus update" },
-    { crate = "http-types@2.12.0", reason = "pulled by azure_core 0.21 and typespec; awaiting upstream migration" },
-    { crate = "hyper@0.14.32", reason = "pulled by google-cloud-auth 0.17/0.18; awaiting google-cloud update" },
-    { crate = "http@0.2.12", reason = "pulled by hyper 0.14 and google-cloud stack; awaiting migration to http 1.x" },
-    { crate = "rustls@0.21.12", reason = "pulled by google-cloud-auth 0.17/0.18; awaiting google-cloud update" },
+    { crate = "hyper@0.14.32", reason = "legacy hyper 0.14 pulled transitively by the AWS SDK http stack; awaiting migration to hyper 1.x" },
+    { crate = "http@0.2.12", reason = "legacy http 0.2 pulled by hyper 0.14; awaiting migration to http 1.x" },
+    { crate = "rustls@0.21.12", reason = "legacy rustls 0.21 pulled transitively by the AWS SDK http stack; awaiting upstream update" },
 ]
 skip = []
 

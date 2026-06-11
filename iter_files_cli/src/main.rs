@@ -26,7 +26,7 @@ use crate::files_trigger::{FilesSource, FilesTrigger, FilesTriggerError};
 use clap::Parser;
 use iter_core::Queue;
 use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, QueueHandleError, install_shutdown_handler};
+use iter_trigger::{CountingQueue, install_shutdown_handler};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -52,7 +52,7 @@ enum FilesCliError {
     #[error(transparent)]
     Shutdown(#[from] ShutdownError),
     #[error(transparent)]
-    Files(#[from] FilesTriggerError<QueueHandleError>),
+    Files(#[from] FilesTriggerError<iter_core::queue::QueueError>),
     #[error("--from path: must include a path after the colon")]
     SourceMissingPath,
     #[error("--from `{0}`: expected `stdin` or `path:<file>`")]

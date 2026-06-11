@@ -40,7 +40,7 @@ use extract::{json_to_metadata_value, value_to_string};
 /// emits one [`Signal`] per record. When `deduplicate` is enabled, records
 /// observed in earlier polls are not re-emitted; the dedupe set is reset when
 /// the trigger is restarted.
-pub struct CommandTrigger<Q: Queue> {
+pub struct CommandTrigger<Q: Queue + ?Sized> {
     queue: Arc<Q>,
     command: String,
     shell: String,
@@ -53,7 +53,7 @@ pub struct CommandTrigger<Q: Queue> {
     trigger_name: Option<String>,
 }
 
-impl<Q: Queue> std::fmt::Debug for CommandTrigger<Q> {
+impl<Q: Queue + ?Sized> std::fmt::Debug for CommandTrigger<Q> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CommandTrigger")
             .field("command", &self.command)
@@ -68,7 +68,7 @@ impl<Q: Queue> std::fmt::Debug for CommandTrigger<Q> {
     }
 }
 
-impl<Q: Queue + 'static> CommandTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
     /// Build a command trigger.
     ///
     /// `shell` is the program/argv-prefix used to interpret `command`, e.g.
@@ -137,7 +137,7 @@ impl<Q: Queue + 'static> CommandTrigger<Q> {
     /// # Errors
     ///
     /// Returns `CommandTriggerError` if command execution or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), CommandTriggerError<Q::Error>> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<(), CommandTriggerError<iter_core::queue::QueueError>> {
         let mut seen: HashSet<String> = HashSet::new();
         let regex = if let ExtractMode::Regex(pat) = &self.extract {
             Some(regex::Regex::new(pat).map_err(|e| CommandTriggerError::Regex(e.to_string()))?)
@@ -221,7 +221,7 @@ impl<Q: Queue + 'static> CommandTrigger<Q> {
     async fn run_command(
         &self,
         cancel: &CancellationToken,
-    ) -> Result<Option<(bool, String)>, CommandTriggerError<Q::Error>> {
+    ) -> Result<Option<(bool, String)>, CommandTriggerError<iter_core::queue::QueueError>> {
         let mut parts = self.shell.split_whitespace();
         let program = parts
             .next()
@@ -257,7 +257,7 @@ impl<Q: Queue + 'static> CommandTrigger<Q> {
         )))
     }
 
-    fn build_metadata(&self, record: &Value) -> Result<Metadata, CommandTriggerError<Q::Error>> {
+    fn build_metadata(&self, record: &Value) -> Result<Metadata, CommandTriggerError<iter_core::queue::QueueError>> {
         let mut metadata = self.base_metadata.clone();
         match record {
             Value::Object(map) => {
@@ -278,12 +278,12 @@ impl<Q: Queue + 'static> CommandTrigger<Q> {
         &self,
         signal: Signal,
         span: tracing::Span,
-    ) -> Result<(), CommandTriggerError<Q::Error>> {
+    ) -> Result<(), CommandTriggerError<iter_core::queue::QueueError>> {
         async move {
             let mut signal = signal;
             iter_core::telemetry::inject_current_context_into_signal(&mut signal);
             self.queue
-                .queue(signal, self.priority)
+                .enqueue(signal, self.priority)
                 .await
                 .map_err(CommandTriggerError::Queue)
         }

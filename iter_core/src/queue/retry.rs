@@ -1,11 +1,8 @@
 //! Cross-backend [`RetryPolicy`].
 //!
-//! Used by SQS, Kinesis, GCP Pub/Sub, and Azure Service Bus. Kafka does
-//! **not** use this — its retry knobs are per-property (`retries`,
-//! `retry.backoff.ms`) and are surfaced via the Kafka-specific config.
-//!
-//! Each backend picks the subset of [`RetryMode`] values it understands and
-//! reports a clear error for unsupported choices in its lowerer.
+//! Used by the SQS backend's SDK retry surface. Each backend picks the subset
+//! of [`RetryMode`] values it understands and reports a clear error for
+//! unsupported choices in its lowerer.
 
 use std::time::Duration;
 

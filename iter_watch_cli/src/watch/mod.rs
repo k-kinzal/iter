@@ -52,7 +52,7 @@ pub enum WatchTriggerError<E: std::error::Error + Send + Sync + 'static> {
 /// Backed by the `notify` crate. The watcher runs on its dedicated OS thread
 /// and forwards events through a tokio channel so the trigger task can stay
 /// fully async.
-pub struct WatchTrigger<Q: Queue> {
+pub struct WatchTrigger<Q: Queue + ?Sized> {
     queue: Arc<Q>,
     config: WatchConfig,
     base_metadata: Metadata,
@@ -64,7 +64,7 @@ pub struct WatchTrigger<Q: Queue> {
 
 const PENDING_BATCH_FILENAME: &str = "pending_batch.json";
 
-impl<Q: Queue> std::fmt::Debug for WatchTrigger<Q> {
+impl<Q: Queue + ?Sized> std::fmt::Debug for WatchTrigger<Q> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WatchTrigger")
             .field("config", &self.config)
@@ -74,7 +74,7 @@ impl<Q: Queue> std::fmt::Debug for WatchTrigger<Q> {
     }
 }
 
-impl<Q: Queue + 'static> WatchTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> WatchTrigger<Q> {
     /// Create a watch trigger publishing to `queue` with the given `config`.
     #[must_use]
     pub fn new(queue: Arc<Q>, config: WatchConfig) -> Self {
@@ -134,7 +134,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
     /// # Errors
     ///
     /// Returns `WatchTriggerError` if filesystem watching or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), WatchTriggerError<Q::Error>> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         let path_key = MetadataKey::new("path")?;
         let kind_key = MetadataKey::new("kind")?;
         let timestamp_key = MetadataKey::new("timestamp")?;
@@ -249,7 +249,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         path_key: &MetadataKey,
         kind_key: &MetadataKey,
         timestamp_key: &MetadataKey,
-    ) -> Result<(), WatchTriggerError<Q::Error>> {
+    ) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         loop {
             tokio::select! {
                 biased;
@@ -301,7 +301,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         events_key: &MetadataKey,
         changed_count_key: &MetadataKey,
         event_count_key: &MetadataKey,
-    ) -> Result<(), WatchTriggerError<Q::Error>> {
+    ) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         loop {
             let first = tokio::select! {
                 biased;
@@ -358,7 +358,7 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         events_key: &MetadataKey,
         changed_count_key: &MetadataKey,
         event_count_key: &MetadataKey,
-    ) -> Result<(), WatchTriggerError<Q::Error>> {
+    ) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         if batch.is_empty() {
             return Ok(());
         }
@@ -459,12 +459,12 @@ impl<Q: Queue + 'static> WatchTrigger<Q> {
         &self,
         signal: Signal,
         span: tracing::Span,
-    ) -> Result<(), WatchTriggerError<Q::Error>> {
+    ) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         async move {
             let mut signal = signal;
             iter_core::telemetry::inject_current_context_into_signal(&mut signal);
             self.queue
-                .queue(signal, self.priority)
+                .enqueue(signal, self.priority)
                 .await
                 .map_err(WatchTriggerError::Queue)
         }
@@ -491,7 +491,7 @@ mod tests {
 
     /// Drain everything currently in the queue. Caller must close the queue
     /// first so the dequeue loop terminates.
-    async fn drain<Q: Queue>(queue: &Q) -> Vec<Signal> {
+    async fn drain<Q: Queue + ?Sized>(queue: &Q) -> Vec<Signal> {
         let mut out = Vec::new();
         let dq_cancel = CancellationToken::new();
         while let Ok(Some(s)) = queue.dequeue(dq_cancel.clone()).await {

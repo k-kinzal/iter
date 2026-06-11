@@ -8,7 +8,7 @@ use iter_core::process::{
     DetachedSpec, ProcessHandle, ProcessId, ProcessRegistry, ProcessRuntime, ProcessStatus,
     ProcessTerminationReason, spawn_detached,
 };
-use iter_core::{Queue, RunnerSummary};
+use iter_core::RunnerSummary;
 use iter_language::TelemetryDef;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;

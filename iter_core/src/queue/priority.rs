@@ -28,6 +28,42 @@ impl Priority {
     pub const fn value(self) -> u8 {
         self.0
     }
+
+    /// Map a priority keyword to a `Priority`.
+    ///
+    /// This is the single canonical keyword→priority mapping for the whole
+    /// workspace; the shell backend and any Signal source that accepts a
+    /// keyword string consume it here rather than re-spelling the four levels.
+    /// Returns `None` for an unknown keyword. Matching is ASCII
+    /// case-insensitive.
+    #[must_use]
+    pub fn from_keyword(keyword: &str) -> Option<Self> {
+        match keyword.to_ascii_lowercase().as_str() {
+            "low" => Some(Self::LOW),
+            "normal" => Some(Self::NORMAL),
+            "high" => Some(Self::HIGH),
+            "critical" => Some(Self::CRITICAL),
+            _ => None,
+        }
+    }
+
+    /// Bucket this priority back to the nearest keyword at or below its value.
+    ///
+    /// The inverse of [`Priority::from_keyword`] for the four canonical
+    /// constants; arbitrary intermediate values bucket down to the
+    /// next-lower keyword.
+    #[must_use]
+    pub fn keyword(self) -> &'static str {
+        if self >= Self::CRITICAL {
+            "critical"
+        } else if self >= Self::HIGH {
+            "high"
+        } else if self >= Self::NORMAL {
+            "normal"
+        } else {
+            "low"
+        }
+    }
 }
 
 impl Default for Priority {
@@ -70,6 +106,26 @@ mod tests {
         assert_eq!(Priority::NORMAL.value(), 50);
         assert_eq!(Priority::HIGH.value(), 75);
         assert_eq!(Priority::CRITICAL.value(), 100);
+    }
+
+    #[test]
+    fn from_keyword_maps_the_four_levels() {
+        assert_eq!(Priority::from_keyword("low"), Some(Priority::LOW));
+        assert_eq!(Priority::from_keyword("normal"), Some(Priority::NORMAL));
+        assert_eq!(Priority::from_keyword("HIGH"), Some(Priority::HIGH));
+        assert_eq!(Priority::from_keyword("Critical"), Some(Priority::CRITICAL));
+        assert_eq!(Priority::from_keyword("nope"), None);
+    }
+
+    #[test]
+    fn keyword_buckets_back() {
+        assert_eq!(Priority::LOW.keyword(), "low");
+        assert_eq!(Priority::NORMAL.keyword(), "normal");
+        assert_eq!(Priority::HIGH.keyword(), "high");
+        assert_eq!(Priority::CRITICAL.keyword(), "critical");
+        assert_eq!(Priority::new(60).keyword(), "normal");
+        assert_eq!(Priority::new(80).keyword(), "high");
+        assert_eq!(Priority::new(101).keyword(), "critical");
     }
 
     #[test]

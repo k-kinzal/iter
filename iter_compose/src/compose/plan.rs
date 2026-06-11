@@ -15,14 +15,15 @@ use super::flatten::{FlattenedPlan, flatten_composes};
 use super::service_build::build_service;
 use super::trigger::{ComposeTrigger, build_trigger};
 use crate::agent::AnyAgent;
-use crate::queue::{AnyQueue, build_queue};
+use crate::queue::build_queue;
+use iter_core::Queue;
 use crate::workspace::AnyWorkspace;
 
 pub(crate) struct ComposeService {
     pub(crate) name: String,
     pub(crate) iterfile_path: PathBuf,
     pub(crate) queue_decl: QueueDef,
-    pub(crate) builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
+    pub(crate) builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
 }
 
 /// Built compose plan ready for execution by [`super::run`].
@@ -31,7 +32,7 @@ pub(crate) struct ComposeService {
 /// Construction is fallible (see [`build`]); execution is async
 /// (see [`super::run`]).
 pub struct ComposePlan {
-    pub(crate) queues: BTreeMap<String, Arc<AnyQueue>>,
+    pub(crate) queues: BTreeMap<String, Arc<dyn Queue>>,
     pub(crate) services: Vec<ComposeService>,
     pub(crate) triggers: Vec<ComposeTrigger>,
     pub(crate) telemetry: Option<TelemetryDef>,
@@ -162,14 +163,14 @@ pub fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, Compose
         });
     }
 
-    let mut queues: BTreeMap<String, Arc<AnyQueue>> = BTreeMap::new();
+    let mut queues: BTreeMap<String, Arc<dyn Queue>> = BTreeMap::new();
     for spanned in &flat.queues {
         let NamedQueue { name, decl } = &spanned.node;
         let queue = build_queue(decl).map_err(|source| ComposeError::QueueBuild {
             name: name.clone(),
             source,
         })?;
-        queues.insert(name.clone(), Arc::new(queue));
+        queues.insert(name.clone(), queue);
     }
 
     let mut services = Vec::with_capacity(flat.services.len());
@@ -220,7 +221,7 @@ pub struct SingleServiceBuild {
     /// Path recorded into the per-service process registry entry.
     pub iterfile_path: PathBuf,
     /// Runner builder ready for `.build()`.
-    pub builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
+    pub builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
 }
 
 /// Build only the named service from a parsed compose file.
@@ -280,15 +281,12 @@ pub fn build_single_service(
         .find(|q| q.node.name == queue_name)
         .map(|q| q.node.decl.clone())
         .ok_or_else(|| ComposeError::UnknownQueue(queue_name.clone()))?;
-    let queue_arc =
-        Arc::new(
-            build_queue(&queue_decl).map_err(|source| ComposeError::QueueBuild {
-                name: queue_name,
-                source,
-            })?,
-        );
+    let queue_arc = build_queue(&queue_decl).map_err(|source| ComposeError::QueueBuild {
+        name: queue_name,
+        source,
+    })?;
 
-    let mut queues: BTreeMap<String, Arc<AnyQueue>> = BTreeMap::new();
+    let mut queues: BTreeMap<String, Arc<dyn Queue>> = BTreeMap::new();
     if let QueueRef::Named(n) = queue_ref {
         queues.insert(n.clone(), queue_arc);
     }
@@ -317,8 +315,8 @@ pub fn build_single_service(
 
 pub(super) fn lookup_queue(
     queue_ref: &QueueRef,
-    queues: &BTreeMap<String, Arc<AnyQueue>>,
-) -> Result<Arc<AnyQueue>, ComposeError> {
+    queues: &BTreeMap<String, Arc<dyn Queue>>,
+) -> Result<Arc<dyn Queue>, ComposeError> {
     match queue_ref {
         QueueRef::Named(name) => queues
             .get(name)

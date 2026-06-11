@@ -340,10 +340,6 @@ fn render_queue(
             }
         }
         iter_language::QueueDef::Sqs(cfg) => render_sqs(cfg, values)?,
-        iter_language::QueueDef::PubSub(cfg) => render_pubsub(cfg, values)?,
-        iter_language::QueueDef::Kafka(cfg) => render_kafka(cfg, values)?,
-        iter_language::QueueDef::Kinesis(cfg) => render_kinesis(cfg, values)?,
-        iter_language::QueueDef::ServiceBus(cfg) => render_servicebus(cfg, values)?,
     }
     Ok(())
 }
@@ -362,53 +358,6 @@ fn render_sqs(
     }
     render_opt(&mut cfg.region, values)?;
     render_opt(&mut cfg.endpoint_url, values)?;
-    Ok(())
-}
-
-fn render_pubsub(
-    cfg: &mut iter_language::PubSubConfig,
-    values: &BTreeMap<String, String>,
-) -> Result<(), ArgError> {
-    render_str(&mut cfg.project, values)?;
-    render_str(&mut cfg.topic, values)?;
-    render_str(&mut cfg.subscription, values)?;
-    render_opt(&mut cfg.endpoint, values)?;
-    Ok(())
-}
-
-fn render_kafka(
-    cfg: &mut iter_language::KafkaConfig,
-    values: &BTreeMap<String, String>,
-) -> Result<(), ArgError> {
-    render_str(&mut cfg.bootstrap_servers, values)?;
-    render_opt(&mut cfg.client_id, values)?;
-    Ok(())
-}
-
-fn render_kinesis(
-    cfg: &mut iter_language::KinesisConfig,
-    values: &BTreeMap<String, String>,
-) -> Result<(), ArgError> {
-    match &mut cfg.identity {
-        iter_language::KinesisIdentity::Arn(s) | iter_language::KinesisIdentity::Name(s) => {
-            render_str(s, values)?;
-        }
-        iter_language::KinesisIdentity::Unset => {}
-    }
-    render_opt(&mut cfg.region, values)?;
-    render_opt(&mut cfg.endpoint_url, values)?;
-    Ok(())
-}
-
-fn render_servicebus(
-    cfg: &mut iter_language::ServiceBusConfig,
-    values: &BTreeMap<String, String>,
-) -> Result<(), ArgError> {
-    render_opt(&mut cfg.fully_qualified_namespace, values)?;
-    render_opt(&mut cfg.queue_name, values)?;
-    render_opt(&mut cfg.topic_name, values)?;
-    render_opt(&mut cfg.subscription_name, values)?;
-    render_opt(&mut cfg.custom_endpoint_address, values)?;
     Ok(())
 }
 

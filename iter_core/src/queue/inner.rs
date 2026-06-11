@@ -1,16 +1,17 @@
 //! [`Queue`] trait — the priority queue connecting signal sources and the
 //! [`Runner`](crate::runner::Runner).
 //!
-//! Uses Return-Position-Impl-Trait-In-Trait (RPITIT) so that implementors
-//! can write `async fn` bodies without paying for an extra allocation per
-//! call. The associated futures are required to be `Send` so they can be
-//! polled by the multi-threaded `tokio` runtime.
+//! The trait is **dyn-compatible**: the runtime queue is always
+//! `Arc<dyn Queue>`. To make `dyn Queue` legal, the methods return boxed
+//! futures (via [`async_trait`](async_trait::async_trait)) and the per-backend
+//! error is erased into [`QueueError`] — `dyn Queue` names no associated type.
+//! Dispatch cost is irrelevant here: every enqueue/dequeue does I/O (or spawns
+//! a subprocess) that dominates an indirect call by orders of magnitude.
 
-use std::future::Future;
-
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::queue::Priority;
+use crate::queue::{Priority, QueueError};
 use crate::signal::Signal;
 
 /// A priority queue of [`Signal`]s.
@@ -24,34 +25,27 @@ use crate::signal::Signal;
 ///
 /// Signal delivery is **at-most-once across a process crash**: once
 /// `dequeue` returns a signal to the runner, the backend considers it
-/// delivered. Cloud backends with explicit ack (SQS, Service Bus, Pub/Sub,
-/// Kafka) auto-ack on receipt to preserve this semantic — matching the
-/// in-process behaviour of [`InMemoryQueue`](crate::queue::InMemoryQueue),
-/// where a crash between `dequeue` and prompt completion drops the signal.
+/// delivered. Cloud backends with explicit ack (SQS) auto-ack on receipt to
+/// preserve this semantic — matching the in-process behaviour of
+/// [`InMemoryQueue`](crate::queue::InMemoryQueue), where a crash between
+/// `dequeue` and prompt completion drops the signal.
 ///
 /// # Priority ordering
 ///
 /// Priority ordering is **best-effort**. The in-process and Redis backends
 /// guarantee strict highest-priority-first dequeuing with FIFO tie-breaking.
-/// Streaming and pull-based cloud backends (Kafka, Kinesis, Pub/Sub
-/// streaming-pull, SQS long-poll) deliver in their native FIFO/stream order
-/// regardless of priority; the priority is preserved on the envelope as a
-/// message attribute / payload field for observability and downstream
+/// Pull-based cloud backends (SQS long-poll) deliver in their native FIFO
+/// order regardless of priority; the priority is preserved on the envelope as
+/// a message attribute / payload field for observability and downstream
 /// routing, but does not influence delivery order at the broker.
+#[async_trait]
 pub trait Queue: Send + Sync {
-    /// Queue-specific error type.
-    type Error: std::error::Error + Send + Sync + 'static;
-
     /// Push a signal onto the queue with the given priority.
     ///
-    /// Implementations should reject signals queued after [`close`](Self::close)
-    /// so callers cannot silently lose work; returning an error is preferable
-    /// to dropping.
-    fn queue(
-        &self,
-        signal: Signal,
-        priority: Priority,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    /// Implementations should reject signals enqueued after
+    /// [`close`](Self::close) so callers cannot silently lose work; returning
+    /// an error is preferable to dropping.
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError>;
 
     /// Pop the next signal off the queue, blocking until one is available or
     /// the supplied [`CancellationToken`] is triggered.
@@ -68,20 +62,16 @@ pub trait Queue: Send + Sync {
     /// [`CancellationToken`]: drained queues return `Ok(None)` even though
     /// cancel is not set, which maps to
     /// [`RunnerTerminationReason::QueueDrained`](crate::RunnerTerminationReason::QueueDrained).
-    fn dequeue(
-        &self,
-        cancel: CancellationToken,
-    ) -> impl Future<Output = Result<Option<Signal>, Self::Error>> + Send;
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError>;
 
     /// Mark the queue as closed.
     ///
-    /// A closed queue rejects further `queue` calls and causes any
+    /// A closed queue rejects further `enqueue` calls and causes any
     /// currently-parked or subsequently-called `dequeue` to return
     /// `Ok(None)` once every already-enqueued signal has been handed out.
     /// This is how finite triggers (e.g. the `files` trigger after it
-    /// consumes its list, or the `loop` trigger once it reaches
-    /// `max_iteration`) let the runner exit cleanly without requiring an
-    /// external SIGTERM.
+    /// consumes its list, or a trigger whose emission budget is exhausted)
+    /// let the runner exit cleanly without requiring an external SIGTERM.
     ///
     /// Implementations must be idempotent: calling `close` on an
     /// already-closed queue is a no-op and must not error. The default
@@ -89,7 +79,7 @@ pub trait Queue: Send + Sync {
     /// "always-on" behaviour for backends that cannot implement close
     /// semantics meaningfully (e.g. a shared Redis queue whose producer
     /// set extends beyond the current process).
-    fn close(&self) -> impl Future<Output = Result<(), Self::Error>> + Send {
-        async { Ok(()) }
+    async fn close(&self) -> Result<(), QueueError> {
+        Ok(())
     }
 }

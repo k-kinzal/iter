@@ -14,7 +14,8 @@ It operates in two modes:
 Key responsibilities:
 
 - **AST-to-runtime builders** (`queue.rs`, `agent.rs`, `workspace.rs`) —
-  construct `AnyQueue`, `AnyAgent`, `AnyWorkspace` from parsed declarations.
+  construct the runtime `Arc<dyn Queue>`, `AnyAgent`, and `AnyWorkspace` from
+  parsed declarations.
 - **Compose orchestration** (`compose/`) — load, plan, and run services
   concurrently with failure policy handling. Trigger CLIs are launched as
   subprocesses.

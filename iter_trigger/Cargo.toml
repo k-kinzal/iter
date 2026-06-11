@@ -15,6 +15,7 @@ driver-redis = ["iter_core/driver-redis"]
 [dependencies]
 iter_core = { path = "../iter_core", version = "0.1.0" }
 thiserror.workspace = true
+async-trait.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true

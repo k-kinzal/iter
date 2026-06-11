@@ -1,31 +1,53 @@
-//! Queue trait and driver implementations.
+//! The Queue boundary — the channel that carries [`Signal`](crate::Signal)s
+//! into a Runner, and the contract every Signal source writes against.
 //!
-//! The [`Queue`] trait lives at this level alongside shared cross-backend
-//! types ([`envelope`], [`retry`], [`dlq`], [`Priority`]). Concrete
-//! implementations live under [`drivers`], gated behind feature flags for
-//! cloud backends.
+//! # The boundary contract
 //!
-//! Always-available drivers (no external SDK dependency):
+//! A **Queue** is the channel a Signal crosses on its way into a Runner. The
+//! contract a Signal source connects through *is this boundary itself*, made
+//! of three pieces that live here:
+//!
+//! - the **[`Envelope`]** — a Signal's serialized crossing form on a Queue
+//!   (a different concept from a process log line; they share an encoding but
+//!   never a home);
+//! - the **[`QueueDescriptor`]** — everything another process needs to
+//!   *connect* to a Queue (backend + address + resolved params + a
+//!   resolved-credential slot), turned into a usable queue by [`connect`];
+//! - **enqueue semantics**, including the Trigger's **emission budget**
+//!   ([`BudgetedQueue`] — "stop after N, then close to drain").
+//!
+//! The [`Queue`] trait is dyn-compatible: the runtime queue is always
+//! `Arc<dyn Queue>` — whichever backend the definition chose, usable as a
+//! Queue. The *closed* set of declarable backends lives at the definition
+//! layer (the grammar, in `iter_language`), not here; at run time the boundary
+//! is open behavior.
+//!
+//! # Backends
+//!
+//! Address/descriptor-connectable backends:
 //!
 //! - [`drivers::memory::InMemoryQueue`] — single-process default backed by a
-//!   `BinaryHeap` and [`tokio::sync::Notify`].
+//!   `BinaryHeap` and [`tokio::sync::Notify`] (`memory://`, in-process only).
 //! - [`drivers::file::FileQueue`] — persistent directory-of-files queue using
-//!   POSIX atomic `rename(2)`.
+//!   POSIX atomic `rename(2)` (`file://`).
+//! - `drivers::redis::RedisQueue` — Redis sorted-set queue (`redis://`,
+//!   feature `driver-redis`).
+//! - `drivers::sqs::SqsQueue` — Amazon SQS (feature `driver-sqs`).
+//!
+//! Not descriptor-connectable — made only from the full definition:
+//!
 //! - [`drivers::shell::ShellQueue`] — escape hatch where users supply
-//!   `enqueue` / `dequeue` shell commands in the Iterfile.
-//!
-//! Feature-gated cloud drivers:
-//!
-//! - `driver-sqs` — Amazon SQS.
-//! - `driver-kinesis` — Amazon Kinesis Data Streams.
-//! - `driver-pubsub` — GCP Cloud Pub/Sub.
-//! - `driver-servicebus` — Azure Service Bus.
-//! - `driver-kafka` — Apache Kafka.
-//! - `driver-redis` — Redis sorted-set queue.
+//!   `enqueue` / `dequeue` shell commands. It needs the scripts, so it can
+//!   only be built from the queue declaration, never connected from a
+//!   [`QueueDescriptor`].
 
 pub mod inner;
 
 pub use inner::Queue;
+
+pub mod error;
+
+pub use error::QueueError;
 
 pub mod drivers;
 
@@ -38,29 +60,21 @@ pub use drivers::shell::{ShellQueue, ShellQueueConfig, ShellQueueError};
 #[cfg(feature = "driver-redis")]
 pub use drivers::redis::{RedisQueue, RedisQueueError};
 
-#[cfg(any(feature = "driver-sqs", feature = "driver-kinesis"))]
+#[cfg(feature = "driver-sqs")]
 pub use drivers::aws;
 
 #[cfg(feature = "driver-sqs")]
 pub use drivers::sqs;
-
-#[cfg(feature = "driver-kinesis")]
-pub use drivers::kinesis;
-
-#[cfg(feature = "driver-pubsub")]
-pub use drivers::pubsub as gcp;
-
-#[cfg(feature = "driver-servicebus")]
-pub use drivers::servicebus as azure;
-
-#[cfg(feature = "driver-kafka")]
-pub use drivers::kafka;
 
 // ─── Shared cross-backend types ─────────────────────────────────────────
 
 pub mod priority;
 
 pub use priority::Priority;
+
+pub mod metadata_source;
+
+pub use metadata_source::{MetadataSource, MissingMetadata};
 
 pub mod envelope;
 
@@ -73,3 +87,21 @@ pub use retry::{RetryMode, RetryPolicy};
 pub mod dlq;
 
 pub use dlq::{DlqKind, DlqPolicy, DlqTarget};
+
+// ─── The boundary contract ──────────────────────────────────────────────
+
+pub mod address;
+
+pub use address::{QueueAddress, QueueAddressError};
+
+pub mod descriptor;
+
+pub use descriptor::{QueueDescriptor, ResolvedQueueCredentials, SqsDescriptor};
+
+pub mod connect;
+
+pub use connect::{ConnectError, connect};
+
+pub mod budgeted;
+
+pub use budgeted::BudgetedQueue;

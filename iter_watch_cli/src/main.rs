@@ -27,7 +27,7 @@ use crate::watch::{ChangeKind, WatchConfig, WatchTrigger, WatchTriggerError};
 use clap::Parser;
 use iter_core::Queue;
 use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, QueueHandleError, install_shutdown_handler};
+use iter_trigger::{CountingQueue, install_shutdown_handler};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -55,7 +55,7 @@ enum WatchCliError {
     #[error(transparent)]
     Shutdown(#[from] ShutdownError),
     #[error(transparent)]
-    Watch(#[from] WatchTriggerError<QueueHandleError>),
+    Watch(#[from] WatchTriggerError<iter_core::queue::QueueError>),
     #[error("invalid glob pattern: {0}")]
     InvalidGlob(#[from] globset::Error),
 }

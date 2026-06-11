@@ -34,9 +34,9 @@ use aws_types::{SdkConfig, app_name::AppName};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-use crate::queue::Priority;
-use crate::queue::Queue;
 use crate::queue::dlq::DlqPolicy;
+use crate::queue::{MetadataSource, MissingMetadata, Priority, Queue, QueueError};
+use async_trait::async_trait;
 use crate::queue::drivers::aws::credentials::{
     AwsCredentials, CredentialsBuildError, build_credentials,
 };
@@ -61,35 +61,6 @@ pub enum SqsIdentity {
         /// 12-digit AWS account ID owning the queue.
         account_id: String,
     },
-}
-
-/// FIFO-only producer template selector. Either a literal string or a
-/// metadata key whose value is read from the `Signal` at enqueue time.
-#[derive(Debug, Clone)]
-pub enum MetadataSource {
-    /// Raw literal value.
-    Literal(String),
-    /// Look up the named metadata key on the signal at runtime.
-    FromMetadata(String),
-}
-
-impl MetadataSource {
-    /// Resolve the template against a signal's metadata.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SqsQueueError::MissingTemplateMetadata`] when the
-    /// referenced metadata key is absent.
-    pub fn resolve(&self, signal: &Signal) -> Result<String, SqsQueueError> {
-        match self {
-            Self::Literal(s) => Ok(s.clone()),
-            Self::FromMetadata(key) => signal
-                .metadata()
-                .get_str(key)
-                .map(ToString::to_string)
-                .ok_or_else(|| SqsQueueError::MissingTemplateMetadata { key: key.clone() }),
-        }
-    }
 }
 
 /// Producer-side knobs for both standard and FIFO queues.
@@ -212,9 +183,15 @@ pub enum SqsQueueError {
     /// template; SQS rejects FIFO sends without one.
     #[error("FIFO queue requires producer.message_group_id; none configured")]
     FifoMissingGroupId,
-    /// `queue()` was called after `close()`.
+    /// `enqueue()` was called after `close()`.
     #[error("queue is closed")]
     Closed,
+}
+
+impl From<MissingMetadata> for SqsQueueError {
+    fn from(err: MissingMetadata) -> Self {
+        Self::MissingTemplateMetadata { key: err.key }
+    }
 }
 
 /// Default long-poll wait when the consumer block is omitted.
@@ -381,10 +358,12 @@ fn translate_retry(policy: &RetryPolicy) -> RetryConfig {
         .with_max_backoff(policy.max_backoff)
 }
 
-impl Queue for SqsQueue {
-    type Error = SqsQueueError;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
+impl SqsQueue {
+    async fn enqueue_signal(
+        &self,
+        signal: Signal,
+        priority: Priority,
+    ) -> Result<(), SqsQueueError> {
         if self.inner.closed.load(Ordering::Acquire) {
             return Err(SqsQueueError::Closed);
         }
@@ -448,7 +427,10 @@ impl Queue for SqsQueue {
         Ok(())
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue_signal(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<Option<Signal>, SqsQueueError> {
         loop {
             if cancel.is_cancelled() || self.inner.closed.load(Ordering::Acquire) {
                 return Ok(None);
@@ -558,7 +540,21 @@ impl Queue for SqsQueue {
         }
     }
 
-    async fn close(&self) -> Result<(), Self::Error> {
+}
+
+#[async_trait]
+impl Queue for SqsQueue {
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
+        self.enqueue_signal(signal, priority)
+            .await
+            .map_err(QueueError::new)
+    }
+
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
+        self.dequeue_signal(cancel).await.map_err(QueueError::new)
+    }
+
+    async fn close(&self) -> Result<(), QueueError> {
         self.inner.closed.store(true, Ordering::Release);
         Ok(())
     }
@@ -688,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn templated_string_resolves_literal_and_metadata() {
+    fn fifo_template_missing_metadata_maps_to_sqs_error() {
         use crate::signal::metadata::{Metadata, MetadataKey, MetadataValue};
 
         let mut metadata = Metadata::new();
@@ -698,21 +694,13 @@ mod tests {
         );
         let signal = Signal::new(metadata);
 
-        assert_eq!(
-            MetadataSource::Literal("static".into())
-                .resolve(&signal)
-                .expect("literal"),
-            "static"
-        );
-        assert_eq!(
-            MetadataSource::FromMetadata("workspace".into())
-                .resolve(&signal)
-                .expect("metadata"),
-            "alpha"
-        );
-        let err = MetadataSource::FromMetadata("missing".into())
+        // The shared `MetadataSource::resolve` yields the neutral
+        // `MissingMetadata`, which the SQS driver maps to its own
+        // FIFO-template error via `From`.
+        let missing = MetadataSource::FromMetadata("missing".into())
             .resolve(&signal)
             .expect_err("missing key");
-        assert!(matches!(err, SqsQueueError::MissingTemplateMetadata { .. }));
+        let mapped: SqsQueueError = missing.into();
+        assert!(matches!(mapped, SqsQueueError::MissingTemplateMetadata { .. }));
     }
 }

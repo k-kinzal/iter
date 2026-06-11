@@ -27,7 +27,7 @@ use crate::cron_trigger::{CronTrigger, CronTriggerError};
 use clap::Parser;
 use iter_core::Queue;
 use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, QueueHandleError, install_shutdown_handler};
+use iter_trigger::{CountingQueue, install_shutdown_handler};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -53,7 +53,7 @@ enum CronCliError {
     #[error(transparent)]
     Shutdown(#[from] ShutdownError),
     #[error(transparent)]
-    Cron(#[from] CronTriggerError<QueueHandleError>),
+    Cron(#[from] CronTriggerError<iter_core::queue::QueueError>),
 }
 
 impl IntoExitCode for CronCliError {

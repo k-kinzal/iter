@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// runner to stop.
 ///
 /// The kind travels inside the serialized signal payload, so every queue
-/// backend (in-memory, file, Redis, SQS, Kafka, …) carries it
+/// backend (in-memory, file, Redis, SQS, …) carries it
 /// transparently.  Backends that pre-date this field will deserialize
 /// existing messages as `Work` thanks to the `#[serde(default)]`
 /// annotation on [`Signal::kind`](super::Signal).

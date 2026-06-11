@@ -61,18 +61,13 @@ mod semantic;
 pub use ast::{
     Action, AgentDef, AgentMode, ApplyBackDef, ArgDef, CloneApplyBackMode, CmpOp, Compose,
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef, DlqTargetDef, EventHandlerDef,
-    EventName, ExtractExpr, FilesSource, InlineService, IterationField, Iterfile, KafkaConfig,
-    KafkaConsumer, KafkaProducer, KafkaSecurity, KinesisCheckpoint, KinesisConfig, KinesisConsumer,
-    KinesisIdentity, KinesisProducer, KinesisShardListFilter, MetadataSource, NamedCompose,
-    NamedDef, NamedPrompt, NamedQueue, NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword,
-    PromptArm, PromptDef, PromptExpr, PromptGuard, PromptValue, PubSubConfig, PubSubCredentialKind,
-    PubSubCredentials, PubSubInitialSeek, PubSubKeepalive, PubSubPublisher, PubSubSubscriber,
-    QueueDef, QueueRef, RetryPolicyDef, RouterStrategy, RunnerBehavior, RunnerDef,
-    SandboxNetworkDef, SandboxPolicyDef, SecretExpr, ServiceBusAuth, ServiceBusAuthKind,
-    ServiceBusConfig, ServiceBusProxy, ServiceBusReceiver, ServiceBusSender, ServiceBusSession,
-    ServiceSource, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials,
-    SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef, TelemetryProtocol,
-    TriggerDef, Value, WatchEventKind, WorkspaceDef,
+    EventName, ExtractExpr, FilesSource, InlineService, IterationField, Iterfile, MetadataSource,
+    NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService, NamedTrigger, OnErrorKeyword,
+    PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard, PromptValue, QueueDef, QueueRef,
+    RetryPolicyDef, RouterStrategy, RunnerBehavior, RunnerDef, SandboxNetworkDef, SandboxPolicyDef,
+    SecretExpr, ServiceSource, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind,
+    SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef,
+    TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{

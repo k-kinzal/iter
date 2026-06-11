@@ -27,7 +27,8 @@ use tokio_util::sync::CancellationToken;
 use super::*;
 use crate::agent::{AgentRun, AgentRunContext};
 use crate::prompt::PromptTemplate;
-use crate::queue::{InMemoryQueue, Priority};
+use crate::queue::{InMemoryQueue, Priority, QueueError};
+use async_trait::async_trait;
 use crate::signal::{Metadata, Signal};
 
 struct FakeWorkspace {
@@ -308,13 +309,13 @@ fn finished_reason(events: &[Event]) -> RunnerTerminationReason {
 
 #[tokio::test]
 async fn once_path_emits_runner_starting_and_finished_exactly_once() {
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -350,13 +351,13 @@ async fn once_path_emits_runner_starting_and_finished_exactly_once() {
 
 #[tokio::test]
 async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     let handler = CapturingHandler::default();
     let cancel = CancellationToken::new();
     // Pre-cancel so the runner short-circuits on the first
     // `cancel.is_cancelled()` check at the top of the loop.
     cancel.cancel();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -389,12 +390,12 @@ async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
 
 #[tokio::test]
 async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     // Close immediately so dequeue returns None and the runner
     // takes the QueueDrained exit branch.
     Queue::close(queue.as_ref()).await.unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -432,14 +433,14 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
     // Workspace teardown fails with continue_on_error=false →
     // `RunnerExitError`. The post-loop block must
     // still emit RunnerFinished with an Error reason.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<InMemoryQueue, FailingTeardownWorkspace, StubAgent>::builder()
+    let runner = Runner::<FailingTeardownWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -480,9 +481,9 @@ async fn error_path_carries_handler_counts_in_exit_error() {
     // The `Err` exit path now propagates handler/observer counts
     // via error variant fields, mirroring the `Ok` path's
     // `RunnerSummary` fields. This test asserts the count survives.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let events_buf: Arc<Mutex<Vec<Event>>> = Arc::default();
@@ -492,7 +493,7 @@ async fn error_path_carries_handler_counts_in_exit_error() {
         calls: Arc::clone(&calls),
     };
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<InMemoryQueue, FailingTeardownWorkspace, StubAgent>::builder()
+    let runner = Runner::<FailingTeardownWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -555,18 +556,19 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
     // teardown branch that previously fell through to
     // `record_success`, which mis-marked the failed turn as a win
     // for the next snapshot.
-    let queue = Arc::new(InMemoryQueue::new());
+    let inner = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = inner.clone();
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingIterHandler::default();
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<InMemoryQueue, FailingTeardownWorkspace, StubAgent>::builder()
+    let runner = Runner::<FailingTeardownWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -585,7 +587,7 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
     // have been processed.
     let cancel = CancellationToken::new();
     let cancel_for_task = cancel.clone();
-    let queue_for_task = Arc::clone(&queue);
+    let queue_for_task = Arc::clone(&inner);
     let cancel_task = tokio::spawn(async move {
         for _ in 0..200 {
             if queue_for_task.len().await == 0 {
@@ -647,9 +649,9 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
     // run. The signal still gets processed; `RunnerFinished`
     // still fires; the `event_handler_error_count` reflects the
     // failure.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let events_buf: Arc<Mutex<Vec<Event>>> = Arc::default();
@@ -658,7 +660,7 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
         events: Arc::clone(&events_buf),
         calls: Arc::clone(&calls),
     };
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -691,13 +693,13 @@ async fn iteration_timeout_kills_long_running_agent() {
     // `iteration_timeout`, surfaces an `AgentError::IterationTimeout`
     // error, and (because `continue_on_error = false`) terminates with
     // `RunnerError`.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, SleepyAgent>::builder()
+    let runner = Runner::<FakeWorkspace, SleepyAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(SleepyAgent::new(Duration::from_secs(60)))
@@ -740,13 +742,13 @@ async fn iteration_timeout_kills_long_running_agent() {
 async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
     // Sanity: a configured timeout must be invisible to runs that
     // complete promptly.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -794,13 +796,13 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
     // a recorded failure and the loop moves on. We use `once = true`
     // so we get a single iteration and observe its result via the
     // emitted `AgentFinished` event (`result label = "cancelled"`).
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, SleepyAgent>::builder()
+    let runner = Runner::<FakeWorkspace, SleepyAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(SleepyAgent::new(Duration::from_secs(60)))
@@ -845,13 +847,13 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
     // returns.
     let agent = SleepyAgent::new(Duration::from_secs(60));
     let observed = Arc::clone(&agent.cancel_observed);
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, SleepyAgent>::builder()
+    let runner = Runner::<FakeWorkspace, SleepyAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(agent)
@@ -888,12 +890,12 @@ async fn iteration_timeout_drain_yields_to_parent_cancel() {
     // window was silently ignored for up to DRAIN_GRACE seconds.
     // The drain now `select!`s the parent token, so this test must
     // complete in well under DRAIN_GRACE.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, SluggishCleanupAgent>::builder()
+    let runner = Runner::<FakeWorkspace, SluggishCleanupAgent>::builder()
             .queue(Arc::clone(&queue))
             .workspaces(make_provider())
             // Outlast DRAIN_GRACE comfortably so the only way the test
@@ -950,13 +952,13 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
     // must NOT fire for that iteration. Teardown still runs
     // internally (best-effort) so the workspace is released, but no
     // teardown events surface to handlers.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, FailingAgent>::builder()
+    let runner = Runner::<FakeWorkspace, FailingAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(FailingAgent)
@@ -1034,14 +1036,14 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
     //
     // `FailingSetupWorkspace` fails BOTH setup and teardown, so this
     // test exercises every branch of the setup-failure error path.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, teardown_calls) = make_failing_setup_provider();
-    let runner = Runner::<InMemoryQueue, FailingSetupWorkspace, StubAgent>::builder()
+    let runner = Runner::<FailingSetupWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -1121,14 +1123,14 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
     // `RunnerError(AgentRun)`, no `RunnerError(WorkspaceTeardown)`,
     // no teardown lifecycle events, and the cleanup attempt actually
     // ran.
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<InMemoryQueue, FailingTeardownWorkspace, FailingAgent>::builder()
+    let runner = Runner::<FailingTeardownWorkspace, FailingAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(FailingAgent)
@@ -1203,33 +1205,26 @@ impl FailingQueue {
     }
 }
 
+#[async_trait]
 impl Queue for FailingQueue {
-    type Error = std::io::Error;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
-        self.inner
-            .queue(signal, priority)
-            .await
-            .map_err(|e| std::io::Error::other(e.to_string()))
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
+        self.inner.enqueue(signal, priority).await
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
         let n = self.fail_count.fetch_add(1, Ordering::SeqCst);
         if n < self.max_failures {
-            return Err(std::io::Error::other("dequeue-boom"));
+            return Err(QueueError::new(std::io::Error::other("dequeue-boom")));
         }
-        self.inner
-            .dequeue(cancel)
-            .await
-            .map_err(|e| std::io::Error::other(e.to_string()))
+        self.inner.dequeue(cancel).await
     }
 }
 
 #[tokio::test]
 async fn dequeue_failure_without_continue_on_error_exits_with_error() {
-    let queue = Arc::new(FailingQueue::new(1));
+    let queue: Arc<dyn Queue> = Arc::new(FailingQueue::new(1));
     let handler = CapturingHandler::default();
-    let runner = Runner::<FailingQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1283,13 +1278,13 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
 
 #[tokio::test]
 async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iteration() {
-    let queue = Arc::new(FailingQueue::new(1));
+    let queue: Arc<dyn Queue> = Arc::new(FailingQueue::new(1));
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FailingQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1333,13 +1328,13 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
 
 #[tokio::test]
 async fn terminate_signal_stops_runner_gracefully() {
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::terminate(), Priority::default())
+        .enqueue(Signal::terminate(), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1365,19 +1360,19 @@ async fn terminate_signal_stops_runner_gracefully() {
 
 #[tokio::test]
 async fn work_signals_before_terminate_are_all_processed() {
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     for _ in 0..3 {
         queue
-            .queue(Signal::new(Metadata::new()), Priority::default())
+            .enqueue(Signal::new(Metadata::new()), Priority::default())
             .await
             .unwrap();
     }
     queue
-        .queue(Signal::terminate(), Priority::default())
+        .enqueue(Signal::terminate(), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1402,13 +1397,13 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
     let expected = persistent_path.clone();
     let provider = move || TransientWorkspace::new(persistent_path.clone());
 
-    let queue = Arc::new(InMemoryQueue::new());
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
-        .queue(Signal::new(Metadata::new()), Priority::default())
+        .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<InMemoryQueue, TransientWorkspace, StubAgent>::builder()
+    let runner = Runner::<TransientWorkspace, StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)

@@ -8,7 +8,7 @@
 use iter_core::{EventName, RunnerBuilder, ShellEventHandler, TemplateError};
 use iter_language::{Action, EventHandlerDef, Iterfile, Spanned};
 
-use crate::{AnyAgent, AnyQueue, AnyWorkspace};
+use crate::{AnyAgent, AnyWorkspace};
 
 /// Map a language-level [`iter_language::EventName`] to the core-level
 /// [`iter_core::EventName`] routing key.
@@ -40,9 +40,9 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
 pub fn register_event_handlers(
-    mut builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
+    mut builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
     iterfile: &Iterfile,
-) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, TemplateError> {
+) -> Result<RunnerBuilder<AnyWorkspace, AnyAgent>, TemplateError> {
     for runner in &iterfile.runners {
         builder = register_event_handlers_from_events(builder, &runner.node.events)?;
     }
@@ -59,9 +59,9 @@ pub fn register_event_handlers(
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
 pub fn register_event_handlers_from_events(
-    mut builder: RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>,
+    mut builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
     events: &[Spanned<EventHandlerDef>],
-) -> Result<RunnerBuilder<AnyQueue, AnyWorkspace, AnyAgent>, TemplateError> {
+) -> Result<RunnerBuilder<AnyWorkspace, AnyAgent>, TemplateError> {
     for spanned in events {
         let Spanned { node, .. } = spanned;
         let EventHandlerDef { event, actions } = node;
@@ -132,7 +132,7 @@ mod tests {
             iter_language::EventName::RunnerStarting,
             "echo {{",
         )];
-        let builder = iter_core::Runner::<AnyQueue, AnyWorkspace, AnyAgent>::builder();
+        let builder = iter_core::Runner::<AnyWorkspace, AnyAgent>::builder();
         let result = register_event_handlers_from_events(builder, &events);
         assert!(result.is_err());
     }

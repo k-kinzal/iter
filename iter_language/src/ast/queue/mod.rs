@@ -1,24 +1,7 @@
 //! `queue` declaration AST.
 
-pub(super) mod kafka;
-pub(super) mod kinesis;
-pub(super) mod pubsub;
-pub(super) mod servicebus;
 pub(super) mod sqs;
 
-pub use kafka::{KafkaConfig, KafkaConsumer, KafkaProducer, KafkaSecurity};
-pub use kinesis::{
-    KinesisCheckpoint, KinesisConfig, KinesisConsumer, KinesisIdentity, KinesisProducer,
-    KinesisShardListFilter,
-};
-pub use pubsub::{
-    PubSubConfig, PubSubCredentialKind, PubSubCredentials, PubSubInitialSeek, PubSubKeepalive,
-    PubSubPublisher, PubSubSubscriber,
-};
-pub use servicebus::{
-    ServiceBusAuth, ServiceBusAuthKind, ServiceBusConfig, ServiceBusProxy, ServiceBusReceiver,
-    ServiceBusSender, ServiceBusSession,
-};
 pub use sqs::{
     SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity,
     SqsProducer,
@@ -79,15 +62,6 @@ pub enum QueueDef {
     /// optional and falls through to the AWS default credential chain
     /// when omitted.
     Sqs(Box<SqsConfig>),
-    /// Google Cloud Pub/Sub topic + subscription pair.
-    PubSub(Box<PubSubConfig>),
-    /// Apache Kafka cluster (producer topic and consumer group).
-    Kafka(Box<KafkaConfig>),
-    /// AWS Kinesis Data Streams (single-shard polling MVP; multi-shard +
-    /// EFO + `DynamoDB` lease land in follow-ups).
-    Kinesis(Box<KinesisConfig>),
-    /// Azure Service Bus queue or topic+subscription.
-    ServiceBus(Box<ServiceBusConfig>),
 }
 
 /// Templated string value: either a literal or a single-argument
@@ -152,20 +126,6 @@ pub enum DlqTargetDef {
         /// Region the target queue lives in.
         region: Option<String>,
     },
-    /// Kinesis target — placeholder for the Kinesis backend (PR3).
-    Kinesis {
-        /// Target stream ARN.
-        stream_arn: String,
-        /// Region the target stream lives in.
-        region: Option<String>,
-    },
-    /// Kafka target — placeholder for the Kafka backend (PR2).
-    Kafka {
-        /// Bootstrap brokers (CSV).
-        brokers: String,
-        /// Target topic.
-        topic: String,
-    },
     /// S3 target — write each poison record as an object.
     S3 {
         /// Bucket name.
@@ -180,20 +140,5 @@ pub enum DlqTargetDef {
     File {
         /// Filesystem path.
         path: String,
-    },
-    /// GCP Pub/Sub target — placeholder for the Pub/Sub backend (PR2).
-    PubSub {
-        /// GCP project.
-        project: String,
-        /// Target topic.
-        topic: String,
-    },
-    /// Azure Service Bus target — placeholder for the Service Bus
-    /// backend (PR3).
-    ServiceBus {
-        /// Fully-qualified namespace.
-        namespace: String,
-        /// Target queue or topic name.
-        entity: String,
     },
 }

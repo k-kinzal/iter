@@ -29,7 +29,7 @@ use crate::command::{CommandTrigger, CommandTriggerError, ExtractMode, OnError};
 use clap::{Parser, ValueEnum};
 use iter_core::Queue;
 use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, QueueHandleError, install_shutdown_handler};
+use iter_trigger::{CountingQueue, install_shutdown_handler};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -55,7 +55,7 @@ enum CommandCliError {
     #[error(transparent)]
     Shutdown(#[from] ShutdownError),
     #[error(transparent)]
-    Command(#[from] CommandTriggerError<QueueHandleError>),
+    Command(#[from] CommandTriggerError<iter_core::queue::QueueError>),
     #[error("--extract `{0}`: expected `lines` or `regex:PATTERN`")]
     ExtractUnknownForm(String),
     #[error("--extract regex pattern must not be empty")]

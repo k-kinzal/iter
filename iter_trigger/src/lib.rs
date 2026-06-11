@@ -19,13 +19,15 @@
 //! depend on `iter_language` or `iter_compose`. The compose layer resolves
 //! declarations and passes resolved URLs to trigger CLIs.
 
-mod counting_queue;
 mod queue_loader;
 pub mod shutdown;
 mod trigger;
 
-pub use counting_queue::CountingQueue;
-pub use queue_loader::{QueueHandle, QueueHandleError, QueueLoadError, QueueLoader};
+/// Transitional alias for the emission-budget queue decorator, now owned by
+/// core as [`iter_core::queue::BudgetedQueue`]. The trigger CLIs consume it
+/// under this name until Inc 2 repoints them.
+pub use iter_core::queue::BudgetedQueue as CountingQueue;
+pub use queue_loader::{QueueHandle, QueueLoadError, QueueLoader};
 pub use shutdown::{ShutdownError, install_shutdown_handler};
 pub use trigger::{EmitError, Trigger, TriggerConfig, TriggerEvent};
 

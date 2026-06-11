@@ -1,17 +1,12 @@
 //! Cross-backend dead-letter-queue policy.
 //!
-//! Backends fall into three groups:
+//! Backends fall into two groups:
 //!
-//! * **Native DLQ** (SQS, Service Bus): the broker handles dead-lettering;
-//!   iter only observes via [`DlqPolicy::Native`].
-//! * **Subscription-level DLQ** (Pub/Sub): native, configured outside iter.
-//!   Users select [`DlqPolicy::Native`] and may run a separate iter consumer
-//!   against the DLQ subscription.
-//! * **No native DLQ** (Kafka, Kinesis): iter implements republishing via
-//!   [`DlqPolicy::IterRepublish`] with explicit receive-count tracking. See
-//!   the per-backend implementation for the storage location of receive
-//!   counts (Kafka uses an `x-iter-receive-count` header; Kinesis persists
-//!   per-(shard, sequence-number) counts in the same store as offsets).
+//! * **Native DLQ** (SQS): the broker handles dead-lettering; iter only
+//!   observes via [`DlqPolicy::Native`].
+//! * **No native DLQ**: iter implements republishing via
+//!   [`DlqPolicy::IterRepublish`] with explicit receive-count tracking, to one
+//!   of the [`DlqTarget`]s below.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,20 +19,6 @@ pub enum DlqTarget {
         queue_url: String,
         /// AWS region.
         region: String,
-    },
-    /// AWS Kinesis stream.
-    Kinesis {
-        /// Stream ARN.
-        stream_arn: String,
-        /// AWS region.
-        region: String,
-    },
-    /// Apache Kafka topic.
-    Kafka {
-        /// Bootstrap servers (CSV).
-        brokers: String,
-        /// Target topic for poison records.
-        topic: String,
     },
     /// AWS S3 bucket. Poison records land as one object per signal under
     /// `prefix/<signal-id>.json`.
@@ -54,20 +35,6 @@ pub enum DlqTarget {
         /// File path. Created with `0640` permissions if it doesn't exist.
         path: String,
     },
-    /// GCP Pub/Sub topic.
-    PubSub {
-        /// GCP project ID.
-        project: String,
-        /// Topic name.
-        topic: String,
-    },
-    /// Azure Service Bus queue.
-    ServiceBus {
-        /// Fully-qualified namespace (`<name>.servicebus.windows.net`).
-        namespace: String,
-        /// Queue name.
-        queue: String,
-    },
 }
 
 /// Cross-backend DLQ policy.
@@ -81,7 +48,7 @@ pub enum DlqPolicy {
     /// subscription DLQ). iter does not republish; it just observes.
     Native,
     /// iter writes poison records to a [`DlqTarget`] after `max_receive_count`
-    /// failed attempts. Used by Kafka and Kinesis, which have no native DLQ.
+    /// failed attempts. Used by backends with no native DLQ.
     IterRepublish {
         /// How many times a record may be delivered before iter routes it to
         /// `target`.

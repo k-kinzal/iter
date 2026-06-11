@@ -53,7 +53,7 @@ const CURSOR_FILENAME: &str = "cursor.json";
 /// after each emitted signal so a supervised restart can resume without
 /// re-reading from the beginning. Delivery is at-least-once: a crash
 /// between enqueue and cursor save may cause one line to be re-emitted.
-pub struct FilesTrigger<Q: Queue> {
+pub struct FilesTrigger<Q: Queue + ?Sized> {
     queue: Arc<Q>,
     source: FilesSource,
     base_metadata: Metadata,
@@ -62,7 +62,7 @@ pub struct FilesTrigger<Q: Queue> {
     state_dir: Option<PathBuf>,
 }
 
-impl<Q: Queue> std::fmt::Debug for FilesTrigger<Q> {
+impl<Q: Queue + ?Sized> std::fmt::Debug for FilesTrigger<Q> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FilesTrigger")
             .field("source", &self.source)
@@ -72,7 +72,7 @@ impl<Q: Queue> std::fmt::Debug for FilesTrigger<Q> {
     }
 }
 
-impl<Q: Queue + 'static> FilesTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> FilesTrigger<Q> {
     /// Build a files trigger reading from `source`.
     #[must_use]
     pub fn new(queue: Arc<Q>, source: FilesSource) -> Self {
@@ -122,7 +122,7 @@ impl<Q: Queue + 'static> FilesTrigger<Q> {
     /// # Errors
     ///
     /// Returns `FilesTriggerError` if reading input or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), FilesTriggerError<Q::Error>> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<(), FilesTriggerError<iter_core::queue::QueueError>> {
         let file_key = MetadataKey::new("file")?;
         let saved_offset = self.load_cursor();
 
@@ -154,7 +154,7 @@ impl<Q: Queue + 'static> FilesTrigger<Q> {
         cancel: CancellationToken,
         file_key: &MetadataKey,
         start_offset: u64,
-    ) -> Result<(), FilesTriggerError<Q::Error>>
+    ) -> Result<(), FilesTriggerError<iter_core::queue::QueueError>>
     where
         R: tokio::io::AsyncRead + Unpin,
     {
@@ -241,12 +241,12 @@ impl<Q: Queue + 'static> FilesTrigger<Q> {
         &self,
         signal: Signal,
         span: tracing::Span,
-    ) -> Result<(), FilesTriggerError<Q::Error>> {
+    ) -> Result<(), FilesTriggerError<iter_core::queue::QueueError>> {
         async move {
             let mut signal = signal;
             iter_core::telemetry::inject_current_context_into_signal(&mut signal);
             self.queue
-                .queue(signal, self.priority)
+                .enqueue(signal, self.priority)
                 .await
                 .map_err(FilesTriggerError::Queue)
         }

@@ -24,7 +24,6 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::queue::AnyQueue;
 use crate::secrets::resolve_secret;
 
 use super::error::ComposeError;
@@ -34,7 +33,7 @@ use super::error::ComposeError;
 pub(crate) struct ComposeTrigger {
     pub(crate) name: String,
     pub(crate) decl: TriggerDef,
-    pub(crate) queue: Arc<AnyQueue>,
+    pub(crate) queue: Arc<dyn Queue>,
     pub(crate) terminate_on_completion: bool,
     pub(crate) state_dir: Option<PathBuf>,
 }
@@ -93,7 +92,7 @@ pub enum TriggerRunError {
 /// Build a [`ComposeTrigger`] from a parsed [`NamedTrigger`] declaration.
 pub(crate) fn build_trigger(
     named: &NamedTrigger,
-    queues: &std::collections::BTreeMap<String, Arc<AnyQueue>>,
+    queues: &std::collections::BTreeMap<String, Arc<dyn Queue>>,
 ) -> Result<ComposeTrigger, ComposeError> {
     if let TriggerDef::External { ref name, .. } = named.decl {
         return Err(ComposeError::UnsupportedTriggerKind {
@@ -143,7 +142,7 @@ pub(crate) async fn enqueue_terminate(trigger: &ComposeTrigger) -> Result<(), Tr
     let signal = Signal::terminate();
     trigger
         .queue
-        .queue(signal, Priority::CRITICAL)
+        .enqueue(signal, Priority::CRITICAL)
         .await
         .map_err(|e| TriggerRunError::Terminate(Box::new(e)))?;
     info!(trigger = %trigger.name, "enqueued terminate signal on target queue");
@@ -154,7 +153,7 @@ pub(crate) async fn enqueue_terminate(trigger: &ComposeTrigger) -> Result<(), Tr
 async fn dispatch_trigger(
     name: &str,
     decl: TriggerDef,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     cancel: CancellationToken,
     state_dir: Option<PathBuf>,
 ) -> Result<(), TriggerRunError> {
@@ -293,7 +292,7 @@ async fn dispatch_trigger(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_cron(
     name: &str,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     cancel: CancellationToken,
     schedule: String,
     timezone: Option<String>,
@@ -336,7 +335,7 @@ async fn dispatch_cron(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_watch(
     name: &str,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     cancel: CancellationToken,
     dir: String,
     include: Vec<String>,
@@ -378,7 +377,7 @@ async fn dispatch_watch(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_command(
     name: &str,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     cancel: CancellationToken,
     command: String,
     shell: Option<String>,
@@ -418,7 +417,7 @@ async fn dispatch_command(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_files(
     name: &str,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     cancel: CancellationToken,
     sources: Vec<iter_language::FilesSource>,
     no_exit_on_eof: bool,
@@ -454,7 +453,7 @@ async fn dispatch_files(
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_webhook(
     name: &str,
-    queue: Arc<AnyQueue>,
+    queue: Arc<dyn Queue>,
     cancel: CancellationToken,
     host: Option<String>,
     port: Option<i64>,

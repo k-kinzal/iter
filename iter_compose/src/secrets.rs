@@ -1,9 +1,9 @@
 //! Secret resolution shared across compose builders.
 //!
 //! Every backend whose Iterfile schema includes a `SecretExpr`-typed field —
-//! webhook secrets, Redis passwords, AWS access keys, Kafka SASL passwords,
-//! Azure connection strings, etc. — funnels through [`resolve_secret`] so the
-//! literal-vs-`env(VAR)` distinction is handled in one place.
+//! webhook secrets, Redis passwords, AWS access keys, etc. — funnels through
+//! [`resolve_secret`] so the literal-vs-`env(VAR)` distinction is handled in
+//! one place.
 
 use std::path::PathBuf;
 

@@ -95,9 +95,9 @@ impl<'a> Parser<'a> {
     /// Field-name slot: identifier *or* string literal.
     ///
     /// String-literal field names support DSL surfaces where the natural map
-    /// key isn't a legal identifier (Kafka header names with `-`, librdkafka
-    /// extra-config keys with `.`). The lowerer decides per call site whether
-    /// to accept the string-keyed shape; here we just parse it.
+    /// key isn't a legal identifier (e.g. header names containing `-`, or
+    /// extra-config keys containing `.`). The lowerer decides per call site
+    /// whether to accept the string-keyed shape; here we just parse it.
     pub(super) fn expect_field_name(&mut self) -> Option<CstIdent> {
         if let Some(Token::String(s)) = self.peek() {
             let name = s.clone();

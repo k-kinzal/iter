@@ -15,14 +15,14 @@ use crate::trigger_util::hmac::verify_github_signature;
 use super::config::CompiledRoute;
 use super::guard::{evaluate_guard, event_pattern_matches, render_metadata};
 
-pub(super) struct WebhookState<Q: Queue> {
+pub(super) struct WebhookState<Q: Queue + ?Sized> {
     pub(super) queue: Arc<Q>,
     pub(super) secret: Option<String>,
     pub(super) routes: Vec<CompiledRoute>,
     pub(super) trigger_name: Option<String>,
 }
 
-pub(super) async fn handle_webhook<Q: Queue + 'static>(
+pub(super) async fn handle_webhook<Q: Queue + ?Sized + 'static>(
     State(state): State<Arc<WebhookState<Q>>>,
     headers: HeaderMap,
     body: Bytes,
@@ -85,7 +85,7 @@ pub(super) async fn handle_webhook<Q: Queue + 'static>(
             };
             let mut signal = Signal::new(metadata);
             iter_core::telemetry::inject_current_context_into_signal(&mut signal);
-            if let Err(e) = state.queue.queue(signal, route.priority).await {
+            if let Err(e) = state.queue.enqueue(signal, route.priority).await {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("queue error: {e}"),

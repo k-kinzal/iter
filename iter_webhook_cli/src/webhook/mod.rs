@@ -32,7 +32,7 @@ use router::{WebhookState, handle_webhook};
 ///
 /// The server runs in the calling task; cancellation triggers a graceful
 /// shutdown via [`axum::serve::Serve::with_graceful_shutdown`].
-pub struct WebhookTrigger<Q: Queue> {
+pub struct WebhookTrigger<Q: Queue + ?Sized> {
     queue: Arc<Q>,
     bind: std::net::SocketAddr,
     path: String,
@@ -41,7 +41,7 @@ pub struct WebhookTrigger<Q: Queue> {
     trigger_name: Option<String>,
 }
 
-impl<Q: Queue> std::fmt::Debug for WebhookTrigger<Q> {
+impl<Q: Queue + ?Sized> std::fmt::Debug for WebhookTrigger<Q> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WebhookTrigger")
             .field("bind", &self.bind)
@@ -52,7 +52,7 @@ impl<Q: Queue> std::fmt::Debug for WebhookTrigger<Q> {
     }
 }
 
-impl<Q: Queue + 'static> WebhookTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> WebhookTrigger<Q> {
     /// Build a webhook trigger publishing to `queue`.
     ///
     /// All route metadata templates are compiled up-front. Template
@@ -65,10 +65,10 @@ impl<Q: Queue + 'static> WebhookTrigger<Q> {
     ///   not a valid [`MetadataKey`](iter_core::MetadataKey).
     /// * [`WebhookTriggerError::Template`] — a route's metadata value is
     ///   not a valid Handlebars template.
-    pub fn new(queue: Arc<Q>, config: WebhookConfig) -> Result<Self, WebhookTriggerError<Q::Error>>
-    where
-        Q::Error: std::error::Error + Send + Sync + 'static,
-    {
+    pub fn new(
+        queue: Arc<Q>,
+        config: WebhookConfig,
+    ) -> Result<Self, WebhookTriggerError<iter_core::queue::QueueError>> {
         let mut routes = Vec::with_capacity(config.routes.len());
         for route in &config.routes {
             routes.push(CompiledRoute::from_route(route)?);
@@ -109,7 +109,7 @@ impl<Q: Queue + 'static> WebhookTrigger<Q> {
     /// # Errors
     ///
     /// Returns `WebhookTriggerError` if binding or serving fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), WebhookTriggerError<Q::Error>> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<(), WebhookTriggerError<iter_core::queue::QueueError>> {
         let bind = self.bind;
         let router = self.router();
 

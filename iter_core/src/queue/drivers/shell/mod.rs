@@ -2,12 +2,13 @@
 //!
 //! Two halves work independently:
 //!
-//! * **Enqueue.** Each call to [`ShellQueue::queue`] runs the configured
+//! * **Enqueue.** Each call to [`ShellQueue::enqueue`] runs the configured
 //!   `enqueue` script via `<interpreter> <script>` (default `sh -c`). The
 //!   serialized [`Envelope`](crate::queue::envelope::Envelope) is written to
 //!   the child's stdin; a non-zero exit becomes
 //!   [`ShellQueueError::EnqueueFailed`]. A 30-second default timeout
-//!   (configurable via the AST) terminates a stuck child with `SIGTERM`.
+//!   (configurable via the queue declaration) terminates a stuck child with
+//!   `SIGTERM`.
 //! * **Dequeue.** A long-lived child reads NDJSON signal records on its
 //!   stdout. The reader task pushes parsed signals into an MPSC channel that
 //!   [`ShellQueue::dequeue`] receives from. If the dequeue child exits before
@@ -41,9 +42,11 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use crate::queue::QueueError;
 use crate::queue::envelope::encode_signal;
 use crate::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
 use crate::{Priority, Queue};
+use async_trait::async_trait;
 
 #[cfg(unix)]
 async fn terminate_child(child: &mut tokio::process::Child) {
@@ -131,7 +134,7 @@ impl ShellQueue {
     async fn run_enqueue(&self, payload: &[u8], priority: Priority) -> Result<(), ShellQueueError> {
         let argv = self.config.interpreter_argv();
         let (program, leading) = argv.split_first().expect("validated non-empty in `new`");
-        let priority_name = priority_keyword(priority);
+        let priority_name = priority.keyword();
         let mut command = Command::new(program);
         command
             .args(leading)
@@ -179,10 +182,12 @@ impl ShellQueue {
     }
 }
 
-impl Queue for ShellQueue {
-    type Error = ShellQueueError;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
+impl ShellQueue {
+    async fn enqueue_signal(
+        &self,
+        signal: Signal,
+        priority: Priority,
+    ) -> Result<(), ShellQueueError> {
         if self.inner.lock().await.closed {
             return Err(ShellQueueError::Closed);
         }
@@ -194,7 +199,10 @@ impl Queue for ShellQueue {
         self.run_enqueue(&payload, priority).await
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue_signal(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<Option<Signal>, ShellQueueError> {
         let mut rx = self.rx.lock().await;
         tokio::select! {
             biased;
@@ -203,7 +211,7 @@ impl Queue for ShellQueue {
         }
     }
 
-    async fn close(&self) -> Result<(), Self::Error> {
+    async fn close_queue(&self) -> Result<(), ShellQueueError> {
         let mut inner = self.inner.lock().await;
         if inner.closed {
             return Ok(());
@@ -237,6 +245,23 @@ impl Queue for ShellQueue {
         }
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Queue for ShellQueue {
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
+        self.enqueue_signal(signal, priority)
+            .await
+            .map_err(QueueError::new)
+    }
+
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
+        self.dequeue_signal(cancel).await.map_err(QueueError::new)
+    }
+
+    async fn close(&self) -> Result<(), QueueError> {
+        self.close_queue().await.map_err(QueueError::new)
     }
 }
 
@@ -338,7 +363,11 @@ fn parse_ndjson_line(text: &str) -> Result<(Signal, Priority), NdjsonError> {
         NdjsonLine::Short { metadata, priority } => {
             let metadata = build_metadata(&metadata)?;
             let signal = Signal::new(metadata);
-            Ok((signal, parse_priority_keyword(priority.as_deref())))
+            let priority = priority
+                .as_deref()
+                .and_then(Priority::from_keyword)
+                .unwrap_or_default();
+            Ok((signal, priority))
         }
     }
 }
@@ -372,27 +401,6 @@ fn build_metadata(map: &serde_json::Map<String, Value>) -> Result<Metadata, Meta
     Ok(metadata)
 }
 
-fn parse_priority_keyword(s: Option<&str>) -> Priority {
-    match s.map(str::to_ascii_lowercase).as_deref() {
-        Some("low") => Priority::LOW,
-        Some("high") => Priority::HIGH,
-        Some("critical") => Priority::CRITICAL,
-        _ => Priority::NORMAL,
-    }
-}
-
-fn priority_keyword(p: Priority) -> &'static str {
-    if p >= Priority::CRITICAL {
-        "critical"
-    } else if p >= Priority::HIGH {
-        "high"
-    } else if p >= Priority::NORMAL {
-        "normal"
-    } else {
-        "low"
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,26 +413,6 @@ mod tests {
             MetadataValue::String(label.into()),
         );
         Signal::new(metadata)
-    }
-
-    #[test]
-    fn parse_priority_keyword_defaults_to_normal() {
-        assert_eq!(parse_priority_keyword(None), Priority::NORMAL);
-        assert_eq!(parse_priority_keyword(Some("low")), Priority::LOW);
-        assert_eq!(parse_priority_keyword(Some("HIGH")), Priority::HIGH);
-        assert_eq!(parse_priority_keyword(Some("critical")), Priority::CRITICAL);
-    }
-
-    #[test]
-    fn priority_keyword_buckets_correctly() {
-        assert_eq!(priority_keyword(Priority::LOW), "low");
-        assert_eq!(priority_keyword(Priority::NORMAL), "normal");
-        assert_eq!(priority_keyword(Priority::HIGH), "high");
-        assert_eq!(priority_keyword(Priority::CRITICAL), "critical");
-        // Arbitrary intermediate values bucket to the next-lower keyword.
-        assert_eq!(priority_keyword(Priority::new(60)), "normal");
-        assert_eq!(priority_keyword(Priority::new(80)), "high");
-        assert_eq!(priority_keyword(Priority::new(101)), "critical");
     }
 
     #[test]
@@ -483,7 +471,7 @@ mod tests {
         // Give the dequeue child time to open the file before the first
         // enqueue, otherwise tail's `-n 0` race window can swallow it.
         tokio::time::sleep(Duration::from_millis(200)).await;
-        q.queue(s.clone(), Priority::HIGH).await.expect("enqueue");
+        q.enqueue(s.clone(), Priority::HIGH).await.expect("enqueue");
 
         let cancel = CancellationToken::new();
         let recv = timeout(Duration::from_secs(5), q.dequeue(cancel))
@@ -495,10 +483,13 @@ mod tests {
 
         q.close().await.expect("close");
         let post = q
-            .queue(signal("after-close"), Priority::NORMAL)
+            .enqueue(signal("after-close"), Priority::NORMAL)
             .await
             .expect_err("closed rejects");
-        assert!(matches!(post, ShellQueueError::Closed));
+        assert!(matches!(
+            post.downcast_ref::<ShellQueueError>(),
+            Some(ShellQueueError::Closed)
+        ));
     }
 
     #[tokio::test]
@@ -512,11 +503,11 @@ mod tests {
         };
         let q = ShellQueue::new(config).expect("new");
         let err = q
-            .queue(signal("x"), Priority::NORMAL)
+            .enqueue(signal("x"), Priority::NORMAL)
             .await
             .expect_err("non-zero exit");
-        match err {
-            ShellQueueError::EnqueueFailed { status, .. } => assert_eq!(status, 17),
+        match err.downcast_ref::<ShellQueueError>() {
+            Some(ShellQueueError::EnqueueFailed { status, .. }) => assert_eq!(*status, 17),
             other => panic!("unexpected: {other:?}"),
         }
         q.close().await.expect("close");
@@ -533,10 +524,13 @@ mod tests {
         };
         let q = ShellQueue::new(config).expect("new");
         let err = q
-            .queue(signal("slow"), Priority::NORMAL)
+            .enqueue(signal("slow"), Priority::NORMAL)
             .await
             .expect_err("timeout");
-        assert!(matches!(err, ShellQueueError::EnqueueTimeout(_)));
+        assert!(matches!(
+            err.downcast_ref::<ShellQueueError>(),
+            Some(ShellQueueError::EnqueueTimeout(_))
+        ));
         q.close().await.expect("close");
     }
 

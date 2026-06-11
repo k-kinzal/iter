@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "iter compose layer — AnyQueue/AnyAgent/AnyWorkspace builders shared by `iter` and per-trigger CLIs"
+description = "iter compose layer — queue/agent/workspace builders shared by `iter` and per-trigger CLIs"
 
 [lib]
 name = "iter_compose"

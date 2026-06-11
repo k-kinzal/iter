@@ -83,7 +83,6 @@ redis = { version = "0.32", features = ["tokio-comp", "aio"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
 aws-sdk-sqs = { version = "1" }
-aws-sdk-kinesis = { version = "1" }
 aws-sdk-dynamodb = { version = "1" }
 aws-sdk-s3 = { version = "1" }
 aws-sigv4 = { version = "1" }
@@ -91,14 +90,6 @@ aws-types = { version = "1" }
 aws-smithy-http-client = { version = "1", features = ["rustls-aws-lc"] }
 aws-smithy-types = { version = "1" }
 aws-smithy-runtime-api = { version = "1" }
-google-cloud-pubsub = { version = "0.30" }
-google-cloud-googleapis = { version = "0.16" }
-google-cloud-auth = { version = "0.20" }
-google-cloud-gax = { version = "0.20" }
-rdkafka = { version = "0.36", features = ["cmake-build", "ssl", "sasl"] }
-azservicebus = { version = "0.21" }
-azure_core = { version = "0.22" }
-azure_identity = { version = "0.22" }
 
 # Trigger
 notify = "6"

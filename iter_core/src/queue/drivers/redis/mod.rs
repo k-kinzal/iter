@@ -18,7 +18,9 @@ pub use error::RedisQueueError;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::queue::QueueError;
 use crate::{Priority, Queue, Signal};
+use async_trait::async_trait;
 use redis::{AsyncCommands, Client};
 use tokio_util::sync::CancellationToken;
 
@@ -51,7 +53,7 @@ const BLOCK_TIMEOUT_SECS: f64 = 1.0;
 /// use iter_core::queue::RedisQueue;
 ///
 /// let queue = RedisQueue::connect("redis://127.0.0.1/", "iter:queue").await?;
-/// queue.queue(Signal::new(Metadata::new()), Priority::HIGH).await?;
+/// queue.enqueue(Signal::new(Metadata::new()), Priority::HIGH).await?;
 /// # Ok(()) }
 /// ```
 #[derive(Debug, Clone)]
@@ -143,10 +145,12 @@ fn decode_member(member: &str) -> Result<Signal, RedisQueueError> {
     Ok(serde_json::from_str(member)?)
 }
 
-impl Queue for RedisQueue {
-    type Error = RedisQueueError;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
+impl RedisQueue {
+    async fn enqueue_signal(
+        &self,
+        signal: Signal,
+        priority: Priority,
+    ) -> Result<(), RedisQueueError> {
         let member = encode_member(&signal)?;
         let score = score_for(priority);
         let mut conn = self.client.get_multiplexed_async_connection().await?;
@@ -154,7 +158,10 @@ impl Queue for RedisQueue {
         Ok(())
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue_signal(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<Option<Signal>, RedisQueueError> {
         loop {
             if cancel.is_cancelled() {
                 return Ok(None);
@@ -176,6 +183,19 @@ impl Queue for RedisQueue {
                 return Ok(Some(decode_member(&member)?));
             }
         }
+    }
+}
+
+#[async_trait]
+impl Queue for RedisQueue {
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
+        self.enqueue_signal(signal, priority)
+            .await
+            .map_err(QueueError::new)
+    }
+
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
+        self.dequeue_signal(cancel).await.map_err(QueueError::new)
     }
 }
 
@@ -247,19 +267,19 @@ mod tests {
         queue.clear().await.expect("clear");
 
         queue
-            .queue(signal_with("low"), Priority::LOW)
+            .enqueue(signal_with("low"), Priority::LOW)
             .await
             .expect("queue");
         queue
-            .queue(signal_with("critical"), Priority::CRITICAL)
+            .enqueue(signal_with("critical"), Priority::CRITICAL)
             .await
             .expect("queue");
         queue
-            .queue(signal_with("normal"), Priority::NORMAL)
+            .enqueue(signal_with("normal"), Priority::NORMAL)
             .await
             .expect("queue");
         queue
-            .queue(signal_with("high"), Priority::HIGH)
+            .enqueue(signal_with("high"), Priority::HIGH)
             .await
             .expect("queue");
 
@@ -322,7 +342,7 @@ mod tests {
         queue.clear().await.expect("clear");
 
         queue
-            .queue(signal_with("one"), Priority::NORMAL)
+            .enqueue(signal_with("one"), Priority::NORMAL)
             .await
             .expect("queue");
         let cancel = CancellationToken::new();

@@ -24,8 +24,8 @@
 //! claim-rename and the unlink loses the in-flight signal — the orphan
 //! `.claim-*` file is swept on the next [`FileQueue::open`].
 
-pub mod config;
 pub mod error;
+pub mod layout;
 
 pub use error::FileQueueError;
 
@@ -35,12 +35,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::queue::QueueError;
 use crate::{Priority, Queue, Signal};
+use async_trait::async_trait;
 use notify::{Config as NotifyConfig, PollWatcher, RecursiveMode, Watcher};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-use config::{CLAIM_INFIX, PARTIAL_SUFFIX, PENDING_DIR, POLL_INTERVAL, TMP_DIR};
+use layout::{CLAIM_INFIX, PARTIAL_SUFFIX, PENDING_DIR, POLL_INTERVAL, TMP_DIR};
 
 /// Persistent priority queue backed by a directory of JSON files and POSIX
 /// `rename(2)`.
@@ -59,7 +61,7 @@ use config::{CLAIM_INFIX, PARTIAL_SUFFIX, PENDING_DIR, POLL_INTERVAL, TMP_DIR};
 /// use iter_core::queue::FileQueue;
 ///
 /// let queue = FileQueue::open("./queue")?;
-/// queue.queue(Signal::new(Metadata::new()), Priority::HIGH).await?;
+/// queue.enqueue(Signal::new(Metadata::new()), Priority::HIGH).await?;
 /// # Ok(()) }
 /// ```
 #[derive(Debug, Clone)]
@@ -235,10 +237,12 @@ impl FileQueue {
     }
 }
 
-impl Queue for FileQueue {
-    type Error = FileQueueError;
-
-    async fn queue(&self, signal: Signal, priority: Priority) -> Result<(), Self::Error> {
+impl FileQueue {
+    async fn enqueue_signal(
+        &self,
+        signal: Signal,
+        priority: Priority,
+    ) -> Result<(), FileQueueError> {
         if self.inner.closed.load(Ordering::SeqCst) {
             return Err(FileQueueError::Closed);
         }
@@ -296,7 +300,10 @@ impl Queue for FileQueue {
         Ok(())
     }
 
-    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, Self::Error> {
+    async fn dequeue_signal(
+        &self,
+        cancel: CancellationToken,
+    ) -> Result<Option<Signal>, FileQueueError> {
         loop {
             if cancel.is_cancelled() {
                 return Ok(None);
@@ -338,9 +345,23 @@ impl Queue for FileQueue {
         }
     }
 
-    async fn close(&self) -> Result<(), Self::Error> {
+}
+
+#[async_trait]
+impl Queue for FileQueue {
+    async fn enqueue(&self, signal: Signal, priority: Priority) -> Result<(), QueueError> {
+        self.enqueue_signal(signal, priority)
+            .await
+            .map_err(QueueError::new)
+    }
+
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
+        self.dequeue_signal(cancel).await.map_err(QueueError::new)
+    }
+
+    async fn close(&self) -> Result<(), QueueError> {
         // Idempotent: a second close is a no-op. Use SeqCst to pair with
-        // the dequeue/queue checks; the queue is not on a hot enough
+        // the dequeue/enqueue checks; the queue is not on a hot enough
         // path to justify weaker orderings.
         if self.inner.closed.swap(true, Ordering::SeqCst) {
             return Ok(());
@@ -428,7 +449,7 @@ mod tests {
         {
             let queue = FileQueue::open(&root).expect("open");
             queue
-                .queue(signal_with("persistent"), Priority::HIGH)
+                .enqueue(signal_with("persistent"), Priority::HIGH)
                 .await
                 .expect("queue");
         }
@@ -450,19 +471,19 @@ mod tests {
         let queue = FileQueue::open(dir.path().join("queue")).expect("open");
 
         queue
-            .queue(signal_with("low"), Priority::LOW)
+            .enqueue(signal_with("low"), Priority::LOW)
             .await
             .expect("queue");
         queue
-            .queue(signal_with("critical"), Priority::CRITICAL)
+            .enqueue(signal_with("critical"), Priority::CRITICAL)
             .await
             .expect("queue");
         queue
-            .queue(signal_with("normal"), Priority::NORMAL)
+            .enqueue(signal_with("normal"), Priority::NORMAL)
             .await
             .expect("queue");
         queue
-            .queue(signal_with("high"), Priority::HIGH)
+            .enqueue(signal_with("high"), Priority::HIGH)
             .await
             .expect("queue");
 
@@ -521,7 +542,7 @@ mod tests {
         // Small delay so the consumer has time to land in its poll loop.
         tokio::time::sleep(Duration::from_millis(20)).await;
         producer
-            .queue(signal_with("cross"), Priority::NORMAL)
+            .enqueue(signal_with("cross"), Priority::NORMAL)
             .await
             .expect("queue");
 
@@ -540,7 +561,7 @@ mod tests {
 
         for i in 0..5 {
             queue
-                .queue(signal_with(&format!("s{i}")), Priority::NORMAL)
+                .enqueue(signal_with(&format!("s{i}")), Priority::NORMAL)
                 .await
                 .expect("queue");
         }
@@ -563,7 +584,7 @@ mod tests {
         let queue = FileQueue::open(&root).expect("open");
 
         queue
-            .queue(signal_with("only"), Priority::NORMAL)
+            .enqueue(signal_with("only"), Priority::NORMAL)
             .await
             .expect("queue");
 
@@ -608,11 +629,11 @@ mod tests {
         // filename-prefix scheme covers the full u8 range, not just the
         // canonical buckets.
         queue
-            .queue(signal_with("p13"), Priority::new(13))
+            .enqueue(signal_with("p13"), Priority::new(13))
             .await
             .expect("queue 13");
         queue
-            .queue(signal_with("p200"), Priority::new(200))
+            .enqueue(signal_with("p200"), Priority::new(200))
             .await
             .expect("queue 200");
 
@@ -637,17 +658,20 @@ mod tests {
         let queue = FileQueue::open(dir.path().join("queue")).expect("open");
 
         queue
-            .queue(signal_with("last"), Priority::NORMAL)
+            .enqueue(signal_with("last"), Priority::NORMAL)
             .await
             .expect("queue");
         queue.close().await.expect("close");
 
         // Enqueue after close must be rejected.
         let err = queue
-            .queue(signal_with("after-close"), Priority::NORMAL)
+            .enqueue(signal_with("after-close"), Priority::NORMAL)
             .await
             .expect_err("post-close enqueue rejected");
-        assert!(matches!(err, FileQueueError::Closed));
+        assert!(matches!(
+            err.downcast_ref::<FileQueueError>(),
+            Some(FileQueueError::Closed)
+        ));
 
         let cancel = CancellationToken::new();
         let drained = queue

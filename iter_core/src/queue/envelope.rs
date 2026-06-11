@@ -1,10 +1,8 @@
-//! Wire-format envelope for [`Signal`] + [`Priority`] across cloud queue
-//! backends.
+//! Wire-format envelope for [`Signal`] + [`Priority`] across queue backends.
 //!
-//! Every backend that ships bytes over the wire — SQS message body, Kinesis
-//! record data, Kafka record value, Pub/Sub message data, Service Bus message
-//! body, the shell queue's NDJSON output — uses [`encode_signal`] /
-//! [`decode_signal`] so the wire schema is identical and forward-compatible.
+//! Every backend that ships bytes over the wire — the SQS message body, the
+//! shell queue's NDJSON output — uses [`encode_signal`] / [`decode_signal`] so
+//! the wire schema is identical and forward-compatible.
 //!
 //! The format is versioned JSON:
 //!

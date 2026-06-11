@@ -25,12 +25,12 @@ pub enum ExtractMode {
     Regex(String),
 }
 
-impl<Q: Queue + 'static> CommandTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
     pub(super) fn extract_records(
         &self,
         stdout: &str,
         regex: Option<&regex::Regex>,
-    ) -> Result<Vec<Value>, CommandTriggerError<Q::Error>> {
+    ) -> Result<Vec<Value>, CommandTriggerError<iter_core::queue::QueueError>> {
         match &self.extract {
             ExtractMode::Lines => Ok(stdout
                 .lines()

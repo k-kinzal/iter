@@ -43,7 +43,7 @@ pub enum CronTriggerError<E: std::error::Error + Send + Sync + 'static> {
 /// 5-field (standard) and 6/7-field (with seconds and optional year)
 /// expressions; this trigger normalises a 5-field expression by prepending
 /// `0 ` so that ticks fall on the start of a minute.
-pub struct CronTrigger<Q: Queue> {
+pub struct CronTrigger<Q: Queue + ?Sized> {
     queue: Arc<Q>,
     schedule: Schedule,
     base_metadata: Metadata,
@@ -56,7 +56,7 @@ pub struct CronTrigger<Q: Queue> {
     trigger_name: Option<String>,
 }
 
-impl<Q: Queue> std::fmt::Debug for CronTrigger<Q> {
+impl<Q: Queue + ?Sized> std::fmt::Debug for CronTrigger<Q> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CronTrigger")
             .field("schedule", &self.schedule.to_string())
@@ -70,7 +70,7 @@ impl<Q: Queue> std::fmt::Debug for CronTrigger<Q> {
     }
 }
 
-impl<Q: Queue + 'static> CronTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     /// Build a cron trigger publishing to `queue` driven by `expression`.
     /// # Errors
     ///
@@ -78,7 +78,7 @@ impl<Q: Queue + 'static> CronTrigger<Q> {
     ///
     /// `expression` may be a 5-field cron string (e.g. `"* * * * *"`) or a
     /// 6/7-field one as accepted by the `cron` crate.
-    pub fn new(queue: Arc<Q>, expression: &str) -> Result<Self, CronTriggerError<Q::Error>> {
+    pub fn new(queue: Arc<Q>, expression: &str) -> Result<Self, CronTriggerError<iter_core::queue::QueueError>> {
         let normalized = normalize_expression(expression);
         let schedule = Schedule::from_str(&normalized)
             .map_err(|e| CronTriggerError::InvalidExpression(e.to_string()))?;
@@ -141,7 +141,7 @@ impl<Q: Queue + 'static> CronTrigger<Q> {
     pub fn try_with_timezone_name(
         mut self,
         name: &str,
-    ) -> Result<Self, CronTriggerError<Q::Error>> {
+    ) -> Result<Self, CronTriggerError<iter_core::queue::QueueError>> {
         let tz: Tz = name
             .parse()
             .map_err(|_| CronTriggerError::InvalidTimezone(name.to_owned()))?;
@@ -183,13 +183,13 @@ fn normalize_expression(expr: &str) -> String {
     }
 }
 
-impl<Q: Queue + 'static> CronTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     /// Drive the cron trigger until cancellation.
     ///
     /// # Errors
     ///
     /// Returns `CronTriggerError` if metadata construction or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), CronTriggerError<Q::Error>> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<(), CronTriggerError<iter_core::queue::QueueError>> {
         let scheduled_key = MetadataKey::new("scheduled_at")?;
         let startup_key = MetadataKey::new("startup")?;
         let catch_up_key = MetadataKey::new("catch_up")?;
@@ -265,11 +265,11 @@ impl<Q: Queue + 'static> CronTrigger<Q> {
     }
 }
 
-impl<Q: Queue + 'static> CronTrigger<Q> {
+impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     async fn emit_startup(
         &self,
         startup_key: &MetadataKey,
-    ) -> Result<(), CronTriggerError<Q::Error>> {
+    ) -> Result<(), CronTriggerError<iter_core::queue::QueueError>> {
         let mut metadata = self.base_metadata.clone();
         metadata.insert(startup_key.clone(), MetadataValue::Bool(true));
         let signal = Signal::new(metadata);
@@ -291,7 +291,7 @@ impl<Q: Queue + 'static> CronTrigger<Q> {
         &self,
         scheduled_key: &MetadataKey,
         catch_up_key: &MetadataKey,
-    ) -> Result<(), CronTriggerError<Q::Error>> {
+    ) -> Result<(), CronTriggerError<iter_core::queue::QueueError>> {
         let now_utc = Utc::now();
         let window_start = now_utc
             - chrono::Duration::seconds(i64::try_from(self.catch_up_secs).unwrap_or(i64::MAX));
@@ -332,12 +332,12 @@ impl<Q: Queue + 'static> CronTrigger<Q> {
         &self,
         signal: Signal,
         span: tracing::Span,
-    ) -> Result<(), CronTriggerError<Q::Error>> {
+    ) -> Result<(), CronTriggerError<iter_core::queue::QueueError>> {
         async move {
             let mut signal = signal;
             iter_core::telemetry::inject_current_context_into_signal(&mut signal);
             self.queue
-                .queue(signal, self.priority)
+                .enqueue(signal, self.priority)
                 .await
                 .map_err(CronTriggerError::Queue)
         }

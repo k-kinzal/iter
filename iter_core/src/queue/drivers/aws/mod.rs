@@ -1,5 +1,4 @@
-//! Shared AWS utilities (credentials, HTTP client) used by the SQS and
-//! Kinesis drivers.
+//! Shared AWS utilities (credentials, HTTP client) used by the SQS driver.
 
 pub mod credentials;
 pub mod http;

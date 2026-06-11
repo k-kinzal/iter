@@ -30,7 +30,7 @@ use crate::webhook::{Subscription, WebhookConfig, WebhookTrigger, WebhookTrigger
 use clap::Parser;
 use iter_core::{Priority, Queue};
 use iter_trigger::shutdown::ShutdownError;
-use iter_trigger::{CountingQueue, QueueHandleError, install_shutdown_handler};
+use iter_trigger::{CountingQueue, install_shutdown_handler};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -72,7 +72,7 @@ enum WebhookCliError {
     #[error(transparent)]
     Shutdown(#[from] ShutdownError),
     #[error(transparent)]
-    Webhook(#[from] WebhookTriggerError<QueueHandleError>),
+    Webhook(#[from] WebhookTriggerError<iter_core::queue::QueueError>),
 }
 
 impl IntoExitCode for WebhookCliError {

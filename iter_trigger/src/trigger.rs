@@ -111,7 +111,10 @@ impl<Q: Queue> Trigger<Q> {
     /// # Errors
     ///
     /// Returns [`EmitError`] if the queue rejects the signal.
-    pub async fn emit(&self, event: TriggerEvent) -> Result<(), EmitError<Q::Error>> {
+    pub async fn emit(
+        &self,
+        event: TriggerEvent,
+    ) -> Result<(), EmitError<iter_core::queue::QueueError>> {
         let mut md = Metadata::new();
         for (k, v) in &self.config.base_metadata {
             md.insert(k.clone(), MetadataValue::String(v.clone()));
@@ -121,7 +124,7 @@ impl<Q: Queue> Trigger<Q> {
         }
         let signal = Signal::new(md);
         self.queue
-            .queue(signal, self.config.priority)
+            .enqueue(signal, self.config.priority)
             .await
             .map_err(EmitError::Queue)?;
         let new_count = self.count.fetch_add(1, Ordering::Relaxed) + 1;
