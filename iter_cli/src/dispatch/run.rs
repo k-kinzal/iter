@@ -19,7 +19,6 @@ use std::path::{Path, PathBuf};
 use iter_compose::iterfile::{
     self, IterfileError, RunInput, RunMode, RunRecordMetadata, RunSource,
 };
-use iter_core::Config;
 use iter_core::process::ProcessId;
 use thiserror::Error;
 
@@ -28,6 +27,7 @@ use crate::dispatch::load::DEFAULT_ITERFILE;
 use crate::naming::default_process_name;
 use crate::output::{IntoExitCode, exit_codes};
 use crate::telemetry;
+use crate::tracing_preferences::TracingPreferences;
 
 /// Errors produced by [`run_run`].
 #[derive(Debug, Error)]
@@ -130,7 +130,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
 /// # Errors
 ///
 /// Returns the error surfaced by [`iter_compose::iterfile::handle`].
-pub async fn run_run(args: RunArgs, config: Config) -> Result<(), RunCmdError> {
+pub async fn run_run(args: RunArgs, prefs: TracingPreferences) -> Result<(), RunCmdError> {
     let iterfile_path: PathBuf = args
         .iterfile
         .clone()
@@ -148,7 +148,7 @@ pub async fn run_run(args: RunArgs, config: Config) -> Result<(), RunCmdError> {
         canonical_iterfile_for_run(&iterfile_path)?
     };
 
-    let _telemetry_guard = init_run_telemetry(&args, &config, &iterfile_path);
+    let _telemetry_guard = init_run_telemetry(&args, &prefs, &iterfile_path);
 
     let mode = if let Some(raw) = args.process_id.as_deref() {
         let process_id = raw
@@ -195,20 +195,20 @@ pub async fn run_run(args: RunArgs, config: Config) -> Result<(), RunCmdError> {
 
 fn init_run_telemetry(
     args: &RunArgs,
-    config: &Config,
+    prefs: &TracingPreferences,
     iterfile_path: &Path,
 ) -> telemetry::TelemetryGuard {
     let Some(service_name) = args.service.as_deref() else {
-        return telemetry::init(args.debug, config);
+        return telemetry::init(args.debug, prefs);
     };
     let Ok(root) = iter_compose::load_compose(iterfile_path) else {
-        return telemetry::init(args.debug, config);
+        return telemetry::init(args.debug, prefs);
     };
     let project =
         iter_compose::project_slug(iterfile_path, None).unwrap_or_else(|_| "iter".to_string());
     telemetry::init_for_compose(
         args.debug,
-        config,
+        prefs,
         root.telemetry.as_ref().map(|t| &t.node),
         &project,
         Some(service_name),

@@ -25,8 +25,6 @@
 #![deny(rust_2018_idioms)]
 
 pub mod agent;
-pub mod config;
-pub mod error;
 pub mod log;
 pub mod process;
 pub mod prompt;
@@ -38,8 +36,6 @@ pub mod template;
 pub mod workspace;
 
 pub use agent::{Agent, AgentRun, AgentRunContext};
-pub use config::{Config, ConfigError, LogLevel};
-pub use error::{Error, Result};
 pub use prompt::{
     CmpOp, IterationField, Prompt, PromptGuard, PromptSelector, PromptTemplate, SelectorError,
 };

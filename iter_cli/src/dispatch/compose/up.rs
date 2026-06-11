@@ -16,6 +16,7 @@ use tracing::{error, info};
 use crate::cli::{ComposeFailure, ComposeUpArgs};
 use crate::output::cli_eprintln;
 use crate::telemetry;
+use crate::tracing_preferences::TracingPreferences;
 
 use super::{ComposeUpError, canonical_compose_path, resolve_compose_path};
 
@@ -39,15 +40,24 @@ use super::{ComposeUpError, canonical_compose_path, resolve_compose_path};
 /// * The file does not exist or cannot be parsed.
 /// * One or more services/triggers fail to build.
 /// * Any task returns an error and the failure policy is `Abort`.
-pub async fn run_compose_up(args: ComposeUpArgs) -> Result<(), ComposeUpError> {
+pub async fn run_compose_up(
+    args: ComposeUpArgs,
+    prefs: TracingPreferences,
+) -> Result<(), ComposeUpError> {
     let has_targets = !args.targets.is_empty() || args.source.is_some();
     if has_targets {
+        // Targeted up spawns each named service as its own subprocess, each
+        // of which reloads the operator's preferences in its own `main`, so
+        // the orchestrator-level `prefs` is intentionally not forwarded here.
         return run_compose_up_targeted(args).await;
     }
     if args.detach {
+        // The detached orchestrator re-execs `iter compose up` (with
+        // `--detach` stripped) and reloads the operator's preferences in
+        // the child's `main`, so only the inline path consumes `prefs`.
         return spawn_compose_detached(&args);
     }
-    run_compose_up_inline(args).await
+    run_compose_up_inline(args, prefs).await
 }
 
 /// Targeted `compose up SERVICE [SERVICE...] --detach`.
@@ -145,15 +155,19 @@ fn parse_target_name_for_up(target: &str) -> Result<&str, ComposeUpError> {
 /// In-process orchestrator path. Used directly by foreground `compose up`,
 /// and entered by the post-fork child of `--detach` (with stdio already
 /// redirected to `/dev/null`).
-async fn run_compose_up_inline(args: ComposeUpArgs) -> Result<(), ComposeUpError> {
+async fn run_compose_up_inline(
+    args: ComposeUpArgs,
+    prefs: TracingPreferences,
+) -> Result<(), ComposeUpError> {
     let raw_path = resolve_compose_path(args.file.as_deref());
     let path = canonical_compose_path(&raw_path)?;
     let root = load_compose(&path)?;
     let plan = build(&root, &path)?;
-    let config = iter_core::Config::default();
     let project = project_slug(&path, args.project_name.as_deref())?;
+    // Honour the operator's loaded `~/.iter/config.toml` verbosity — the
+    // orchestrator must not fall back to a hardcoded default level.
     let _telemetry_guard =
-        telemetry::init_for_compose(args.debug, &config, plan.telemetry(), &project, None);
+        telemetry::init_for_compose(args.debug, &prefs, plan.telemetry(), &project, None);
     info!(
         compose = %path.display(),
         queues = plan.queue_count(),
@@ -351,4 +365,40 @@ fn rebuild_argv(args: &ComposeUpArgs) -> Vec<String> {
         out.push(name.to_owned());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::telemetry::resolve_level;
+    use crate::tracing_preferences::{LogLevel, TracingPreferences};
+    use tracing::Level;
+
+    /// Regression guard for the `compose up` preferences defect.
+    ///
+    /// `run_compose_up_inline` previously initialised telemetry from a
+    /// hardcoded default, so the operator's `~/.iter/config.toml` verbosity
+    /// was ignored. It now threads the loaded [`TracingPreferences`] into
+    /// [`crate::telemetry::init_for_compose`], whose effective level is
+    /// decided by [`resolve_level`]. This pins that the decision honours a
+    /// non-default `log_level` and differs from the default the orchestrator
+    /// used to hardcode — so dropping the threaded value would regress here.
+    #[test]
+    fn compose_up_honours_operator_verbosity() {
+        let configured = TracingPreferences {
+            log_level: Some(LogLevel::Warn),
+        };
+        assert_eq!(resolve_level(false, &configured), Level::WARN);
+
+        // The pre-fix behaviour: default preferences resolve to INFO. The two
+        // differ, so threading the operator's value is what makes compose up
+        // honour a non-default verbosity.
+        assert_eq!(
+            resolve_level(false, &TracingPreferences::default()),
+            Level::INFO
+        );
+        assert_ne!(
+            resolve_level(false, &configured),
+            resolve_level(false, &TracingPreferences::default())
+        );
+    }
 }

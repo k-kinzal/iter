@@ -1,5 +1,5 @@
-//! `tracing-subscriber` initialisation driven by `--debug` and the user
-//! [`Config`](iter_core::Config).
+//! `tracing-subscriber` initialisation driven by `--debug` and the operator's
+//! [`TracingPreferences`](crate::tracing_preferences::TracingPreferences).
 //!
 //! The CLI installs exactly one global subscriber per process. The level
 //! is selected as follows, in order:
@@ -7,7 +7,7 @@
 //! 1. `--debug` on the command line ⇒ `DEBUG`.
 //! 2. The `RUST_LOG` environment variable, if present ⇒ honoured by
 //!    [`EnvFilter`](tracing_subscriber::EnvFilter).
-//! 3. `log_level` from the user config ⇒ that level.
+//! 3. `log_level` from the operator's preferences ⇒ that level.
 //! 4. Otherwise the default ⇒ `INFO`.
 //!
 //! `init` is idempotent: a second call after the global subscriber has
@@ -28,8 +28,9 @@ use std::io::{self, Write};
 
 use iter_core::log::LogStream;
 use iter_core::process::{LIFECYCLE_TARGET, global_log_sender};
-use iter_core::{Config, LogLevel};
 use iter_language::{TelemetryDef, TelemetryProtocol};
+
+use crate::tracing_preferences::{LogLevel, TracingPreferences};
 use tracing::Level;
 use tracing_subscriber::Layer;
 use tracing_subscriber::filter::filter_fn;
@@ -40,13 +41,13 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 /// Install the global tracing subscriber.
 ///
-/// `debug` reflects the `--debug` flag on the chosen subcommand. `config`
-/// is the loaded user [`Config`].
+/// `debug` reflects the `--debug` flag on the chosen subcommand. `prefs`
+/// are the loaded operator [`TracingPreferences`].
 ///
 /// Returns a guard that keeps any configured OpenTelemetry provider alive and
 /// shuts it down when the caller finishes.
-pub fn init(debug: bool, config: &Config) -> TelemetryGuard {
-    init_inner(debug, config, iter_tracing::OtelRuntimeConfig::from_env())
+pub fn init(debug: bool, prefs: &TracingPreferences) -> TelemetryGuard {
+    init_inner(debug, prefs, iter_tracing::OtelRuntimeConfig::from_env())
 }
 
 /// Install tracing for a compose-managed process using the parsed
@@ -55,26 +56,26 @@ pub fn init(debug: bool, config: &Config) -> TelemetryGuard {
 /// launched services share the same path.
 pub fn init_for_compose(
     debug: bool,
-    config: &Config,
+    prefs: &TracingPreferences,
     telemetry: Option<&TelemetryDef>,
     project: &str,
     component: Option<&str>,
 ) -> TelemetryGuard {
     init_inner(
         debug,
-        config,
+        prefs,
         compose_otel_config(telemetry, project, component),
     )
 }
 
 fn init_inner(
     debug: bool,
-    config: &Config,
+    prefs: &TracingPreferences,
     otel: Option<iter_tracing::OtelRuntimeConfig>,
 ) -> TelemetryGuard {
     iter_tracing::install_trace_context_propagator();
 
-    let level = resolve_level(debug, config);
+    let level = resolve_level(debug, prefs);
     let env_filter = match EnvFilter::try_from_default_env() {
         Ok(filter) => filter,
         Err(_) => EnvFilter::new(level.to_string()),
@@ -155,11 +156,11 @@ fn init_inner(
 
 /// Compute the effective log level. Public for tests.
 #[must_use]
-pub fn resolve_level(debug: bool, config: &Config) -> Level {
+pub fn resolve_level(debug: bool, prefs: &TracingPreferences) -> Level {
     if debug {
         return Level::DEBUG;
     }
-    config
+    prefs
         .log_level
         .map_or(Level::INFO, LogLevel::as_tracing_level)
 }
@@ -385,25 +386,25 @@ mod tests {
     }
 
     #[test]
-    fn debug_flag_overrides_config() {
-        let config = Config {
+    fn debug_flag_overrides_preferences() {
+        let prefs = TracingPreferences {
             log_level: Some(LogLevel::Error),
         };
-        assert_eq!(resolve_level(true, &config), Level::DEBUG);
+        assert_eq!(resolve_level(true, &prefs), Level::DEBUG);
     }
 
     #[test]
-    fn config_level_used_when_debug_off() {
-        let config = Config {
+    fn preferences_level_used_when_debug_off() {
+        let prefs = TracingPreferences {
             log_level: Some(LogLevel::Warn),
         };
-        assert_eq!(resolve_level(false, &config), Level::WARN);
+        assert_eq!(resolve_level(false, &prefs), Level::WARN);
     }
 
     #[test]
     fn defaults_to_info_when_nothing_set() {
-        let config = Config::default();
-        assert_eq!(resolve_level(false, &config), Level::INFO);
+        let prefs = TracingPreferences::default();
+        assert_eq!(resolve_level(false, &prefs), Level::INFO);
     }
 
     #[test]

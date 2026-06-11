@@ -1,4 +1,14 @@
-//! User-facing configuration loaded from `~/.iter/config.toml`.
+//! Operator tracing preferences, read from `~/.iter/config.toml`.
+//!
+//! The only thing this file decides is `tracing` verbosity. The operator's
+//! `~/.iter/config.toml` carries a single `log_level`, and the telemetry
+//! init in [`crate::telemetry`] consumes it to pick the subscriber's level.
+//!
+//! Tracing verbosity is an operating concern, so the preferences live with
+//! the operator surface (the CLI), beside the telemetry init they configure —
+//! the core exploration never reads them. The on-disk format is unchanged:
+//! the field is still serialized as `log_level`, so existing
+//! `~/.iter/config.toml` files keep working.
 
 use std::path::{Path, PathBuf};
 
@@ -34,41 +44,38 @@ impl LogLevel {
     }
 }
 
-/// User configuration for the iter CLI / runner.
+/// Operator tracing preferences for the iter CLI.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Config {
+pub struct TracingPreferences {
     /// Logging verbosity.
     pub log_level: Option<LogLevel>,
 }
 
-/// Errors emitted by [`Config::load`].
+/// Errors emitted by [`TracingPreferences::load`].
 #[derive(Debug, thiserror::Error)]
-pub enum ConfigError {
-    /// I/O error reading the config file.
-    #[error("failed to read config file: {0}")]
+pub enum TracingPreferencesError {
+    /// I/O error reading the preferences file.
+    #[error("failed to read preferences file: {0}")]
     Io(#[from] std::io::Error),
 
-    /// The config file contained invalid TOML.
-    #[error("failed to parse config file: {0}")]
+    /// The preferences file contained invalid TOML.
+    #[error("failed to parse preferences file: {0}")]
     Parse(#[from] toml::de::Error),
 
     /// The user has no home directory and no explicit path was given.
-    #[error("could not determine home directory for default config path")]
+    #[error("could not determine home directory for default preferences path")]
     NoHome,
 }
 
-impl Config {
-    /// Load configuration from `path` (or [`Config::default_path`] when
-    /// # Errors
+impl TracingPreferences {
+    /// Load tracing preferences from `path` (or [`TracingPreferences::default_path`]
+    /// when `None`).
     ///
-    /// Returns an error if the operation fails.
-    /// `None`).
-    ///
-    /// When no explicit path is supplied, the default config file is
+    /// When no explicit path is supplied, the default preferences file is
     /// **truly optional**: any I/O error while reading it (file missing,
     /// permission denied, parent directory unreadable, …) is silently
-    /// downgraded to [`Config::default`]. This keeps the runner usable in
-    /// sandboxes, containers, and CI environments that restrict access to
+    /// downgraded to [`TracingPreferences::default`]. This keeps the CLI usable
+    /// in sandboxes, containers, and CI environments that restrict access to
     /// the user's home directory.
     ///
     /// When a path is supplied explicitly, the caller has stated intent
@@ -77,20 +84,30 @@ impl Config {
     ///
     /// Parse errors are always propagated: the file was present and
     /// readable, the user wants to know it is malformed.
-    pub fn load(path: Option<&Path>) -> Result<Self, ConfigError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TracingPreferencesError::Io`] when an explicitly-supplied path
+    /// cannot be read, [`TracingPreferencesError::Parse`] when the file is not
+    /// valid TOML, and [`TracingPreferencesError::NoHome`] when the default
+    /// path is requested but no home directory can be determined.
+    pub fn load(path: Option<&Path>) -> Result<Self, TracingPreferencesError> {
         let (resolved, is_explicit): (PathBuf, bool) = match path {
             Some(p) => (p.to_path_buf(), true),
-            None => (Self::default_path().ok_or(ConfigError::NoHome)?, false),
+            None => (
+                Self::default_path().ok_or(TracingPreferencesError::NoHome)?,
+                false,
+            ),
         };
 
         match std::fs::read_to_string(&resolved) {
             Ok(text) => {
-                let config: Config = toml::from_str(&text)?;
-                Ok(config)
+                let prefs: TracingPreferences = toml::from_str(&text)?;
+                Ok(prefs)
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(_) if !is_explicit => Ok(Self::default()),
-            Err(err) => Err(ConfigError::Io(err)),
+            Err(err) => Err(TracingPreferencesError::Io(err)),
         }
     }
 
@@ -109,6 +126,7 @@ impl Config {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod tests {
     use super::*;
     #[cfg(unix)]
@@ -119,8 +137,8 @@ mod tests {
     fn missing_file_returns_default() {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("does-not-exist.toml");
-        let cfg = Config::load(Some(&path)).expect("load");
-        assert_eq!(cfg, Config::default());
+        let prefs = TracingPreferences::load(Some(&path)).expect("load");
+        assert_eq!(prefs, TracingPreferences::default());
     }
 
     #[test]
@@ -128,8 +146,8 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("config.toml");
         std::fs::write(&path, "log_level = \"debug\"\n").expect("write");
-        let cfg = Config::load(Some(&path)).expect("load");
-        assert_eq!(cfg.log_level, Some(LogLevel::Debug));
+        let prefs = TracingPreferences::load(Some(&path)).expect("load");
+        assert_eq!(prefs.log_level, Some(LogLevel::Debug));
     }
 
     #[test]
@@ -137,8 +155,8 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("bad.toml");
         std::fs::write(&path, "log_level = \"not-a-real-level\"\n").expect("write");
-        let err = Config::load(Some(&path)).expect_err("expected parse error");
-        assert!(matches!(err, ConfigError::Parse(_)));
+        let err = TracingPreferences::load(Some(&path)).expect_err("expected parse error");
+        assert!(matches!(err, TracingPreferencesError::Parse(_)));
     }
 
     #[test]
@@ -146,15 +164,15 @@ mod tests {
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("bad.toml");
         std::fs::write(&path, "this is not toml = = = ").expect("write");
-        let err = Config::load(Some(&path)).expect_err("expected parse error");
-        assert!(matches!(err, ConfigError::Parse(_)));
+        let err = TracingPreferences::load(Some(&path)).expect_err("expected parse error");
+        assert!(matches!(err, TracingPreferencesError::Parse(_)));
     }
 
     #[cfg(unix)]
     #[test]
     fn explicit_path_io_error_propagates() {
-        // An unreadable explicit path must surface as `ConfigError::Io` —
-        // the user asked for *this* file, we must not silently substitute
+        // An unreadable explicit path must surface as `TracingPreferencesError::Io`
+        // — the user asked for *this* file, we must not silently substitute
         // defaults.
         let dir = TempDir::new().expect("tempdir");
         let path = dir.path().join("config.toml");
@@ -164,8 +182,8 @@ mod tests {
         perms.set_mode(0o000);
         std::fs::set_permissions(&path, perms).expect("chmod");
 
-        let err = Config::load(Some(&path)).expect_err("expected io error");
-        assert!(matches!(err, ConfigError::Io(_)));
+        let err = TracingPreferences::load(Some(&path)).expect_err("expected io error");
+        assert!(matches!(err, TracingPreferencesError::Io(_)));
 
         // Restore so tempdir teardown can delete the file.
         let mut perms = std::fs::metadata(&path).expect("meta").permissions();
@@ -177,8 +195,8 @@ mod tests {
     #[test]
     fn default_path_io_error_falls_back_to_default() {
         // When resolving the default path, permission errors (e.g., sandboxed
-        // HOME) must be silently downgraded to the default config so the CLI
-        // remains usable when the optional config file is simply inaccessible.
+        // HOME) must be silently downgraded to the default preferences so the
+        // CLI remains usable when the optional file is simply inaccessible.
         let dir = TempDir::new().expect("tempdir");
         // Point HOME at a path where `.iter/config.toml` exists but is
         // unreadable.
@@ -196,7 +214,7 @@ mod tests {
             std::env::set_var("HOME", &fake_home);
         }
 
-        let result = Config::load(None);
+        let result = TracingPreferences::load(None);
 
         // Restore HOME before asserting so a panic still leaves a sane env.
         unsafe {
@@ -210,8 +228,8 @@ mod tests {
         perms.set_mode(0o600);
         std::fs::set_permissions(&config_path, perms).expect("chmod");
 
-        let cfg = result.expect("load should fall back on default-path io errors");
-        assert_eq!(cfg, Config::default());
+        let prefs = result.expect("load should fall back on default-path io errors");
+        assert_eq!(prefs, TracingPreferences::default());
     }
 
     #[test]
@@ -223,7 +241,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", "/tmp/iter-test-home");
         }
-        let path = Config::default_path().expect("default_path");
+        let path = TracingPreferences::default_path().expect("default_path");
         assert!(path.ends_with(".iter/config.toml"));
         unsafe {
             match prev {

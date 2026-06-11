@@ -1,9 +1,10 @@
 //! `iter` — composition root binary.
 //!
-//! This file is intentionally tiny. It parses argv, loads the user
-//! [`Config`](iter_core::Config), forks a detached child if `--detach` was
-//! passed to the `iter run` subcommand, and otherwise hands off to the
-//! matching dispatch function in [`mod@dispatch`].
+//! This file is intentionally tiny. It parses argv, loads the operator's
+//! [`TracingPreferences`](crate::tracing_preferences::TracingPreferences),
+//! forks a detached child if `--detach` was passed to the `iter run`
+//! subcommand, and otherwise hands off to the matching dispatch function in
+//! [`mod@dispatch`].
 //!
 //! All errors flow through [`output::run_main`] so the user never sees
 //! Rust's runtime `Debug` printer.
@@ -21,6 +22,7 @@ mod dispatch;
 mod naming;
 mod output;
 mod telemetry;
+mod tracing_preferences;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -29,8 +31,6 @@ use std::path::{Path, PathBuf};
 use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
 use clap_complete::generate;
-use iter_core::Config;
-use iter_core::config::ConfigError;
 use iter_core::process::{DetachedSpec, ProcessError, ProcessRegistry, SpawnError, spawn_detached};
 use thiserror::Error;
 
@@ -46,11 +46,12 @@ use crate::dispatch::{
 };
 use crate::naming::default_process_name;
 use crate::output::{IntoExitCode, cli_println, exit_codes, run_main};
+use crate::tracing_preferences::{TracingPreferences, TracingPreferencesError};
 
 #[derive(Debug, Error)]
 enum IterCliError {
-    #[error("loading user config: {0}")]
-    Config(#[source] ConfigError),
+    #[error("loading tracing preferences: {0}")]
+    TracingPreferences(#[source] TracingPreferencesError),
     #[error("building tokio runtime: {0}")]
     Runtime(#[source] io::Error),
     #[error("opening process registry: {0}")]
@@ -86,7 +87,7 @@ enum IterCliError {
 impl IntoExitCode for IterCliError {
     fn exit_code(&self) -> i32 {
         match self {
-            Self::Config(_) => exit_codes::CONFIG,
+            Self::TracingPreferences(_) => exit_codes::CONFIG,
             // `CanonicaliseIterfile` lands here, not in `IterfileMissing`,
             // because `canonicalize` only runs after the existence check
             // passed: a failure here means a TOCTOU race or a permission
@@ -115,15 +116,17 @@ fn main() -> ! {
 
 fn real_main() -> Result<(), IterCliError> {
     let cli = Cli::parse();
-    let config = load_config_for(&cli)?;
+    let prefs = load_tracing_preferences_for(&cli)?;
 
     match cli.command {
-        Command::Run(args) => run_run_dispatch(args, config),
+        Command::Run(args) => run_run_dispatch(args, prefs),
 
         Command::Compose { cmd } => match cmd {
-            ComposeCmd::Up(args) => {
-                block_on(async move { run_compose_up(args).await.map_err(IterCliError::ComposeUp) })
-            }
+            ComposeCmd::Up(args) => block_on(async move {
+                run_compose_up(args, prefs)
+                    .await
+                    .map_err(IterCliError::ComposeUp)
+            }),
             ComposeCmd::Validate(args) => {
                 run_compose_validate(&args).map_err(|e| IterCliError::Compose(e.into()))
             }
@@ -153,20 +156,20 @@ fn real_main() -> Result<(), IterCliError> {
         Command::Kill(args) => kill_dispatch(args),
         Command::Rm(args) => rm_dispatch(args),
         Command::Inspect(args) => inspect_dispatch(args),
-        Command::Enqueue(args) => enqueue_dispatch(args, config),
+        Command::Enqueue(args) => enqueue_dispatch(args, prefs),
 
         Command::Process { cmd } => match cmd {
             ProcessCmd::Ls(args) => ps_dispatch(args),
             ProcessCmd::Inspect(args) => inspect_dispatch(args),
             ProcessCmd::Logs(args) => logs_dispatch(args),
-            ProcessCmd::Run(args) => run_run_dispatch(args, config),
+            ProcessCmd::Run(args) => run_run_dispatch(args, prefs),
             ProcessCmd::Stop(args) => stop_dispatch(args),
             ProcessCmd::Kill(args) => kill_dispatch(args),
             ProcessCmd::Rm(args) => rm_dispatch(args),
         },
 
         Command::Signal { cmd } => match cmd {
-            SignalCmd::Push(args) => enqueue_dispatch(args, config),
+            SignalCmd::Push(args) => enqueue_dispatch(args, prefs),
         },
 
         Command::Completions { shell } => {
@@ -200,17 +203,17 @@ fn inspect_dispatch(args: InspectArgs) -> Result<(), IterCliError> {
     block_on(async move { run_inspect(args).await.map_err(IterCliError::from) })
 }
 
-fn enqueue_dispatch(args: EnqueueArgs, config: Config) -> Result<(), IterCliError> {
-    block_on(async move { run_enqueue(args, config).await.map_err(IterCliError::from) })
+fn enqueue_dispatch(args: EnqueueArgs, prefs: TracingPreferences) -> Result<(), IterCliError> {
+    block_on(async move { run_enqueue(args, prefs).await.map_err(IterCliError::from) })
 }
 
-fn run_run_dispatch(args: RunArgs, config: Config) -> Result<(), IterCliError> {
+fn run_run_dispatch(args: RunArgs, prefs: TracingPreferences) -> Result<(), IterCliError> {
     // Adopted children (`--process-id <ULID>`) take the in-process path
     // unconditionally: they *are* the spawned subprocess, so going through
     // `spawn_detached` again would fork an infinite chain.
     if args.process_id.is_some() {
         return block_on(async move {
-            Box::pin(run_run(args, config))
+            Box::pin(run_run(args, prefs))
                 .await
                 .map_err(IterCliError::from)
         });
@@ -237,22 +240,22 @@ fn run_run_dispatch(args: RunArgs, config: Config) -> Result<(), IterCliError> {
     })
 }
 
-/// Locate the config file for whichever subcommand was selected. Only
+/// Locate the preferences file for whichever subcommand was selected. Only
 /// `iter run` (or `iter process run`) exposes `--config` today.
 ///
 /// Adopted children (`iter run --process-id <ULID>`) are an explicit
-/// exception: a config parse/read failure here would `?`-exit the child
+/// exception: a parse/read failure here would `?`-exit the child
 /// before [`iter_compose::iterfile::handle`] reaches `bootstrap_adopted`,
 /// leaving the parent-allocated registry record dangling `Initializing`
-/// until bootstrap-grace reconciles it. Since `Config` is consumed only
-/// by the telemetry layer (its sole field is `log_level`), we degrade to
-/// `Config::default()` with a warning to stderr. Detached children
-/// have stderr bound to `/dev/null` at this point — the warning is
+/// until bootstrap-grace reconciles it. Since the preferences are consumed
+/// only by the telemetry layer (their sole field is `log_level`), we degrade
+/// to [`TracingPreferences::default`] with a warning to stderr. Detached
+/// children have stderr bound to `/dev/null` at this point — the warning is
 /// only surfaced once the runtime is up and the tracing subscriber
-/// fans into `<dir>/log.ndjson`, so a config-parse warning emitted
+/// fans into `<dir>/log.ndjson`, so a parse warning emitted
 /// before that is intentionally silent. Foreground runs keep the
 /// strict behaviour.
-fn load_config_for(cli: &Cli) -> Result<Config, IterCliError> {
+fn load_tracing_preferences_for(cli: &Cli) -> Result<TracingPreferences, IterCliError> {
     let (path, is_adopted_child) = match &cli.command {
         Command::Run(args)
         | Command::Process {
@@ -260,16 +263,16 @@ fn load_config_for(cli: &Cli) -> Result<Config, IterCliError> {
         } => (args.config.clone(), args.process_id.is_some()),
         _ => (None, false),
     };
-    match Config::load(path.as_deref()) {
-        Ok(c) => Ok(c),
+    match TracingPreferences::load(path.as_deref()) {
+        Ok(prefs) => Ok(prefs),
         Err(e) if is_adopted_child => {
             tracing::warn!(
                 error = %e,
-                "failed to load user config for adopted child; using defaults so the parent-allocated record can finalize cleanly"
+                "failed to load tracing preferences for adopted child; using defaults so the parent-allocated record can finalize cleanly"
             );
-            Ok(Config::default())
+            Ok(TracingPreferences::default())
         }
-        Err(e) => Err(IterCliError::Config(e)),
+        Err(e) => Err(IterCliError::TracingPreferences(e)),
     }
 }
 

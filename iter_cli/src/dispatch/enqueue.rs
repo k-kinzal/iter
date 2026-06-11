@@ -17,9 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iter_compose::{ComposeError, build_queue, is_compose_filename, load_compose};
+use iter_core::Queue;
 use iter_core::queue::{Priority, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
-use iter_core::{Config, Queue};
 use iter_language::{Compose, NamedQueue, QueueDef};
 use thiserror::Error;
 
@@ -28,6 +28,7 @@ use crate::dispatch::compose::compose_error_exit_code;
 use crate::dispatch::load::DEFAULT_ITERFILE;
 use crate::output::{IntoExitCode, cli_println, exit_codes};
 use crate::telemetry;
+use crate::tracing_preferences::TracingPreferences;
 
 /// Errors produced by `iter enqueue`.
 #[derive(Debug, Error)]
@@ -116,8 +117,11 @@ impl IntoExitCode for EnqueueCmdError {
 /// # Errors
 ///
 /// See [`EnqueueCmdError`].
-pub async fn run_enqueue(args: EnqueueArgs, config: Config) -> Result<(), EnqueueCmdError> {
-    let _telemetry_guard = telemetry::init(false, &config);
+pub async fn run_enqueue(
+    args: EnqueueArgs,
+    prefs: TracingPreferences,
+) -> Result<(), EnqueueCmdError> {
+    let _telemetry_guard = telemetry::init(false, &prefs);
 
     let queue = resolve_queue(&args).await?;
     let metadata = parse_metadata(&args.metadata)?;
