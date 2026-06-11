@@ -2,9 +2,11 @@
 //! event handlers, and webhook metadata rendering.
 //!
 //! A [`Template`] is compiled once and rendered many times. The underlying
-//! engine is [`handlebars`] in non-strict mode with HTML escaping disabled,
-//! so missing variables render as empty strings and rendered text is emitted
-//! verbatim (no `&amp;` / `&lt;` rewrites).
+//! engine is [`handlebars`] in strict mode with HTML escaping disabled, so a
+//! reference to a variable absent from the render context surfaces a
+//! [`TemplateError::UnknownVariable`] rather than rendering empty — the
+//! run-time backstop behind the analysis-time position checks. Rendered text
+//! is emitted verbatim (no `&amp;` / `&lt;` rewrites).
 //!
 //! The template grammar is whatever Handlebars supports:
 //! `{{path.to.value}}` interpolation, `{{#if …}}` blocks, and so on. The
@@ -47,7 +49,7 @@ impl Template {
     pub fn compile(source: impl Into<String>) -> Result<Self, TemplateError> {
         let source = source.into();
         let mut registry = Handlebars::new();
-        registry.set_strict_mode(false);
+        registry.set_strict_mode(true);
         registry.register_escape_fn(handlebars::no_escape);
         registry
             .register_template_string(TEMPLATE_KEY, &source)
@@ -63,12 +65,16 @@ impl Template {
 
     /// Render against a serializable context.
     ///
-    /// Missing variables are rendered as empty strings.
+    /// Strict mode is on: a reference to a variable that the context does
+    /// not carry surfaces an error instead of rendering empty.
     ///
     /// # Errors
     ///
-    /// * [`TemplateError::Render`] — any render failure (helper errors,
-    ///   context serialization issues, …).
+    /// * [`TemplateError::UnknownVariable`] — the template references a
+    ///   path absent from the context (e.g. a metadata key the signal does
+    ///   not carry).
+    /// * [`TemplateError::Render`] — any other render failure (helper
+    ///   errors, context serialization issues, …).
     pub fn render<T: Serialize>(&self, ctx: &T) -> Result<String, TemplateError> {
         self.registry
             .render(TEMPLATE_KEY, ctx)
@@ -152,17 +158,17 @@ mod tests {
     }
 
     #[test]
-    fn render_returns_empty_string_for_missing_top_level() {
+    fn render_errors_on_missing_top_level() {
         let tpl = Template::compile("{{nope}}").unwrap();
-        let out = tpl.render(&json!({})).unwrap();
-        assert_eq!(out, "");
+        let err = tpl.render(&json!({})).unwrap_err();
+        assert!(matches!(err, TemplateError::UnknownVariable(_)));
     }
 
     #[test]
-    fn render_returns_empty_string_for_missing_nested_path() {
+    fn render_errors_on_missing_nested_path() {
         let tpl = Template::compile("{{metadata.missing}}").unwrap();
-        let out = tpl.render(&json!({"metadata": {"other": "x"}})).unwrap();
-        assert_eq!(out, "");
+        let err = tpl.render(&json!({"metadata": {"other": "x"}})).unwrap_err();
+        assert!(matches!(err, TemplateError::UnknownVariable(_)));
     }
 
     #[test]

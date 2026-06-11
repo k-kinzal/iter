@@ -124,19 +124,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_variable_renders_empty() {
+    fn unknown_variable_errors() {
         let signal = signal_with(Metadata::new());
         let template = PromptTemplate::new("{{nope}}").expect("compile");
-        let out = template.render(&signal, &iter_ctx()).unwrap();
-        assert_eq!(out.as_str(), "");
+        let err = template.render(&signal, &iter_ctx()).unwrap_err();
+        assert!(matches!(err, TemplateError::UnknownVariable(_)));
     }
 
     #[test]
-    fn unknown_metadata_key_renders_empty() {
+    fn unknown_metadata_key_errors() {
         let signal = signal_with(Metadata::new());
         let template = PromptTemplate::new("{{metadata.missing}}").expect("compile");
-        let out = template.render(&signal, &iter_ctx()).unwrap();
-        assert_eq!(out.as_str(), "");
+        let err = template.render(&signal, &iter_ctx()).unwrap_err();
+        assert!(matches!(err, TemplateError::UnknownVariable(_)));
     }
 
     #[test]
