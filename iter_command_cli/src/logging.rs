@@ -59,6 +59,20 @@ impl LoggingArgs {
         };
         let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
-        iter_tracing::install_stderr_subscriber(filter, matches!(self.log_format, LogFormat::Json))
+        // iter_tracing never invents a `service.name`; this binary supplies its
+        // own (its `CARGO_BIN_NAME`) when the operator left `OTEL_SERVICE_NAME`
+        // unset.
+        let otel = iter_tracing::OtelRuntimeConfig::from_env().map(|mut config| {
+            if config.service_name.is_none() {
+                config.service_name = Some(env!("CARGO_BIN_NAME").to_string());
+            }
+            config
+        });
+
+        iter_tracing::install_stderr_subscriber(
+            filter,
+            matches!(self.log_format, LogFormat::Json),
+            otel,
+        )
     }
 }

@@ -1,8 +1,11 @@
 //! OpenTelemetry setup and propagation helpers shared by iter crates.
 //!
-//! The crate intentionally stays independent of `iter_core` so Core, CLI,
-//! trigger crates, and future agent integrations can share the same W3C trace
-//! context and OTLP wiring without forming dependency cycles.
+//! The crate intentionally stays independent of every other iter crate so they
+//! can share the same W3C trace context and OTLP wiring without forming
+//! dependency cycles. It owns telemetry *mechanism* only — reading the standard
+//! `OTEL_*` environment contract, building exporters, and propagating context.
+//! Deciding a telemetry *value* (such as the `service.name`) is policy each
+//! binary owns; this crate never invents one.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -34,7 +37,8 @@ use tracing_subscriber::util::SubscriberInitExt;
 /// endpoint is supplied by config or environment.
 pub const DEFAULT_OTLP_HTTP_ENDPOINT: &str = "http://localhost:4318";
 
-/// Internal enable switch propagated to compose-managed subprocesses.
+/// Internal switch a parent process sets to enable telemetry in a spawned
+/// child process.
 pub const ITER_OTEL_ENABLED: &str = "ITER_OTEL_ENABLED";
 
 /// W3C trace context carrier key.
@@ -43,12 +47,11 @@ pub const TRACEPARENT: &str = "traceparent";
 /// W3C trace state carrier key.
 pub const TRACESTATE: &str = "tracestate";
 
-/// Signal metadata key used to preserve the trigger span context across the
-/// Queue boundary.
+/// Metadata key that carries the W3C `traceparent` across a process boundary,
+/// preserving the parent span context.
 pub const SIGNAL_TRACEPARENT_METADATA_KEY: &str = "iter.otel.traceparent";
 
-/// Signal metadata key used to preserve W3C tracestate across the Queue
-/// boundary.
+/// Metadata key that carries W3C `tracestate` across a process boundary.
 pub const SIGNAL_TRACESTATE_METADATA_KEY: &str = "iter.otel.tracestate";
 
 /// OpenTelemetry protocol supported by iter's direct OTLP exporter.
@@ -58,11 +61,14 @@ pub enum OtelProtocol {
     HttpProtobuf,
 }
 
-/// Runtime OTLP configuration after compose/env defaults have been resolved.
+/// Resolved runtime OTLP configuration: endpoints and resource attributes
+/// after the standard `OTEL_*` environment contract has been read.
 #[derive(Debug, Clone)]
 pub struct OtelRuntimeConfig {
-    /// `service.name` for the current process.
-    pub service_name: String,
+    /// `service.name` for the current process, or `None` when the owning
+    /// binary has not supplied one. This crate never invents a value; an
+    /// absent name falls through to the OpenTelemetry SDK default.
+    pub service_name: Option<String>,
     /// OTLP endpoint. For `http/protobuf`, either the collector base endpoint
     /// or the full `/v1/traces` endpoint is accepted.
     pub endpoint: String,
@@ -95,21 +101,44 @@ impl OtelRuntimeConfig {
         if !enabled {
             return None;
         }
-        let service_name = std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "iter".into());
-        let endpoint = std::env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-            .or_else(|_| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT"))
-            .unwrap_or_else(|_| DEFAULT_OTLP_HTTP_ENDPOINT.to_string());
-        let logs_endpoint = std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")
-            .or_else(|_| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT"))
-            .unwrap_or_else(|_| DEFAULT_OTLP_HTTP_ENDPOINT.to_string());
         Some(Self {
-            service_name,
-            endpoint,
-            logs_endpoint,
+            service_name: std::env::var("OTEL_SERVICE_NAME").ok(),
+            endpoint: resolve_traces_endpoint(None),
+            logs_endpoint: resolve_logs_endpoint(None),
             resource_attributes: parse_resource_attributes_env(),
             protocol: OtelProtocol::HttpProtobuf,
         })
     }
+}
+
+/// Resolve the OTLP traces endpoint: an explicit override wins, then the
+/// standard `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` /
+/// `OTEL_EXPORTER_OTLP_ENDPOINT` environment contract, falling back to
+/// [`DEFAULT_OTLP_HTTP_ENDPOINT`].
+///
+/// This is the single home for the traces endpoint fallback chain; every
+/// binary that builds an [`OtelRuntimeConfig`] resolves through it rather than
+/// re-encoding the precedence.
+#[must_use]
+pub fn resolve_traces_endpoint(explicit: Option<String>) -> String {
+    explicit
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT").ok())
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
+        .unwrap_or_else(|| DEFAULT_OTLP_HTTP_ENDPOINT.to_string())
+}
+
+/// Resolve the OTLP logs endpoint: an explicit override wins, then the standard
+/// `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` / `OTEL_EXPORTER_OTLP_ENDPOINT`
+/// environment contract, falling back to [`DEFAULT_OTLP_HTTP_ENDPOINT`].
+///
+/// The single home for the logs endpoint fallback chain (see
+/// [`resolve_traces_endpoint`]).
+#[must_use]
+pub fn resolve_logs_endpoint(explicit: Option<String>) -> String {
+    explicit
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT").ok())
+        .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
+        .unwrap_or_else(|| DEFAULT_OTLP_HTTP_ENDPOINT.to_string())
 }
 
 /// Keeps process-global telemetry resources alive until shutdown.
@@ -228,27 +257,38 @@ where
 
 /// Build the tracing layer that exports `tracing` events to OpenTelemetry
 /// logs while preserving trace/span IDs from the active `OTel` span.
+///
+/// The OTel-internal targets (the exporter, transport, and bridge crates) are
+/// filtered out here so their own diagnostics never recurse back into the log
+/// pipeline. This is the single home for that predicate; callers attach the
+/// layer as-is.
 #[must_use]
 pub fn otel_log_layer<S>(provider: &SdkLoggerProvider) -> impl Layer<S> + Send + Sync + 'static
 where
     S: tracing::Subscriber + for<'span> LookupSpan<'span> + Send + Sync,
 {
-    OpenTelemetryTracingBridge::new(provider)
+    OpenTelemetryTracingBridge::new(provider).with_filter(filter_fn(otel_log_target_enabled))
 }
 
-/// Install a stderr tracing subscriber for standalone trigger CLIs.
+/// Install a stderr tracing subscriber for a standalone binary.
 ///
-/// When `OTel` is enabled via environment variables this also installs trace and
-/// log export layers and returns a guard that keeps the providers alive.
+/// `otel` is the caller-resolved OTLP configuration (or `None` to leave export
+/// disabled). When present, this also installs trace and log export layers and
+/// returns a guard that keeps the providers alive. The caller owns the
+/// `service.name` decision — this crate does not invent one.
 #[must_use]
-pub fn install_stderr_subscriber(env_filter: EnvFilter, json: bool) -> TelemetryGuard {
+pub fn install_stderr_subscriber(
+    env_filter: EnvFilter,
+    json: bool,
+    otel: Option<OtelRuntimeConfig>,
+) -> TelemetryGuard {
     install_trace_context_propagator();
     let stderr_layer: Box<dyn Layer<tracing_subscriber::Registry> + Send + Sync> = if json {
         fmt::layer().json().with_writer(io::stderr).boxed()
     } else {
         fmt::layer().with_writer(io::stderr).boxed()
     };
-    install_stderr_subscriber_inner(env_filter, stderr_layer, OtelRuntimeConfig::from_env())
+    install_stderr_subscriber_inner(env_filter, stderr_layer, otel)
 }
 
 fn install_stderr_subscriber_inner(
@@ -290,9 +330,11 @@ fn install_stderr_subscriber_inner(
         }
     };
 
+    // "iter" names the shared tracing instrumentation scope (this library
+    // itself), not a service; the SDK `service.name` comes from the resolved
+    // config's resource.
     let otel_trace_layer = otel_layer(&tracer_provider, "iter");
-    let otel_log_layer =
-        otel_log_layer(&logger_provider).with_filter(filter_fn(otel_log_target_enabled));
+    let otel_log_layer = otel_log_layer(&logger_provider);
     let _installed = tracing_subscriber::registry()
         .with(stderr_layer)
         .with(otel_log_layer)
@@ -323,7 +365,12 @@ fn otel_log_target_enabled(metadata: &tracing::Metadata<'_>) -> bool {
 }
 
 fn resource(config: &OtelRuntimeConfig) -> Resource {
-    let mut resource = Resource::builder().with_service_name(config.service_name.clone());
+    // When no name was supplied, leave the SDK's own default rather than
+    // inventing one here — deciding the value is the binary's policy.
+    let mut resource = match &config.service_name {
+        Some(service_name) => Resource::builder().with_service_name(service_name.clone()),
+        None => Resource::builder(),
+    };
     for (key, value) in &config.resource_attributes {
         resource = resource.with_attribute(KeyValue::new(key.clone(), value.clone()));
     }

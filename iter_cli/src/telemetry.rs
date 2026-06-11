@@ -23,6 +23,37 @@
 //!   publishes its [`LogSender`](iter_core::process::LogSender)
 //!   as soon as it is constructed; lines emitted before that — typically
 //!   CLI startup — only land on stderr.
+//!
+//! # Telemetry policy lives here
+//!
+//! `iter_tracing` owns telemetry *mechanism* (reading the `OTEL_*`
+//! environment contract, building exporters, propagating W3C context); the
+//! CLI owns the *policy* — what a run is called and which attributes it
+//! carries. Concretely:
+//!
+//! * the `service.name` value, including the [`CLI_SERVICE_NAME`] default and
+//!   the per-component derivation under compose ([`component_service_name`]);
+//! * the resource-attribute set ([`resource_attributes`]); and
+//! * projection of `OTEL_*` onto the subprocesses the CLI spawns
+//!   ([`service_env`]).
+//!
+//! ## The reserved `iter.*` namespace
+//!
+//! `iter.*` is one reserved vocabulary spanning wire and disk; renaming a
+//! member is a migration, never a rider. Its families and their owners:
+//!
+//! * `iter.otel.*` — Signal metadata keys that carry W3C trace context across
+//!   the queue boundary (`iter.otel.traceparent`, `iter.otel.tracestate`).
+//! * `iter.signal.*` — span attributes describing the Signal an iteration is
+//!   consuming (Runner/core).
+//! * `iter.agent.*` — span attributes naming the agent (`iter.agent.name`,
+//!   `iter.agent.driver`; Agent/core).
+//! * `iter.workspace.*` — span attributes for the workspace
+//!   (`iter.workspace.name`, `iter.workspace.path`; Workspace/core).
+//! * `iter.error.*` — error diagnostics on a failed iteration's span (the
+//!   error source).
+//! * `iter.compose.*` — run-record labels grouping a compose run's processes
+//!   (`iter.compose.project`, `iter.compose.service`, …; operator/CLI).
 
 use std::io::{self, Write};
 
@@ -39,6 +70,23 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt};
 
+/// The CLI's own `service.name` when telemetry is enabled but the operator
+/// has not set `OTEL_SERVICE_NAME`. `iter_tracing` never invents this — the
+/// `iter` binary supplies it, the same way each trigger binary supplies its
+/// own name.
+const CLI_SERVICE_NAME: &str = "iter";
+
+/// Resolve the ambient OTLP config from the environment and stamp the CLI's
+/// own `service.name` default when the operator left it unset.
+fn env_otel_config() -> Option<iter_tracing::OtelRuntimeConfig> {
+    iter_tracing::OtelRuntimeConfig::from_env().map(|mut config| {
+        if config.service_name.is_none() {
+            config.service_name = Some(CLI_SERVICE_NAME.to_string());
+        }
+        config
+    })
+}
+
 /// Install the global tracing subscriber.
 ///
 /// `debug` reflects the `--debug` flag on the chosen subcommand. `prefs`
@@ -47,7 +95,7 @@ use tracing_subscriber::{EnvFilter, fmt};
 /// Returns a guard that keeps any configured OpenTelemetry provider alive and
 /// shuts it down when the caller finishes.
 pub fn init(debug: bool, prefs: &TracingPreferences) -> TelemetryGuard {
-    init_inner(debug, prefs, iter_tracing::OtelRuntimeConfig::from_env())
+    init_inner(debug, prefs, env_otel_config())
 }
 
 /// Install tracing for a compose-managed process using the parsed
@@ -136,9 +184,11 @@ fn init_inner(
             };
         }
     };
+    // "iter" names the shared tracing instrumentation scope (the library),
+    // not a service; the `service.name` rides in the resolved config's
+    // resource. The OTel-internal target filter lives inside `otel_log_layer`.
     let otel_layer = iter_tracing::otel_layer(&tracer_provider, "iter");
-    let otel_log_layer = iter_tracing::otel_log_layer(&logger_provider)
-        .with_filter(filter_fn(otel_log_target_enabled));
+    let otel_log_layer = iter_tracing::otel_log_layer(&logger_provider);
 
     let _installed = tracing_subscriber::registry()
         .with(env_filter)
@@ -177,7 +227,7 @@ fn compose_otel_config(
 ) -> Option<iter_tracing::OtelRuntimeConfig> {
     match telemetry {
         Some(decl) => otel_config_from_compose(decl, project, component),
-        None => iter_tracing::OtelRuntimeConfig::from_env(),
+        None => env_otel_config(),
     }
 }
 
@@ -215,40 +265,12 @@ fn otel_config_from_compose(
         TelemetryProtocol::HttpProtobuf => {}
     }
     Some(iter_tracing::OtelRuntimeConfig {
-        service_name,
-        endpoint: decl
-            .endpoint
-            .clone()
-            .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT").ok())
-            .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
-            .unwrap_or_else(|| iter_tracing::DEFAULT_OTLP_HTTP_ENDPOINT.to_string()),
-        logs_endpoint: decl
-            .endpoint
-            .clone()
-            .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT").ok())
-            .or_else(|| std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").ok())
-            .unwrap_or_else(|| iter_tracing::DEFAULT_OTLP_HTTP_ENDPOINT.to_string()),
+        service_name: Some(service_name),
+        endpoint: iter_tracing::resolve_traces_endpoint(decl.endpoint.clone()),
+        logs_endpoint: iter_tracing::resolve_logs_endpoint(decl.endpoint.clone()),
         resource_attributes,
         protocol: iter_tracing::OtelProtocol::HttpProtobuf,
     })
-}
-
-fn otel_log_target_enabled(metadata: &tracing::Metadata<'_>) -> bool {
-    let target = metadata.target();
-    !matches!(
-        target.split("::").next(),
-        Some(
-            "opentelemetry"
-                | "opentelemetry_sdk"
-                | "opentelemetry_otlp"
-                | "opentelemetry_appender_tracing"
-                | "tracing_opentelemetry"
-                | "hyper"
-                | "h2"
-                | "tonic"
-                | "reqwest"
-        )
-    )
 }
 
 /// Build the environment variables a compose-managed service subprocess needs
@@ -495,7 +517,25 @@ mod tests {
 
         let config = compose_otel_config(None, "project", None).expect("env config");
 
-        assert_eq!(config.service_name, "ambient");
+        assert_eq!(config.service_name.as_deref(), Some("ambient"));
+    }
+
+    #[test]
+    fn cli_supplies_iter_service_name_when_unset() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _snapshot = clear_otel_env();
+        // SAFETY: serialised via ENV_LOCK.
+        unsafe {
+            std::env::set_var(iter_tracing::ITER_OTEL_ENABLED, "true");
+        }
+
+        // iter_tracing leaves `service.name` unset when the operator has not
+        // set OTEL_SERVICE_NAME; the CLI owns the value and supplies its own.
+        let config = env_otel_config().expect("env config");
+
+        assert_eq!(config.service_name.as_deref(), Some(CLI_SERVICE_NAME));
     }
 
     #[test]
