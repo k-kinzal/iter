@@ -586,13 +586,17 @@ pub fn add_span_link(span: &tracing::Span, span_context: SpanContext) {
 }
 
 /// Mark a span as failed and attach a compact exception event.
-pub fn record_span_error(span: &tracing::Span, stage: &'static str, message: &str) {
+///
+/// `source` names which operation produced the error (the caller's
+/// `ErrorSource` wire form, e.g. `"workspace_setup"`); it is attached as the
+/// `iter.error.source` attribute.
+pub fn record_span_error(span: &tracing::Span, source: &'static str, message: &str) {
     span.set_status(Status::error(message.to_owned()));
     span.add_event(
         "exception",
         vec![
             KeyValue::new("exception.message", message.to_owned()),
-            KeyValue::new("iter.error.stage", stage),
+            KeyValue::new("iter.error.source", source),
         ],
     );
 }

@@ -49,7 +49,7 @@ pub enum AgentBuildError {
 fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
     match mode {
         AstAgentMode::Interactive => ImplAgentMode::Interactive,
-        AstAgentMode::Print => ImplAgentMode::Print,
+        AstAgentMode::Headless => ImplAgentMode::Headless,
     }
 }
 
@@ -357,10 +357,10 @@ mod tests {
     #[allow(clippy::too_many_lines)]
     fn agent_from_def_selects_each_variant() {
         let cases: [(AgentDef, &str); 13] = [
-            (claude_def(AstAgentMode::Print), "claude"),
+            (claude_def(AstAgentMode::Headless), "claude"),
             (
                 AgentDef::Codex {
-                    mode: AstAgentMode::Print,
+                    mode: AstAgentMode::Headless,
                     command: "codex".into(),
                     args: Vec::new(),
                     env: empty_env(),
@@ -369,7 +369,7 @@ mod tests {
             ),
             (
                 AgentDef::Gemini {
-                    mode: AstAgentMode::Print,
+                    mode: AstAgentMode::Headless,
                     command: "gemini".into(),
                     args: Vec::new(),
                     env: empty_env(),
@@ -378,7 +378,7 @@ mod tests {
             ),
             (
                 AgentDef::Hermes {
-                    mode: AstAgentMode::Print,
+                    mode: AstAgentMode::Headless,
                     command: "hermes".into(),
                     args: Vec::new(),
                     env: empty_env(),
@@ -387,7 +387,7 @@ mod tests {
             ),
             (
                 AgentDef::Antigravity {
-                    mode: AstAgentMode::Print,
+                    mode: AstAgentMode::Headless,
                     command: "agy".into(),
                     args: Vec::new(),
                     conversation_id: None,
@@ -397,7 +397,7 @@ mod tests {
             ),
             (
                 AgentDef::Copilot {
-                    mode: AstAgentMode::Print,
+                    mode: AstAgentMode::Headless,
                     command: "gh".into(),
                     subcommand: None,
                     args: Vec::new(),
@@ -495,8 +495,14 @@ mod tests {
         );
 
         // Print mode and an absent session file bind to their counterparts.
-        let none = build_claude(AstAgentMode::Print, "claude", &[], None, &BTreeMap::new());
-        assert_eq!(none.mode, ImplAgentMode::Print);
+        let none = build_claude(
+            AstAgentMode::Headless,
+            "claude",
+            &[],
+            None,
+            &BTreeMap::new(),
+        );
+        assert_eq!(none.mode, ImplAgentMode::Headless);
         assert!(none.session_id_file.is_none());
     }
 
@@ -541,11 +547,14 @@ mod tests {
         use iter_language::RouterStrategy;
         let def = AgentDef::Router {
             agents: vec![
-                ("primary".into(), Box::new(claude_def(AstAgentMode::Print))),
+                (
+                    "primary".into(),
+                    Box::new(claude_def(AstAgentMode::Headless)),
+                ),
                 (
                     "secondary".into(),
                     Box::new(AgentDef::Codex {
-                        mode: AstAgentMode::Print,
+                        mode: AstAgentMode::Headless,
                         command: "codex".into(),
                         args: Vec::new(),
                         env: empty_env(),
@@ -593,7 +602,7 @@ mod tests {
     /// no special requirements (`noop`) yields the default profile.
     #[test]
     fn sandbox_requirements_are_selected_per_variant() {
-        let claude = sandbox_requirements_for(&claude_def(AstAgentMode::Print));
+        let claude = sandbox_requirements_for(&claude_def(AstAgentMode::Headless));
         assert!(
             claude
                 .network_hosts
@@ -614,7 +623,7 @@ mod tests {
         use iter_language::RouterStrategy;
         let def = AgentDef::Router {
             agents: vec![
-                ("c".into(), Box::new(claude_def(AstAgentMode::Print))),
+                ("c".into(), Box::new(claude_def(AstAgentMode::Headless))),
                 (
                     "g".into(),
                     Box::new(AgentDef::Grok {

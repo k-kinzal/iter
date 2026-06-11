@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::agent::error::AgentError;
 use crate::agent::run::AgentRun;
-use crate::{Agent, AgentRunContext};
+use crate::{Agent, AgentInvocation};
 
 /// Agent that does nothing.
 ///
@@ -21,7 +21,7 @@ impl Agent for NoopAgent {
         "noop"
     }
 
-    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+    async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         Ok(AgentRun::empty())
     }
 }

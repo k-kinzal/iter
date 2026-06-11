@@ -4,7 +4,7 @@
 //! `-s/--session-id`) accept a caller-chosen session id that pins a
 //! workspace to a stable conversation across iterations. This is the
 //! narrowest exploration mode: the workspace, git history, and prior agent
-//! context all bias the next turn toward the same path. The user declares a
+//! context all bias the next iteration toward the same path. The user declares a
 //! path in their Iterfile; iter reads the existing uuid from that path on
 //! every run, or generates a fresh v4 uuid and writes it back on the first
 //! run.

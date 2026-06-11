@@ -56,7 +56,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use super::macos_profile::render_profile;
-use super::{BackendError, SandboxBackend, SandboxDescriptor, which_sync};
+use super::{BackendError, SandboxBackend, SandboxDescriptor};
+use crate::agent::command_path::CommandPath;
 
 /// macOS `sandbox-exec` backend.
 #[derive(Debug, Default)]
@@ -93,7 +94,7 @@ impl SandboxBackend for SandboxExecBackend {
         &mut self,
         descriptor: &SandboxDescriptor<'_>,
     ) -> Result<Vec<OsString>, BackendError> {
-        if which_sync("sandbox-exec").is_none() {
+        if CommandPath::resolve("sandbox-exec").is_none() {
             return Err(BackendError::BinaryNotFound("sandbox-exec"));
         }
 

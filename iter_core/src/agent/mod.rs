@@ -14,7 +14,7 @@
 //! * **Hook-capable** — [`ClaudeAgent`], [`CodexAgent`], [`GeminiAgent`],
 //!   [`HermesAgent`] (hook integration pending), [`AntigravityAgent`],
 //!   and [`CopilotAgent`] each run in either
-//!   [`AgentMode::Print`]
+//!   [`AgentMode::Headless`]
 //!   (non-interactive one-shot invocation whose machine-readable output is
 //!   parsed by the per-CLI Command) or
 //!   [`AgentMode::Interactive`] (live TUI session driven by a
@@ -44,7 +44,7 @@
 //!
 //! ```no_run
 //! use iter_core::agent::GenericAgent;
-//! use iter_core::{Agent, AgentRunContext, Prompt};
+//! use iter_core::{Agent, AgentInvocation, Prompt};
 //! use iter_core::signal::SignalId;
 //! use std::path::Path;
 //! use tokio_util::sync::CancellationToken;
@@ -52,13 +52,13 @@
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! let agent = GenericAgent::new(vec!["echo".into(), "hello".into()]);
 //! let prompt = Prompt::from("x");
-//! let ctx = AgentRunContext::new(
+//! let ctx = AgentInvocation::new(
 //!     Path::new("."),
 //!     &prompt,
 //!     CancellationToken::new(),
 //!     SignalId::new(),
 //! );
-//! // `Ok` means the agent ran a turn; a non-zero / failed run is `Err`.
+//! // `Ok` means the agent ran; a non-zero / failed run is `Err`.
 //! let _run = agent.run(ctx).await?;
 //! # Ok(()) }
 //! ```
@@ -93,7 +93,7 @@ pub use drivers::hermes::HermesAgent;
 pub use drivers::noop::NoopAgent;
 pub use drivers::opencode::OpenCodeAgent;
 pub use error::AgentError;
-pub use inner::{Agent, AgentRunContext, run_with_timeout};
+pub use inner::{Agent, AgentInvocation, run_with_timeout};
 pub use mode::AgentMode;
 pub use router::{AgentRouter, RoutingStrategy};
 pub use run::AgentRun;

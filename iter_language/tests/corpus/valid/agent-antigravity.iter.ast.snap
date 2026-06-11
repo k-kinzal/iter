@@ -29,7 +29,7 @@ Iterfile {
             node: NamedDef {
                 name: "antigravity",
                 decl: Antigravity {
-                    mode: Print,
+                    mode: Headless,
                     command: "agy",
                     args: [
                         "--print-timeout",

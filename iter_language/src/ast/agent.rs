@@ -37,7 +37,7 @@ pub enum AgentDef {
         /// every subsequent invocation reads the same file, making iter
         /// pass `--session-id <uuid>` so Claude Code resumes the same
         /// session. This is the on-ramp to the narrowest exploration mode:
-        /// later turns inherit prior agent context as well as workspace
+        /// later iterations inherit prior agent context as well as workspace
         /// state.
         session_id_file: Option<String>,
         /// Environment variables passed to the agent child process.
@@ -154,7 +154,7 @@ pub enum AgentDef {
         /// When set, the first invocation writes a fresh v4 UUID and every
         /// subsequent invocation reads the same file, making iter pass
         /// `-s <uuid>` so Grok resumes the same headless session. This is
-        /// the on-ramp to the narrowest exploration mode: later turns
+        /// the on-ramp to the narrowest exploration mode: later iterations
         /// inherit prior agent context as well as workspace state.
         session_id_file: Option<String>,
         /// Environment variables passed to the agent child process.
@@ -207,6 +207,8 @@ pub enum RouterStrategy {
 pub enum AgentMode {
     /// Interactive mode (TTY-attached).
     Interactive,
-    /// Print mode (non-interactive, batch output).
-    Print,
+    /// Headless mode (no terminal; non-interactive, batch output). Spelled
+    /// `print` in the grammar (the surface keyword is kept; the AST variant
+    /// names the concept).
+    Headless,
 }

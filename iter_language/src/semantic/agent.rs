@@ -485,7 +485,7 @@ impl Analyzer {
     pub(super) fn parse_agent_mode(&mut self, name: &str, span: Span) -> Option<AgentMode> {
         match name {
             "interactive" => Some(AgentMode::Interactive),
-            "print" => Some(AgentMode::Print),
+            "print" => Some(AgentMode::Headless),
             other => {
                 self.errors.push(
                     Diagnostic::error(span, format!("unknown agent mode `{other}`"))

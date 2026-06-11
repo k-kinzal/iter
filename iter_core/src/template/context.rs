@@ -5,11 +5,11 @@
 //! `{{today}}`, `{{signal.id}}`, `{{signal.created_at}}`, and every
 //! `{{metadata.*}}` key attached to a [`Signal`].
 //!
-//! [`RenderContext`] composes [`SignalContext`] with an
+//! [`IterationRenderContext`] composes [`SignalContext`] with an
 //! [`IterationContext`](crate::IterationContext) so prompts and shell
 //! handlers attached to per-signal events can additionally render
 //! `{{iteration.count}}`, `{{iteration.previous_result}}`, and so on.
-//! [`LifecycleRenderContext`] is the signal-less twin used for runner-level
+//! [`RunnerRenderContext`] is the signal-less twin used for runner-level
 //! events (`runner_starting`, `runner_finished`, `runner_error` without a
 //! signal in flight) — `{{iteration.*}}` is reachable but `{{signal.*}}`
 //! and `{{metadata.*}}` are not.
@@ -76,13 +76,13 @@ impl<'a> SignalContext<'a> {
 /// [`SignalContext`] via `#[serde(flatten)]` so existing templates stay
 /// unchanged; `iteration.*` is added as a new top-level root.
 #[derive(Debug, Serialize)]
-pub struct RenderContext<'a> {
+pub struct IterationRenderContext<'a> {
     #[serde(flatten)]
     signal: SignalContext<'a>,
     iteration: &'a IterationContext,
 }
 
-impl<'a> RenderContext<'a> {
+impl<'a> IterationRenderContext<'a> {
     /// Build a render context for `signal` and `iteration`.
     #[must_use]
     pub fn new(signal: &'a Signal, iteration: &'a IterationContext) -> Self {
@@ -105,12 +105,12 @@ impl<'a> RenderContext<'a> {
 /// full `{{iteration.*}}` root, but **not** `{{signal.*}}` or
 /// `{{metadata.*}}` — strict mode surfaces a rendering error if they do.
 #[derive(Debug, Serialize)]
-pub struct LifecycleRenderContext<'a> {
+pub struct RunnerRenderContext<'a> {
     today: String,
     iteration: &'a IterationContext,
 }
 
-impl<'a> LifecycleRenderContext<'a> {
+impl<'a> RunnerRenderContext<'a> {
     /// Build a lifecycle render context anchored on `iteration`.
     #[must_use]
     pub fn new(iteration: &'a IterationContext) -> Self {
@@ -188,7 +188,7 @@ mod tests {
     fn render_context_flattens_signal_and_adds_iteration_root() {
         let signal = signal_with(Metadata::new());
         let iteration = IterationContext::for_count(3);
-        let ctx = RenderContext::new(&signal, &iteration);
+        let ctx = IterationRenderContext::new(&signal, &iteration);
         let json = serde_json::to_value(&ctx).expect("serialize");
         // Existing roots remain at top level via `#[serde(flatten)]`.
         assert!(json.get("today").is_some());
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn lifecycle_context_has_no_signal_or_metadata_root() {
         let iteration = IterationContext::for_count(1);
-        let ctx = LifecycleRenderContext::new(&iteration);
+        let ctx = RunnerRenderContext::new(&iteration);
         let json = serde_json::to_value(&ctx).expect("serialize");
         assert!(json.get("today").is_some());
         assert!(json.get("iteration").is_some());

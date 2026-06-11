@@ -4,7 +4,8 @@ use std::collections::BTreeMap;
 
 use super::{Analyzer, CONTINUE_ON_ERROR_HINT, RUNNER_BEHAVIOR_HINT, TemplatePosition};
 use crate::ast::{
-    EventHandlerDef, PromptArm, PromptExpr, PromptValue, RunnerBehavior, RunnerDef, Span, Spanned,
+    EventHandlerDef, PromptArm, PromptExpr, PromptValue, RunnerDef, SignalAcquisition, Span,
+    Spanned,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
@@ -515,7 +516,7 @@ impl Analyzer {
         &mut self,
         fields: &mut BTreeMap<String, CstField>,
         keyword_span: &Span,
-    ) -> Option<RunnerBehavior> {
+    ) -> Option<SignalAcquisition> {
         if let Some(field) = fields.remove("behavior") {
             match field.value {
                 CstValue::Ident(name, span) => self.parse_runner_behavior_ident(&name, &span),
@@ -540,10 +541,14 @@ impl Analyzer {
         }
     }
 
-    fn parse_runner_behavior_ident(&mut self, name: &str, span: &Span) -> Option<RunnerBehavior> {
+    fn parse_runner_behavior_ident(
+        &mut self,
+        name: &str,
+        span: &Span,
+    ) -> Option<SignalAcquisition> {
         match name {
-            "wait" => Some(RunnerBehavior::Wait),
-            "loop" => Some(RunnerBehavior::Loop { delay_secs: None }),
+            "wait" => Some(SignalAcquisition::Wait),
+            "loop" => Some(SignalAcquisition::Synthesize { delay_secs: None }),
             other => {
                 self.errors.push(
                     Diagnostic::error(span.clone(), format!("unknown runner behavior `{other}`"))
@@ -554,7 +559,7 @@ impl Analyzer {
         }
     }
 
-    fn parse_runner_behavior_block(&mut self, body: CstBlock) -> Option<RunnerBehavior> {
+    fn parse_runner_behavior_block(&mut self, body: CstBlock) -> Option<SignalAcquisition> {
         let body_span = body.span.clone();
         let mut inner = self.collect_fields(Some(body));
         let kind_field = inner.remove("kind");
@@ -588,9 +593,9 @@ impl Analyzer {
                     ));
                     return None;
                 }
-                Some(RunnerBehavior::Wait)
+                Some(SignalAcquisition::Wait)
             }
-            "loop" => Some(RunnerBehavior::Loop { delay_secs }),
+            "loop" => Some(SignalAcquisition::Synthesize { delay_secs }),
             other => {
                 self.errors.push(
                     Diagnostic::error(span, format!("unknown runner behavior `{other}`"))

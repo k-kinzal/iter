@@ -15,7 +15,7 @@
 //! workspace, under
 //! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`. The
 //! `<workspace-id>` is the [`WorkspaceIdentity`] and `<isolation-key>` is the
-//! per-exploration `AgentRunContext::hook_isolation_key`. See
+//! per-exploration `AgentInvocation::hook_isolation_key`. See
 //! [`workspace_hooks_dir`] for the directory layout.
 //!
 //! This module contains only the shared low-level installation pieces:
@@ -65,8 +65,8 @@ impl WorkspaceIdentity {
 /// where `<workspace-id>` is the [`WorkspaceIdentity`] of `workspace_path`.
 ///
 /// `workspace_path` is the agent's working directory (the value of
-/// `AgentRunContext::workspace_path`). `isolation_key` is the per-exploration
-/// [`AgentRunContext::hook_isolation_key`](super::AgentRunContext): the
+/// `AgentInvocation::workspace_path`). `isolation_key` is the per-exploration
+/// [`AgentInvocation::hook_isolation_key`](super::AgentInvocation): the
 /// operator-supplied compose service name in compose mode, or `"default"` for
 /// standalone `iter run`.
 ///

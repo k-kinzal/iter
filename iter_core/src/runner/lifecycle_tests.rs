@@ -7,7 +7,7 @@
 //! tests would catch it.
 //!
 //! Each test uses a `CapturingHandler` that pushes every received
-//! `Event` into a shared `Vec`, and asserts:
+//! `HookEvent` into a shared `Vec`, and asserts:
 //!   * `RunnerStarting` appears exactly once,
 //!   * `RunnerFinished` appears exactly once,
 //!   * the `RunnerFinished` `reason` matches the expected
@@ -24,12 +24,12 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::agent::{AgentRun, AgentRunContext};
+use crate::agent::{AgentInvocation, AgentRun};
 use crate::prompt::PromptTemplate;
 use crate::queue::{InMemoryQueue, Priority, QueueError};
+use crate::signal::{Metadata, Signal};
 use crate::workspace::WorkspaceError;
 use async_trait::async_trait;
-use crate::signal::{Metadata, Signal};
 
 struct FakeWorkspace {
     path: PathBuf,
@@ -48,6 +48,9 @@ impl Workspace for FakeWorkspace {
     }
     fn final_path(&self) -> &Path {
         self.path()
+    }
+    fn name(&self) -> &'static str {
+        "fake"
     }
 }
 
@@ -74,6 +77,9 @@ impl Workspace for FailingTeardownWorkspace {
     }
     fn final_path(&self) -> &Path {
         self.path()
+    }
+    fn name(&self) -> &'static str {
+        "failing-teardown"
     }
 }
 
@@ -103,6 +109,9 @@ impl Workspace for FailingSetupWorkspace {
     }
     fn final_path(&self) -> &Path {
         self.path()
+    }
+    fn name(&self) -> &'static str {
+        "failing-setup"
     }
 }
 
@@ -137,6 +146,9 @@ impl Workspace for TransientWorkspace {
     fn final_path(&self) -> &Path {
         &self.base
     }
+    fn name(&self) -> &'static str {
+        "transient"
+    }
 }
 
 #[derive(Default)]
@@ -144,7 +156,7 @@ struct StubAgent;
 
 #[async_trait]
 impl Agent for StubAgent {
-    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
+    async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Ok(AgentRun::empty())
     }
 }
@@ -157,7 +169,7 @@ struct FailingAgent;
 
 #[async_trait]
 impl Agent for FailingAgent {
-    async fn run(&self, _ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
+    async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Err(crate::agent::AgentError::Cancelled)
     }
 }
@@ -198,7 +210,7 @@ struct SluggishCleanupAgent {
 
 #[async_trait]
 impl Agent for SluggishCleanupAgent {
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         ctx.cancel.cancelled().await;
         // Stay alive much longer than DRAIN_GRACE so that any test
         // that bounded its overall wait at < DRAIN_GRACE could only
@@ -210,7 +222,7 @@ impl Agent for SluggishCleanupAgent {
 
 #[async_trait]
 impl Agent for SleepyAgent {
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, crate::agent::AgentError> {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         tokio::select! {
             () = tokio::time::sleep(self.delay) => Ok(AgentRun::empty()),
             () = ctx.cancel.cancelled() => {
@@ -221,15 +233,19 @@ impl Agent for SleepyAgent {
     }
 }
 
-/// Captures every `Event` the runner emits. Wrapped in `Arc<Mutex>`
+/// Captures every `HookEvent` the runner emits. Wrapped in `Arc<Mutex>`
 /// so the test can read it back after the runner returns.
 #[derive(Default, Clone)]
 struct CapturingHandler {
-    events: Arc<Mutex<Vec<Event>>>,
+    events: Arc<Mutex<Vec<HookEvent>>>,
 }
 
-impl EventHandler for CapturingHandler {
-    async fn handle(&self, event: &Event, _iteration: &IterationContext) -> Result<(), BoxError> {
+impl EventAction for CapturingHandler {
+    async fn handle(
+        &self,
+        event: &HookEvent,
+        _iteration: &IterationContext,
+    ) -> Result<(), BoxError> {
         self.events.lock().unwrap().push(event.clone());
         Ok(())
     }
@@ -240,12 +256,16 @@ impl EventHandler for CapturingHandler {
 /// `event_handler_error_count` and does not abort the run.
 #[derive(Clone)]
 struct FailFirstHandler {
-    events: Arc<Mutex<Vec<Event>>>,
+    events: Arc<Mutex<Vec<HookEvent>>>,
     calls: Arc<AtomicUsize>,
 }
 
-impl EventHandler for FailFirstHandler {
-    async fn handle(&self, event: &Event, _iteration: &IterationContext) -> Result<(), BoxError> {
+impl EventAction for FailFirstHandler {
+    async fn handle(
+        &self,
+        event: &HookEvent,
+        _iteration: &IterationContext,
+    ) -> Result<(), BoxError> {
         self.events.lock().unwrap().push(event.clone());
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
         if n == 0 {
@@ -294,23 +314,23 @@ fn make_failing_setup_provider() -> (
     (factory, teardown_calls)
 }
 
-fn count_runner_starting(events: &[Event]) -> usize {
+fn count_runner_starting(events: &[HookEvent]) -> usize {
     events
         .iter()
-        .filter(|e| matches!(e, Event::RunnerStarting {}))
+        .filter(|e| matches!(e, HookEvent::RunnerStarting {}))
         .count()
 }
 
-fn count_runner_finished(events: &[Event]) -> usize {
+fn count_runner_finished(events: &[HookEvent]) -> usize {
     events
         .iter()
-        .filter(|e| matches!(e, Event::RunnerFinished { .. }))
+        .filter(|e| matches!(e, HookEvent::RunnerFinished { .. }))
         .count()
 }
 
-fn finished_reason(events: &[Event]) -> RunnerTerminationReason {
+fn finished_reason(events: &[HookEvent]) -> RunnerTerminationReason {
     for e in events {
-        if let Event::RunnerFinished { reason, .. } = e {
+        if let HookEvent::RunnerFinished { reason, .. } = e {
             return reason.clone();
         }
     }
@@ -330,10 +350,10 @@ async fn once_path_emits_runner_starting_and_finished_exactly_once() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -372,10 +392,10 @@ async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: false,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -410,10 +430,10 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: false,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -455,10 +475,10 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         .workspaces(provider)
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: false,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -470,8 +490,14 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         .await
         .expect_err("teardown failure becomes WorkspaceTeardownFailed");
     assert!(
-        matches!(&err, RunnerExitError::WorkspaceTeardownFailed { .. }),
-        "expected WorkspaceTeardownFailed, got {err:?}"
+        matches!(
+            &err,
+            RunnerExitError {
+                error_source: ErrorSource::WorkspaceTeardown,
+                ..
+            }
+        ),
+        "expected workspace_teardown error source, got {err:?}"
     );
 
     let events = handler.events.lock().unwrap().clone();
@@ -480,7 +506,7 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
     let reason = finished_reason(&events);
     match reason {
         RunnerTerminationReason::Error { error_source, .. } => {
-            assert_eq!(error_source, "workspace_teardown");
+            assert_eq!(error_source, ErrorSource::WorkspaceTeardown);
         }
         other => panic!("expected Error reason, got {other:?}"),
     }
@@ -496,7 +522,7 @@ async fn error_path_carries_handler_counts_in_exit_error() {
         .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
-    let events_buf: Arc<Mutex<Vec<Event>>> = Arc::default();
+    let events_buf: Arc<Mutex<Vec<HookEvent>>> = Arc::default();
     let calls = Arc::new(AtomicUsize::new(0));
     let handler = FailFirstHandler {
         events: Arc::clone(&events_buf),
@@ -508,10 +534,10 @@ async fn error_path_carries_handler_counts_in_exit_error() {
         .workspaces(provider)
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: false,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler)
@@ -521,33 +547,34 @@ async fn error_path_carries_handler_counts_in_exit_error() {
     let err = runner
         .run(CancellationToken::new())
         .await
-        .expect_err("teardown failure becomes WorkspaceTeardownFailed");
-    match err {
-        RunnerExitError::WorkspaceTeardownFailed {
-            event_handler_error_count,
-            ..
-        } => {
-            assert!(
-                event_handler_error_count >= 1,
-                "the failing first handler invocation must be counted",
-            );
-        }
-        other => panic!("expected WorkspaceTeardownFailed, got {other:?}"),
-    }
+        .expect_err("teardown failure becomes a workspace_teardown error");
+    assert_eq!(
+        err.error_source,
+        ErrorSource::WorkspaceTeardown,
+        "expected workspace_teardown error source, got {err:?}"
+    );
+    assert!(
+        err.event_handler_error_count >= 1,
+        "the failing first handler invocation must be counted",
+    );
 }
 
-/// Captures `(Event, IterationContext)` pairs for every emit so
+/// Captures `(HookEvent, IterationContext)` pairs for every emit so
 /// tests can assert on the iteration snapshot the runner threaded
 /// through alongside each event. The matching `CapturingHandler`
 /// drops the iteration argument; tests that need to inspect it use
 /// this one.
 #[derive(Default, Clone)]
 struct CapturingIterHandler {
-    events: Arc<Mutex<Vec<(Event, IterationContext)>>>,
+    events: Arc<Mutex<Vec<(HookEvent, IterationContext)>>>,
 }
 
-impl EventHandler for CapturingIterHandler {
-    async fn handle(&self, event: &Event, iteration: &IterationContext) -> Result<(), BoxError> {
+impl EventAction for CapturingIterHandler {
+    async fn handle(
+        &self,
+        event: &HookEvent,
+        iteration: &IterationContext,
+    ) -> Result<(), BoxError> {
         self.events
             .lock()
             .unwrap()
@@ -583,10 +610,10 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
         .workspaces(provider)
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: false,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -630,7 +657,7 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
     // errored result forward.
     let second_agent_starting = events
         .iter()
-        .filter(|(e, _)| matches!(e, Event::AgentStarting { .. }))
+        .filter(|(e, _)| matches!(e, HookEvent::AgentStarting { .. }))
         .nth(1)
         .map(|(_, iter)| iter.clone())
         .expect("a second AgentStarting must have been emitted");
@@ -664,7 +691,7 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
         .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
-    let events_buf: Arc<Mutex<Vec<Event>>> = Arc::default();
+    let events_buf: Arc<Mutex<Vec<HookEvent>>> = Arc::default();
     let calls = Arc::new(AtomicUsize::new(0));
     let handler = FailFirstHandler {
         events: Arc::clone(&events_buf),
@@ -675,10 +702,10 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler)
@@ -714,10 +741,10 @@ async fn iteration_timeout_kills_long_running_agent() {
         .workspaces(make_provider())
         .agent(Box::new(SleepyAgent::new(Duration::from_secs(60))))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: Some(Duration::from_millis(150)),
         })
         .on_all(handler.clone())
@@ -739,7 +766,7 @@ async fn iteration_timeout_kills_long_running_agent() {
 
     let events = handler.events.lock().unwrap().clone();
     let saw_timeout = events.iter().any(|e| match e {
-        Event::AgentRunFailed { error, .. } => error.contains("iteration"),
+        HookEvent::AgentRunFailed { error, .. } => error.contains("iteration"),
         _ => false,
     });
     assert!(
@@ -763,10 +790,10 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: Some(Duration::from_secs(60)),
         })
         .on_all(handler.clone())
@@ -787,11 +814,11 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
     let saw_runner_error = events.iter().any(|e| {
         matches!(
             e,
-            Event::DequeueFailed { .. }
-                | Event::RenderPromptFailed { .. }
-                | Event::WorkspaceSetupFailed { .. }
-                | Event::AgentRunFailed { .. }
-                | Event::WorkspaceTeardownFailed { .. }
+            HookEvent::DequeueFailed { .. }
+                | HookEvent::RenderPromptFailed { .. }
+                | HookEvent::WorkspaceSetupFailed { .. }
+                | HookEvent::AgentRunFailed { .. }
+                | HookEvent::WorkspaceTeardownFailed { .. }
         )
     });
     assert!(
@@ -817,10 +844,10 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
         .workspaces(make_provider())
         .agent(Box::new(SleepyAgent::new(Duration::from_secs(60))))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: Some(Duration::from_millis(150)),
         })
         .on_all(handler.clone())
@@ -837,7 +864,7 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
     let events = handler.events.lock().unwrap().clone();
     let saw_agent_run_failed = events
         .iter()
-        .any(|e| matches!(e, Event::AgentRunFailed { .. }));
+        .any(|e| matches!(e, HookEvent::AgentRunFailed { .. }));
     assert!(
         saw_agent_run_failed,
         "the timed-out iteration must surface as an AgentRunFailed event",
@@ -868,10 +895,10 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
         .workspaces(make_provider())
         .agent(Box::new(agent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: Some(Duration::from_millis(100)),
         })
         .on_all(handler.clone())
@@ -914,10 +941,10 @@ async fn iteration_timeout_drain_yields_to_parent_cancel() {
                 post_cancel_sleep: Duration::from_secs(60),
             }))
             .prompt_template(PromptTemplate::new("hello").unwrap())
-            .config(RunnerConfig {
+            .config(RunnerPolicy {
                 once: true,
                 continue_on_error: true,
-                behavior: RunnerBehavior::Wait,
+                behavior: SignalAcquisition::Wait,
                 iteration_timeout: Some(Duration::from_millis(50)),
             })
             .on_all(CapturingHandler::default())
@@ -973,10 +1000,10 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
         .workspaces(make_provider())
         .agent(Box::new(FailingAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -992,11 +1019,11 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
 
     let agent_finished_idx = events
         .iter()
-        .position(|e| matches!(e, Event::AgentFinished { .. }))
+        .position(|e| matches!(e, HookEvent::AgentFinished { .. }))
         .expect("AgentFinished must fire even when the agent errored");
     let runner_error_idx = events
         .iter()
-        .position(|e| matches!(e, Event::AgentRunFailed { .. }))
+        .position(|e| matches!(e, HookEvent::AgentRunFailed { .. }))
         .expect("AgentRunFailed must fire after a failing agent");
     assert!(
         runner_error_idx > agent_finished_idx,
@@ -1005,7 +1032,7 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
 
     let runner_error_count = events
         .iter()
-        .filter(|e| matches!(e, Event::AgentRunFailed { .. }))
+        .filter(|e| matches!(e, HookEvent::AgentRunFailed { .. }))
         .count();
     assert_eq!(
         runner_error_count, 1,
@@ -1015,7 +1042,8 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
     let saw_teardown_event = events.iter().any(|e| {
         matches!(
             e,
-            Event::WorkspaceTeardownStarting { .. } | Event::WorkspaceTeardownFinished { .. }
+            HookEvent::WorkspaceTeardownStarting { .. }
+                | HookEvent::WorkspaceTeardownFinished { .. }
         )
     });
     assert!(
@@ -1058,10 +1086,10 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
         .workspaces(provider)
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -1077,7 +1105,7 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
 
     let setup_error_count = events
         .iter()
-        .filter(|e| matches!(e, Event::WorkspaceSetupFailed { .. }))
+        .filter(|e| matches!(e, HookEvent::WorkspaceSetupFailed { .. }))
         .count();
     assert_eq!(
         setup_error_count, 1,
@@ -1086,7 +1114,7 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
 
     let teardown_error_count = events
         .iter()
-        .filter(|e| matches!(e, Event::WorkspaceTeardownFailed { .. }))
+        .filter(|e| matches!(e, HookEvent::WorkspaceTeardownFailed { .. }))
         .count();
     assert_eq!(
         teardown_error_count, 0,
@@ -1097,7 +1125,8 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
     let saw_teardown_event = events.iter().any(|e| {
         matches!(
             e,
-            Event::WorkspaceTeardownStarting { .. } | Event::WorkspaceTeardownFinished { .. }
+            HookEvent::WorkspaceTeardownStarting { .. }
+                | HookEvent::WorkspaceTeardownFinished { .. }
         )
     });
     assert!(
@@ -1107,7 +1136,7 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
 
     let saw_setup_finished = events
         .iter()
-        .any(|e| matches!(e, Event::WorkspaceSetupFinished { .. }));
+        .any(|e| matches!(e, HookEvent::WorkspaceSetupFinished { .. }));
     assert!(
         !saw_setup_finished,
         "WorkspaceSetupFinished must NOT fire when setup itself failed, got: {events:?}",
@@ -1145,10 +1174,10 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
         .workspaces(provider)
         .agent(Box::new(FailingAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -1164,7 +1193,7 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
 
     let agent_error_count = events
         .iter()
-        .filter(|e| matches!(e, Event::AgentRunFailed { .. }))
+        .filter(|e| matches!(e, HookEvent::AgentRunFailed { .. }))
         .count();
     assert_eq!(
         agent_error_count, 1,
@@ -1173,7 +1202,7 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
 
     let teardown_error_count = events
         .iter()
-        .filter(|e| matches!(e, Event::WorkspaceTeardownFailed { .. }))
+        .filter(|e| matches!(e, HookEvent::WorkspaceTeardownFailed { .. }))
         .count();
     assert_eq!(
         teardown_error_count, 0,
@@ -1184,7 +1213,8 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
     let saw_teardown_event = events.iter().any(|e| {
         matches!(
             e,
-            Event::WorkspaceTeardownStarting { .. } | Event::WorkspaceTeardownFinished { .. }
+            HookEvent::WorkspaceTeardownStarting { .. }
+                | HookEvent::WorkspaceTeardownFinished { .. }
         )
     });
     assert!(
@@ -1239,10 +1269,10 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: false,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -1255,8 +1285,14 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
         .expect_err("dequeue failure without continue_on_error must exit with Err");
 
     assert!(
-        matches!(err, RunnerExitError::DequeueFailed { .. }),
-        "expected DequeueFailed, got {err:?}"
+        matches!(
+            err,
+            RunnerExitError {
+                error_source: ErrorSource::Dequeue,
+                ..
+            }
+        ),
+        "expected dequeue error source, got {err:?}"
     );
 
     let events = handler.events.lock().unwrap().clone();
@@ -1264,16 +1300,16 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
     assert_eq!(count_runner_finished(&events), 1);
     let finished_event = events
         .iter()
-        .find(|e| matches!(e, Event::RunnerFinished { .. }))
+        .find(|e| matches!(e, HookEvent::RunnerFinished { .. }))
         .expect("RunnerFinished must be present");
     match finished_event {
-        Event::RunnerFinished {
+        HookEvent::RunnerFinished {
             reason,
             iteration_count,
         } => {
             match reason {
                 RunnerTerminationReason::Error { error_source, .. } => {
-                    assert_eq!(error_source, "dequeue");
+                    assert_eq!(error_source, &ErrorSource::Dequeue);
                 }
                 other => panic!("expected Error reason, got {other:?}"),
             }
@@ -1299,10 +1335,10 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: true,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -1326,7 +1362,7 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
     let events = handler.events.lock().unwrap().clone();
     let dequeue_errors = events
         .iter()
-        .filter(|e| matches!(e, Event::DequeueFailed { .. }))
+        .filter(|e| matches!(e, HookEvent::DequeueFailed { .. }))
         .count();
     assert_eq!(
         dequeue_errors, 1,
@@ -1349,7 +1385,7 @@ async fn terminate_signal_stops_runner_gracefully() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig::default())
+        .config(RunnerPolicy::default())
         .on_all(handler.clone())
         .build()
         .unwrap();
@@ -1387,7 +1423,7 @@ async fn work_signals_before_terminate_are_all_processed() {
         .workspaces(make_provider())
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig::default())
+        .config(RunnerPolicy::default())
         .on_all(handler.clone())
         .build()
         .unwrap();
@@ -1405,8 +1441,9 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
     let persistent_path = persistent_dir.path().to_path_buf();
 
     let expected = persistent_path.clone();
-    let provider =
-        move || -> Box<dyn Workspace> { Box::new(TransientWorkspace::new(persistent_path.clone())) };
+    let provider = move || -> Box<dyn Workspace> {
+        Box::new(TransientWorkspace::new(persistent_path.clone()))
+    };
 
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
@@ -1419,10 +1456,10 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
         .workspaces(provider)
         .agent(Box::new(StubAgent))
         .prompt_template(PromptTemplate::new("hello").unwrap())
-        .config(RunnerConfig {
+        .config(RunnerPolicy {
             once: true,
             continue_on_error: false,
-            behavior: RunnerBehavior::Wait,
+            behavior: SignalAcquisition::Wait,
             iteration_timeout: None,
         })
         .on_all(handler.clone())
@@ -1433,7 +1470,7 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
 
     let events = handler.events.lock().unwrap().clone();
     let teardown_path = events.iter().find_map(|e| match e {
-        Event::WorkspaceTeardownFinished { path, .. } => Some(path.clone()),
+        HookEvent::WorkspaceTeardownFinished { path, .. } => Some(path.clone()),
         _ => None,
     });
     assert_eq!(

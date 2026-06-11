@@ -87,7 +87,7 @@ impl std::error::Error for PublishError {
     }
 }
 
-/// Step inside the pid-file publication sequence that observed an I/O error.
+/// Position inside the pid-file publication sequence that observed an I/O error.
 ///
 /// Sequence (in order):
 /// 1. `openat(dirfd, ".pid.tmp", O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_NOFOLLOW, 0o600)`

@@ -39,7 +39,7 @@ pub enum PromptGuard {
     /// reading the numeric field of the current [`IterationContext`],
     /// optionally reducing it modulo `N`, and applying [`CmpOp`] against
     /// `rhs`. A missing `previous_exit_code` makes every comparison
-    /// evaluate to `false` (intuitive "no previous turn, nothing to
+    /// evaluate to `false` (intuitive "no previous iteration, nothing to
     /// compare against" semantics).
     IterationCmp {
         /// Numeric iteration field on the LHS.
@@ -80,7 +80,7 @@ pub enum IterationField {
     /// `iteration.count` — 1-indexed iteration number.
     Count,
     /// `iteration.previous_exit_code` — exit code captured on the
-    /// previous turn (`None` on the first iteration).
+    /// previous iteration (`None` on the first iteration).
     PreviousExitCode,
     /// `iteration.consecutive_failures` — running failure-streak counter.
     ConsecutiveFailures,
@@ -118,7 +118,7 @@ impl PromptGuard {
     /// * `IterationCmp` reads the numeric `iteration.<field>` value,
     ///   optionally reduces it modulo `N`, and applies [`CmpOp`] against
     ///   `rhs`. A missing `previous_exit_code` makes every comparison —
-    ///   including `!=` — evaluate to `false`. The "no previous turn"
+    ///   including `!=` — evaluate to `false`. The "no previous iteration"
     ///   state is *not* represented as a number, so neither equality nor
     ///   inequality can be honestly answered; refusing to match is the
     ///   only consistent choice.
@@ -158,7 +158,7 @@ impl PromptGuard {
 }
 
 /// Read the numeric value of `field` from the iteration context. Returns
-/// `None` for `previous_exit_code` when no previous turn has produced one
+/// `None` for `previous_exit_code` when no previous iteration has produced one
 /// — at that point any numeric comparison is honestly undecidable, so
 /// [`PromptGuard::matches`] surfaces the absence as a non-match rather
 /// than picking an arbitrary sentinel like `-1`.

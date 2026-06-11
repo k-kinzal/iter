@@ -29,7 +29,7 @@ Iterfile {
             node: NamedDef {
                 name: "claude",
                 decl: Claude {
-                    mode: Print,
+                    mode: Headless,
                     command: "claude",
                     args: [],
                     session_id_file: None,

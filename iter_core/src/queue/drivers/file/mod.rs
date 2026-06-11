@@ -263,7 +263,7 @@ impl FileQueue {
         let partial_path = self.inner.tmp.join(&partial_name);
         let pending_path = self.inner.pending.join(&final_name);
 
-        // 1. Stage the payload in tmp/.
+        // 1. Write the payload into tmp/ first.
         tokio::fs::write(&partial_path, &payload).await?;
 
         // 2. fsync the partial file so the bytes are durable before the
@@ -344,7 +344,6 @@ impl FileQueue {
             }
         }
     }
-
 }
 
 #[async_trait]

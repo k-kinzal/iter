@@ -1,4 +1,4 @@
-//! [`Event`] stream produced by the [`Runner`](crate::runner::Runner).
+//! [`HookEvent`] stream produced by the [`Runner`](crate::runner::Runner).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +12,7 @@ use crate::signal::{Signal, SignalId};
 
 /// Shared, read-only handle to the [`Signal`] a runner is processing.
 ///
-/// Every per-signal lifecycle [`Event`] emitted during one bracket execution
+/// Every per-signal lifecycle [`HookEvent`] emitted during one bracket execution
 /// carries the *same* `SharedSignal`, cloned from a single allocation created
 /// when the runner enters the bracket. Cloning is an [`Arc`] reference-count
 /// bump — not a deep copy of the signal's
@@ -21,8 +21,8 @@ use crate::signal::{Signal, SignalId};
 ///
 /// The handle is read-only: a [`Signal`] is immutable once constructed, and
 /// `SharedSignal` exposes only borrowed access to it. Treat it as a `&Signal`
-/// (it [`Deref`](std::ops::Deref)s to one, and [`Event::signal`] /
-/// [`Event::signal_id`] hand back borrowed views); the `Arc` storage is an
+/// (it [`Deref`](std::ops::Deref)s to one, and [`HookEvent::signal`] /
+/// [`HookEvent::signal_id`] hand back borrowed views); the `Arc` storage is an
 /// implementation detail consumers must not depend on.
 ///
 /// The single-allocation sharing is an **in-process** property of one runner's
@@ -69,7 +69,7 @@ impl From<Signal> for SharedSignal {
 }
 
 // A `SharedSignal` serializes transparently as its inner [`Signal`], so the
-// on-the-wire shape of an [`Event`] is unaffected by the shared-handle
+// on-the-wire shape of an [`HookEvent`] is unaffected by the shared-handle
 // storage (and the derive needs no serde `rc` feature).
 impl Serialize for SharedSignal {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -83,20 +83,20 @@ impl<'de> Deserialize<'de> for SharedSignal {
     }
 }
 
-/// Event emitted by the [`Runner`](crate::runner::Runner) between every step
-/// of the per-signal loop.
+/// A hook event emitted by the [`Runner`](crate::runner::Runner) at each
+/// lifecycle moment of the per-signal iteration.
 ///
 /// Per-signal lifecycle events carry the signal as a [`SharedSignal`] (not
-/// just its id) so that [`EventHandler`](crate::runner::EventHandler)
-/// implementations — such as template-rendering shell handlers — have direct
+/// just its id) so that [`EventAction`](crate::runner::EventAction)
+/// implementations — such as template-rendering shell actions — have direct
 /// access to the signal's metadata without an external lookup table. All
 /// events emitted for one bracket share a single signal allocation rather than
 /// each owning an independent deep copy; inspect the signal through the
-/// borrowed [`Event::signal`] / [`Event::signal_id`] accessors so call sites
+/// borrowed [`HookEvent::signal`] / [`HookEvent::signal_id`] accessors so call sites
 /// stay independent of the shared-handle storage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Event {
+pub enum HookEvent {
     /// The runner is about to enter its per-signal loop. Fired exactly once,
     /// before any signal is dequeued and before any other lifecycle event.
     ///
@@ -136,7 +136,7 @@ pub enum Event {
         /// Workspace path supplied to the agent.
         path: PathBuf,
         /// Result of the agent run, with the error stringified. `Ok` means
-        /// the agent ran a turn; `Err(message)` is the projected failure.
+        /// the agent ran; `Err(message)` is the projected failure.
         result: Result<AgentRun, String>,
     },
     /// The runner is about to tear down the workspace.
@@ -208,8 +208,8 @@ pub enum Event {
 /// uses this to invoke only the handlers registered for a given name
 /// rather than broadcasting to all handlers.
 ///
-/// The mapping from [`Event`] to `EventName` is defined by
-/// [`Event::name`].
+/// The mapping from [`HookEvent`] to `EventName` is defined by
+/// [`HookEvent::name`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventName {
     /// `runner_starting`
@@ -250,7 +250,7 @@ impl EventName {
     ];
 }
 
-impl Event {
+impl HookEvent {
     /// The routing key for this event.
     ///
     /// All error variants (`DequeueFailed`, `RenderPromptFailed`,
@@ -277,7 +277,7 @@ impl Event {
     }
 }
 
-impl Event {
+impl HookEvent {
     /// Return the signal id associated with this event, if any.
     #[must_use]
     pub fn signal_id(&self) -> Option<SignalId> {
@@ -308,7 +308,7 @@ impl Event {
     /// of the shared [`SharedSignal`] handle, so consumers inspect signal
     /// context without depending on the storage representation.
     ///
-    /// Use [`Event::signal_id`] when only the id is needed: it covers the
+    /// Use [`HookEvent::signal_id`] when only the id is needed: it covers the
     /// error variants too, whereas this accessor does not.
     #[must_use]
     pub fn signal(&self) -> Option<&Signal> {
@@ -350,12 +350,12 @@ mod tests {
         let id = shared.id();
 
         // Two events for one bracket, each handed a cheap clone of the shared
-        // handle — the pattern `RunnerEvents` follows per emission.
-        let setup = Event::WorkspaceSetupFinished {
+        // handle — the pattern `RunnerEmitter` follows per emission.
+        let setup = HookEvent::WorkspaceSetupFinished {
             signal: shared.clone(),
             path: PathBuf::from("/tmp/ws"),
         };
-        let teardown = Event::WorkspaceTeardownStarting {
+        let teardown = HookEvent::WorkspaceTeardownStarting {
             signal: shared.clone(),
             path: PathBuf::from("/tmp/ws"),
         };
@@ -374,8 +374,8 @@ mod tests {
         // so the test never reaches into the private storage.
         match (&setup, &teardown) {
             (
-                Event::WorkspaceSetupFinished { signal: a, .. },
-                Event::WorkspaceTeardownStarting { signal: b, .. },
+                HookEvent::WorkspaceSetupFinished { signal: a, .. },
+                HookEvent::WorkspaceTeardownStarting { signal: b, .. },
             ) => assert!(
                 std::ptr::eq(a.as_signal(), b.as_signal()),
                 "events for one bracket must share a single signal allocation",
@@ -392,14 +392,14 @@ mod tests {
         // signal at all. `signal()` is `None` for both, while `signal_id()`
         // still recovers the id from the error variants.
         let id = Signal::synthesized().id();
-        let failed = Event::RenderPromptFailed {
+        let failed = HookEvent::RenderPromptFailed {
             signal_id: id,
             error: "boom".into(),
         };
         assert!(failed.signal().is_none());
         assert_eq!(failed.signal_id(), Some(id));
 
-        let starting = Event::RunnerStarting {};
+        let starting = HookEvent::RunnerStarting {};
         assert!(starting.signal().is_none());
         assert!(starting.signal_id().is_none());
     }

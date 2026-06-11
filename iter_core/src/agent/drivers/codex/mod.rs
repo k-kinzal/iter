@@ -2,7 +2,7 @@
 //!
 //! Two run modes are supported:
 //!
-//! * [`AgentMode::Print`] — the default. Spawns:
+//! * [`AgentMode::Headless`] — the default. Spawns:
 //!
 //!   ```text
 //!   codex exec --json [extra-args...] <prompt>
@@ -41,7 +41,7 @@
 //!   Interactive mode inherits stdin/stdout/stderr from the parent
 //!   process so `codex`'s TUI renders correctly when iter is invoked
 //!   from a terminal. In non-tty environments (CI, detached runs) use
-//!   [`AgentMode::Print`] instead.
+//!   [`AgentMode::Headless`] instead.
 //!
 //! # Assumptions to verify later
 //!
@@ -64,7 +64,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -153,8 +153,8 @@ impl Agent for CodexAgent {
         "codex"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,
@@ -166,7 +166,7 @@ impl Agent for CodexAgent {
             ..
         } = ctx;
         match self.mode {
-            AgentMode::Print => {
+            AgentMode::Headless => {
                 let mut command = CodexCommand {
                     program: &self.command,
                     args: &self.args,
@@ -287,7 +287,7 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
     #[tokio::test]
     async fn print_mode_passes_subcommand_and_inline_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("hello-codex");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -302,7 +302,7 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded_before_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = codex_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = codex_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.args = vec!["--model".into(), "o1".into()];
         let agent = s;
         let prompt = Prompt::from("the-prompt");
@@ -327,7 +327,7 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
     async fn print_mode_env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$CODEX_TEST_ENV_VAR\" 1>&2\nprintf '%s\\n' '{\"type\":\"task_complete\",\"status\":\"completed\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = codex_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = codex_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.env = vec![("CODEX_TEST_ENV_VAR".into(), "env-value".into())];
         let agent = s;
         let prompt = Prompt::from("x");
@@ -341,7 +341,7 @@ printf '%s\n' '{"type":"task_complete","status":"completed"}'"#;
         let script = r#"printf '%s\n' '{"type":"task_complete","status":"failed"}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -359,7 +359,7 @@ exit 1"#;
 printf '%s\n' '{"type":"task_complete","status":"failed"}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -371,7 +371,7 @@ exit 1"#;
     #[tokio::test]
     async fn print_mode_bad_args_exit_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("printf 'bad\\n' 1>&2\nexit 2");
-        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = codex_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))

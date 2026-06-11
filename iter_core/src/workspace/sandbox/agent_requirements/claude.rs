@@ -170,7 +170,7 @@ mod tests {
     fn agent(command: impl Into<String>) -> ClaudeAgent {
         ClaudeAgent {
             command: command.into(),
-            mode: AgentMode::Print,
+            mode: AgentMode::Headless,
             args: Vec::new(),
             session_id_file: None,
             env: Vec::new(),

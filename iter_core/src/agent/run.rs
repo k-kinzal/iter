@@ -1,4 +1,4 @@
-//! [`AgentRun`] — iter's domain result for a single agent turn.
+//! [`AgentRun`] — iter's domain result for a single agent run.
 //!
 //! This is the **Agent level** of the three-layer agent stack (Command →
 //! Driver/Adapter → Agent). It is intentionally minimal: it carries only
@@ -7,18 +7,18 @@
 //! and is projected down to this type by each driver acting as an Adapter.
 //!
 //! There is deliberately **no exit code** here. A successful [`AgentRun`]
-//! means "the agent ran a turn"; a non-zero / failed run is an
+//! means "the agent ran"; a non-zero / failed run is an
 //! [`AgentError`](crate::agent::AgentError), not an `Ok` carrying a failure
 //! field. iter assigns no task-meaning to an exit code, so the exit code
 //! never crosses the Adapter boundary into this domain type.
 
 use serde::{Deserialize, Serialize};
 
-/// Result of one successful agent turn, in iter's domain vocabulary.
+/// Result of one successful agent run, in iter's domain vocabulary.
 ///
 /// Surfaced through
-/// [`Event::AgentFinished`](crate::runner::Event::AgentFinished) so event
-/// handlers and observers can correlate the turn (e.g. against the session
+/// [`HookEvent::AgentFinished`](crate::runner::HookEvent::AgentFinished) so event
+/// handlers and observers can correlate the run (e.g. against the session
 /// it belongs to). The struct is `#[non_exhaustive]` so new Factor-relevant
 /// fields can be added without breaking downstream construction.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,7 +27,7 @@ pub struct AgentRun {
     /// Session / conversation id reported by the underlying CLI, when it
     /// exposes one and the driver parsed it from the Command result. Feeds
     /// iter's session-log and continuous-context-persistence Factors, which
-    /// key continuity off a stable session identity across turns.
+    /// key continuity off a stable session identity across runs.
     pub session_id: Option<String>,
 }
 

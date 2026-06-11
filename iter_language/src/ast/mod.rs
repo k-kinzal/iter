@@ -55,7 +55,7 @@ pub use queue::{
     DlqPolicyDef, DlqTargetDef, MetadataSource, QueueDef, RetryPolicyDef, SqsConfig, SqsConsumer,
     SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,
 };
-pub use runner::{RunnerBehavior, RunnerDef};
+pub use runner::{RunnerDef, SignalAcquisition};
 pub use telemetry::{TelemetryDef, TelemetryProtocol};
 pub use trigger::{
     ExtractExpr, FilesSource, OnErrorKeyword, SecretExpr, Subscription, TriggerDef, WatchEventKind,

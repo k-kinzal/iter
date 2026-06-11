@@ -6,7 +6,7 @@
 //!
 //! Two run modes are supported:
 //!
-//! * [`AgentMode::Print`] — the default. Spawns:
+//! * [`AgentMode::Headless`] — the default. Spawns:
 //!
 //!   ```text
 //!   agy -p <prompt> [--conversation <id>] [extra-args...]
@@ -27,7 +27,7 @@
 //!   stabilizes (see [`hook`]); interactive mode therefore installs no hook
 //!   bundle. The agent exits after the TUI session and iter captures the
 //!   exit status only. Interactive mode inherits stdin/stdout/stderr from
-//!   the parent process; in non-tty environments use [`AgentMode::Print`].
+//!   the parent process; in non-tty environments use [`AgentMode::Headless`].
 //!
 //! # Session persistence
 //!
@@ -48,7 +48,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -127,8 +127,8 @@ impl Agent for AntigravityAgent {
         "antigravity"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,
@@ -137,7 +137,7 @@ impl Agent for AntigravityAgent {
             ..
         } = ctx;
         match self.mode {
-            AgentMode::Print => {
+            AgentMode::Headless => {
                 let mut command = AntigravityCommand {
                     program: &self.command,
                     prompt: prompt.as_str(),
@@ -226,7 +226,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn emits_dash_p_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("hello-agy");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -243,7 +243,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn print_mode_env_is_forwarded_to_child() {
         let (_guard, bin) = fake_binary_script("printf '%s' \"$AGY_TEST_ENV_VAR\"");
-        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.env = vec![("AGY_TEST_ENV_VAR".into(), "env-value".into())];
         let agent = s;
         let prompt = Prompt::from("x");
@@ -255,7 +255,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn conversation_id_adds_flag_when_set() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.conversation_id = Some("test-session-42".into());
         let agent = s;
         let prompt = Prompt::from("go");
@@ -269,7 +269,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn conversation_id_absent_produces_no_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         agent.run(ctx).await.expect("run ok");
@@ -282,7 +282,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn conversation_id_precedes_extra_args_in_print_mode() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.conversation_id = Some("sess-1".into());
         s.args = vec!["--print-timeout".into(), "600".into()];
         let agent = s;
@@ -298,7 +298,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn auth_marker_maps_to_launch_error() {
         let (_guard, bin) = fake_binary_script("printf 'Authentication required\\n' 1>&2\nexit 0");
-        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -311,7 +311,7 @@ printf 'final answer'"#;
     async fn token_limit_marker_maps_to_token_limit() {
         let (_guard, bin) =
             fake_binary_script("printf 'Error: context window exceeded\\n'\nexit 0");
-        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -323,7 +323,7 @@ printf 'final answer'"#;
     #[tokio::test]
     async fn nonzero_exit_maps_to_failed() {
         let (_guard, bin) = fake_binary_script("exit 1");
-        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))

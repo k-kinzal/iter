@@ -249,15 +249,26 @@ fn parse_usage(root: &Value) -> GrokUsage {
         .find_map(|key| root.get(*key));
     let scopes: Vec<&Value> = nested.into_iter().chain(std::iter::once(root)).collect();
     let u64_of = |keys: &[&str]| {
-        keys.iter()
-            .find_map(|key| scopes.iter().find_map(|s| s.get(*key).and_then(Value::as_u64)))
+        keys.iter().find_map(|key| {
+            scopes
+                .iter()
+                .find_map(|s| s.get(*key).and_then(Value::as_u64))
+        })
     };
     let f64_of = |keys: &[&str]| {
-        keys.iter()
-            .find_map(|key| scopes.iter().find_map(|s| s.get(*key).and_then(Value::as_f64)))
+        keys.iter().find_map(|key| {
+            scopes
+                .iter()
+                .find_map(|s| s.get(*key).and_then(Value::as_f64))
+        })
     };
     GrokUsage {
-        input_tokens: u64_of(&["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"]),
+        input_tokens: u64_of(&[
+            "input_tokens",
+            "inputTokens",
+            "prompt_tokens",
+            "promptTokens",
+        ]),
         output_tokens: u64_of(&[
             "output_tokens",
             "outputTokens",
@@ -265,7 +276,13 @@ fn parse_usage(root: &Value) -> GrokUsage {
             "completionTokens",
         ]),
         total_tokens: u64_of(&["total_tokens", "totalTokens"]),
-        total_cost_usd: f64_of(&["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd", "cost"]),
+        total_cost_usd: f64_of(&[
+            "total_cost_usd",
+            "totalCostUsd",
+            "cost_usd",
+            "costUsd",
+            "cost",
+        ]),
     }
 }
 
@@ -288,9 +305,7 @@ fn reported_error_of(obj: &Value) -> Option<String> {
     // `type` discriminator must be honored before the object is read as a
     // success, otherwise the error `message` would be mistaken for a result.
     if obj.get("type").and_then(Value::as_str) == Some("error") {
-        return Some(
-            first_str(obj, &["message", "error"]).unwrap_or_else(|| "error".to_owned()),
-        );
+        return Some(first_str(obj, &["message", "error"]).unwrap_or_else(|| "error".to_owned()));
     }
     // An explicit `error` object/string.
     if let Some(error) = obj.get("error") {

@@ -13,7 +13,7 @@ use async_trait::async_trait;
 
 use crate::agent::error::AgentError;
 use crate::agent::run::AgentRun;
-use crate::{Agent, AgentRunContext};
+use crate::{Agent, AgentInvocation};
 
 /// Configurable fake agent for verification testing.
 ///
@@ -39,7 +39,7 @@ impl Agent for FakeAgent {
         "fake"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         if ctx.cancel.is_cancelled() {
             return Err(AgentError::Cancelled);
         }
@@ -181,7 +181,7 @@ mod tests {
             ..default_fake_agent()
         };
         let prompt = Prompt::from("ignored");
-        let ctx = AgentRunContext::new(
+        let ctx = AgentInvocation::new(
             Path::new("."),
             &prompt,
             cancel.clone(),
@@ -264,7 +264,7 @@ mod tests {
             ..default_fake_agent()
         };
         let prompt = Prompt::from("ignored");
-        let run_ctx = AgentRunContext::new(
+        let run_ctx = AgentInvocation::new(
             Path::new("."),
             &prompt,
             CancellationToken::new(),
@@ -289,7 +289,7 @@ mod tests {
         cancel.cancel();
         let agent = default_fake_agent();
         let prompt = Prompt::from("ignored");
-        let ctx = AgentRunContext::new(
+        let ctx = AgentInvocation::new(
             Path::new("."),
             &prompt,
             cancel,

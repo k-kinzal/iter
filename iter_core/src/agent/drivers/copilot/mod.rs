@@ -2,7 +2,7 @@
 //!
 //! Two run modes are supported:
 //!
-//! * [`AgentMode::Print`] — the default. Spawns:
+//! * [`AgentMode::Headless`] — the default. Spawns:
 //!
 //!   ```text
 //!   copilot -p <prompt> --allow-all-tools --output-format json [extra-args...]
@@ -58,7 +58,7 @@
 //!   Interactive mode inherits stdin/stdout/stderr from the parent
 //!   process so the TUI renders correctly when iter is invoked from a
 //!   terminal. In non-tty environments (CI, detached runs) use
-//!   [`AgentMode::Print`] instead.
+//!   [`AgentMode::Headless`] instead.
 //!
 //! # Assumptions to verify later
 //!
@@ -85,7 +85,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -197,8 +197,8 @@ impl Agent for CopilotAgent {
         "copilot"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,
@@ -210,7 +210,7 @@ impl Agent for CopilotAgent {
             ..
         } = ctx;
         match self.mode {
-            AgentMode::Print => {
+            AgentMode::Headless => {
                 let mut command = CopilotCommand {
                     program: &self.command,
                     args: &self.args,
@@ -331,7 +331,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
     #[tokio::test]
     async fn print_mode_emits_print_json_and_allow_all_tools_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("hello-copilot");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -348,7 +348,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.args = vec!["--model".into(), "gpt-5".into()];
         let agent = s;
         let prompt = Prompt::from("x");
@@ -365,7 +365,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
         let script = r#"printf '%s' '{"type":"session.error","errorType":"quota_exceeded","statusCode":402}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("quota is an error");
@@ -377,7 +377,7 @@ exit 1"#;
         let script = r#"printf '%s' '{"type":"session.error","errorType":"unauthorized","statusCode":401}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("auth is an error");
@@ -396,7 +396,7 @@ exit 1"#;
     #[tokio::test]
     async fn print_mode_no_result_maps_to_failed() {
         let (_guard, bin) = fake_binary_script("printf 'garbage'\nexit 1");
-        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("no result is an error");
@@ -411,7 +411,7 @@ exit 1"#;
         let script = "printf '%s\\n' \"$OTEL_RESOURCE_ATTRIBUTES\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}'";
         let (_guard, bin) = fake_binary_script(script);
         let tmp = TempDir::new().expect("tmp");
-        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
 
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
@@ -434,7 +434,7 @@ exit 1"#;
     async fn print_mode_env_is_forwarded_to_child() {
         let script = "printf 'ENV=%s\\n' \"$COPILOT_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = copilot_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.env = vec![("COPILOT_TEST_ENV_VAR".into(), "env-value".into())];
         let agent = s;
         let prompt = Prompt::from("x");

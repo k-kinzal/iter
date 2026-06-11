@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 
-use crate::agent::{Agent, AgentError, AgentRun, AgentRunContext};
+use crate::agent::{Agent, AgentError, AgentInvocation, AgentRun};
 
 /// Strategy governing how the router selects an agent each iteration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,10 +74,10 @@ impl AgentRouter {
     /// (a non-zero exit surfaces as `AgentError::Failed`, a signal as
     /// `TerminatedBySignal`, etc.) is propagated as-is and does not advance
     /// to the next agent.
-    async fn run_fallback(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+    async fn run_fallback(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let mut last_err = None;
         for (i, (name, agent)) in self.agents.iter().enumerate() {
-            let attempt_ctx = AgentRunContext::new(
+            let attempt_ctx = AgentInvocation::new(
                 ctx.workspace_path,
                 ctx.prompt,
                 ctx.cancel.clone(),
@@ -106,7 +106,7 @@ impl AgentRouter {
         Err(last_err.expect("agents is non-empty"))
     }
 
-    async fn run_rotate(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+    async fn run_rotate(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let index = self.state.fetch_add(1, Ordering::Relaxed) % self.agents.len();
         let (_name, agent) = &self.agents[index];
         agent.run(ctx).await
@@ -119,7 +119,7 @@ impl Agent for AgentRouter {
         "router"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         match self.strategy {
             RoutingStrategy::Fallback => self.run_fallback(ctx).await,
             RoutingStrategy::Rotate => self.run_rotate(ctx).await,
@@ -137,8 +137,8 @@ mod tests {
     use std::path::Path;
     use tokio_util::sync::CancellationToken;
 
-    fn test_ctx(prompt: &Prompt) -> AgentRunContext<'_> {
-        AgentRunContext::new(
+    fn test_ctx(prompt: &Prompt) -> AgentInvocation<'_> {
+        AgentInvocation::new(
             Path::new("."),
             prompt,
             CancellationToken::new(),
@@ -169,7 +169,7 @@ mod tests {
     fn token_limit_agent(script: &Path) -> Box<dyn Agent> {
         Box::new(ClaudeAgent {
             command: script.to_str().unwrap().to_string(),
-            mode: AgentMode::Print,
+            mode: AgentMode::Headless,
             args: Vec::new(),
             session_id_file: None,
             env: Vec::new(),

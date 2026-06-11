@@ -17,7 +17,7 @@
 pub mod context;
 pub mod error;
 
-pub use context::{LifecycleRenderContext, RenderContext, SignalContext};
+pub use context::{IterationRenderContext, RunnerRenderContext, SignalContext};
 pub use error::TemplateError;
 
 use std::fmt;
@@ -167,7 +167,9 @@ mod tests {
     #[test]
     fn render_errors_on_missing_nested_path() {
         let tpl = Template::compile("{{metadata.missing}}").unwrap();
-        let err = tpl.render(&json!({"metadata": {"other": "x"}})).unwrap_err();
+        let err = tpl
+            .render(&json!({"metadata": {"other": "x"}}))
+            .unwrap_err();
         assert!(matches!(err, TemplateError::UnknownVariable(_)));
     }
 

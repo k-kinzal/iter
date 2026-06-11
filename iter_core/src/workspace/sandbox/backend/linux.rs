@@ -21,7 +21,8 @@
 use std::ffi::OsString;
 
 use super::linux_argv::render_argv;
-use super::{BackendError, SandboxBackend, SandboxDescriptor, which_sync};
+use super::{BackendError, SandboxBackend, SandboxDescriptor};
+use crate::agent::command_path::CommandPath;
 
 /// Linux `bwrap` backend.
 #[derive(Debug, Default)]
@@ -44,7 +45,7 @@ impl SandboxBackend for BwrapBackend {
         &mut self,
         descriptor: &SandboxDescriptor<'_>,
     ) -> Result<Vec<OsString>, BackendError> {
-        if which_sync("bwrap").is_none() {
+        if CommandPath::resolve("bwrap").is_none() {
             return Err(BackendError::BinaryNotFound("bwrap"));
         }
         Ok(render_argv(descriptor))

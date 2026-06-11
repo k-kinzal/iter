@@ -59,7 +59,7 @@ Iterfile {
                     "memory",
                 ),
                 continue_on_error: false,
-                behavior: Loop {
+                behavior: Synthesize {
                     delay_secs: None,
                 },
                 iteration_timeout_secs: None,

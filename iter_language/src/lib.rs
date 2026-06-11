@@ -63,11 +63,11 @@ pub use ast::{
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef, DlqTargetDef, EventHandlerDef,
     EventName, ExtractExpr, FilesSource, InlineService, IterationField, Iterfile, MetadataSource,
     NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService, NamedTrigger, OnErrorKeyword,
-    PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard, PromptValue, QueueDef, QueueRef,
-    RetryPolicyDef, RouterStrategy, RunnerBehavior, RunnerDef, SandboxNetworkDef, SandboxPolicyDef,
-    SecretExpr, ServiceSource, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind,
-    SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef,
-    TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef,
+    PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard, PromptValue, QueueDef,
+    QueueRef, RetryPolicyDef, RouterStrategy, RunnerDef, SandboxNetworkDef, SandboxPolicyDef,
+    SecretExpr, ServiceSource, SignalAcquisition, Span, Spanned, SqsConfig, SqsConsumer,
+    SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, Subscription,
+    TelemetryDef, TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{

@@ -44,7 +44,7 @@
 
 use std::path::PathBuf;
 
-use crate::{Agent, AgentRun, AgentRunContext};
+use crate::{Agent, AgentInvocation, AgentRun};
 use async_trait::async_trait;
 
 mod command;
@@ -154,8 +154,8 @@ impl Agent for GrokAgent {
         "grok"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,

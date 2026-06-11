@@ -8,7 +8,7 @@
 //! `agent::drivers`), feature-gated for external dependencies.
 //! Workspace implementations are core — not drivers.
 //!
-//! The [`EventHandler`] sink trait lives alongside the runner that emits
+//! The [`EventAction`] sink trait lives alongside the runner that emits
 //! into it ([`runner`]). The [`process`] module provides OS-level
 //! process lifecycle, registry, and shutdown management used by the CLI
 //! and compose layers. [`process_group`] owns a spawned process tree by its
@@ -39,18 +39,20 @@ pub mod telemetry;
 pub mod template;
 pub mod workspace;
 
-pub use agent::{Agent, AgentRun, AgentRunContext};
+pub use agent::{Agent, AgentInvocation, AgentRun};
 pub use prompt::{
     CmpOp, IterationField, Prompt, PromptGuard, PromptSelector, PromptTemplate, SelectorError,
 };
 pub use queue::{Priority, Queue};
 pub use runner::{
-    BoxError, BuilderError, Event, EventEmitter, EventHandler, EventName, IterationContext,
-    IterationState, PreviousResult, Runner, RunnerBehavior, RunnerBuilder, RunnerConfig,
-    RunnerExitError, RunnerSummary, RunnerTerminationReason, SharedSignal, ShellEventHandler,
+    BoxError, BuilderError, ErrorSource, EventAction, EventDispatcher, EventName, HookEvent,
+    IterationContext, IterationState, PreviousResult, Runner, RunnerBuilder, RunnerExitError,
+    RunnerPolicy, RunnerSummary, RunnerTerminationReason, SharedSignal, SignalAcquisition,
 };
 pub use signal::{
     Metadata, MetadataError, MetadataKey, MetadataValue, Signal, SignalId, SignalKind,
 };
-pub use template::{LifecycleRenderContext, RenderContext, SignalContext, Template, TemplateError};
+pub use template::{
+    IterationRenderContext, RunnerRenderContext, SignalContext, Template, TemplateError,
+};
 pub use workspace::{SandboxRequirements, Workspace, match_env_pattern};

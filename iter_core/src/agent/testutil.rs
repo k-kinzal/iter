@@ -15,15 +15,15 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::AgentRunContext;
+use crate::agent::AgentInvocation;
 use crate::log::OutputSink;
 use crate::prompt::Prompt;
 use crate::signal::SignalId;
 
-/// Build an [`AgentRunContext`] for unit tests with a fresh
+/// Build an [`AgentInvocation`] for unit tests with a fresh
 /// [`CancellationToken`] and [`SignalId`].
-pub(crate) fn ctx<'a>(path: &'a Path, prompt: &'a Prompt) -> AgentRunContext<'a> {
-    AgentRunContext::new(path, prompt, CancellationToken::new(), SignalId::new())
+pub(crate) fn ctx<'a>(path: &'a Path, prompt: &'a Prompt) -> AgentInvocation<'a> {
+    AgentInvocation::new(path, prompt, CancellationToken::new(), SignalId::new())
 }
 
 /// An [`OutputSink`] that records everything teed through it, so driver
@@ -59,14 +59,14 @@ impl CaptureSink {
     }
 }
 
-/// Build an [`AgentRunContext`] whose stdio sink captures teed output.
+/// Build an [`AgentInvocation`] whose stdio sink captures teed output.
 /// Returns the context and the shared [`CaptureSink`] for later assertions.
 pub(crate) fn ctx_capturing<'a>(
     path: &'a Path,
     prompt: &'a Prompt,
-) -> (AgentRunContext<'a>, Arc<CaptureSink>) {
+) -> (AgentInvocation<'a>, Arc<CaptureSink>) {
     let sink = Arc::new(CaptureSink::default());
-    let ctx = AgentRunContext::new(path, prompt, CancellationToken::new(), SignalId::new())
+    let ctx = AgentInvocation::new(path, prompt, CancellationToken::new(), SignalId::new())
         .with_stdio_sink(sink.clone());
     (ctx, sink)
 }

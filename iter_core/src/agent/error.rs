@@ -1,4 +1,4 @@
-//! [`AgentError`] — iter's domain error for a single agent turn.
+//! [`AgentError`] — iter's domain error for a single agent run.
 //!
 //! This is the error half of the **Agent level** (see [`AgentRun`]). It is
 //! deliberately minimal: it enumerates only the failure classes iter
@@ -21,7 +21,7 @@ use std::io;
 
 use thiserror::Error;
 
-/// Errors produced while driving a CLI-backed agent for one turn.
+/// Errors produced while driving a CLI-backed agent for one run.
 ///
 /// All drivers share this single enum; richness that varies per CLI is kept
 /// in the per-CLI Command error and collapsed here at the Adapter boundary.
@@ -51,7 +51,7 @@ pub enum AgentError {
     /// The agent could not be launched or was misconfigured: an empty
     /// command, an I/O error while spawning or talking to the child, a hook
     /// bundle setup failure, an argument-parse rejection, or a fatal startup
-    /// exit (e.g. Gemini's `41`–`58`). The agent never ran a turn.
+    /// exit (e.g. Gemini's `41`–`58`). The agent never ran.
     #[error("agent failed to launch: {0}")]
     Launch(String),
 

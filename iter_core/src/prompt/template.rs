@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
-use crate::template::{RenderContext, Template, TemplateError};
+use crate::template::{IterationRenderContext, Template, TemplateError};
 
 use super::inner::Prompt;
 
@@ -53,7 +53,7 @@ impl PromptTemplate {
         signal: &Signal,
         iteration: &IterationContext,
     ) -> Result<Prompt, TemplateError> {
-        let context = RenderContext::new(signal, iteration);
+        let context = IterationRenderContext::new(signal, iteration);
         self.template.render(&context).map(Prompt::from)
     }
 }
@@ -200,8 +200,8 @@ mod tests {
     fn renders_iteration_count() {
         let signal = signal_with(Metadata::new());
         let iter = IterationContext::for_count(7);
-        let template = PromptTemplate::new("turn {{iteration.count}}").expect("compile");
-        assert_eq!(template.render(&signal, &iter).unwrap().as_str(), "turn 7");
+        let template = PromptTemplate::new("iter {{iteration.count}}").expect("compile");
+        assert_eq!(template.render(&signal, &iter).unwrap().as_str(), "iter 7");
     }
 
     #[test]

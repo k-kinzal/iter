@@ -4,12 +4,13 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use super::config::RunnerTerminationReason;
-use super::event::{Event, SharedSignal};
-use super::event_emitter::EventEmitter;
+use super::error::ErrorSource;
+use super::event::{HookEvent, SharedSignal};
+use super::event_emitter::EventDispatcher;
 use super::iteration::IterationContext;
 use crate::agent::AgentRun;
 use crate::prompt::Prompt;
-use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
+use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycleEvent};
 use crate::runner::observer::DynRunnerObserver;
 use crate::signal::SignalId;
 
@@ -17,15 +18,18 @@ use crate::signal::SignalId;
 /// the per-stream error tallies that surface as
 /// [`RunnerSummary::event_handler_error_count`] /
 /// [`RunnerSummary::observer_error_count`].
-pub(super) struct RunnerEvents {
-    emitter: EventEmitter,
+pub(super) struct RunnerEmitter {
+    emitter: EventDispatcher,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
     pub(super) handler_error_count: u32,
     pub(super) observer_error_count: u32,
 }
 
-impl RunnerEvents {
-    pub(super) fn new(emitter: EventEmitter, observers: Vec<Arc<dyn DynRunnerObserver>>) -> Self {
+impl RunnerEmitter {
+    pub(super) fn new(
+        emitter: EventDispatcher,
+        observers: Vec<Arc<dyn DynRunnerObserver>>,
+    ) -> Self {
         Self {
             emitter,
             observers,
@@ -34,7 +38,7 @@ impl RunnerEvents {
         }
     }
 
-    async fn observe(&mut self, lifecycle: &RunnerLifecycle) {
+    async fn observe(&mut self, lifecycle: &RunnerLifecycleEvent) {
         for (idx, obs) in self.observers.iter().enumerate() {
             if let Err(err) = obs.observe(lifecycle).await {
                 self.observer_error_count = self.observer_error_count.saturating_add(1);
@@ -49,8 +53,8 @@ impl RunnerEvents {
 
     async fn emit(
         &mut self,
-        event: Event,
-        lifecycle: Option<&RunnerLifecycle>,
+        event: HookEvent,
+        lifecycle: Option<&RunnerLifecycleEvent>,
         snap: &IterationContext,
     ) {
         if let Some(lc) = lifecycle {
@@ -63,12 +67,12 @@ impl RunnerEvents {
     }
 
     pub(super) async fn bootstrap(&mut self, started_at: DateTime<Utc>) {
-        let lifecycle = RunnerLifecycle::BootstrapStarted { started_at };
+        let lifecycle = RunnerLifecycleEvent::BootstrapStarted { started_at };
         self.observe(&lifecycle).await;
     }
 
     pub(super) async fn runner_starting(&mut self, snap: &IterationContext) {
-        self.emit(Event::RunnerStarting {}, None, snap).await;
+        self.emit(HookEvent::RunnerStarting {}, None, snap).await;
     }
 
     pub(super) async fn signal_received(
@@ -77,12 +81,12 @@ impl RunnerEvents {
         ts: DateTime<Utc>,
         snap: &IterationContext,
     ) {
-        let lifecycle = RunnerLifecycle::SignalReceived {
+        let lifecycle = RunnerLifecycleEvent::SignalReceived {
             signal_id: signal.id(),
             metadata: RedactedMetadata::from_signal(signal.metadata()),
             ts,
         };
-        let event = Event::SignalReceived {
+        let event = HookEvent::SignalReceived {
             signal: signal.clone(),
         };
         self.emit(event, Some(&lifecycle), snap).await;
@@ -93,7 +97,7 @@ impl RunnerEvents {
         signal: &SharedSignal,
         snap: &IterationContext,
     ) {
-        let event = Event::WorkspaceSetupStarting {
+        let event = HookEvent::WorkspaceSetupStarting {
             signal: signal.clone(),
         };
         self.emit(event, None, snap).await;
@@ -105,11 +109,11 @@ impl RunnerEvents {
         path: &Path,
         snap: &IterationContext,
     ) {
-        let lifecycle = RunnerLifecycle::WorkspaceSetup {
+        let lifecycle = RunnerLifecycleEvent::WorkspaceSetup {
             signal_id: signal.id(),
             path: path.to_path_buf(),
         };
-        let event = Event::WorkspaceSetupFinished {
+        let event = HookEvent::WorkspaceSetupFinished {
             signal: signal.clone(),
             path: path.to_path_buf(),
         };
@@ -123,10 +127,10 @@ impl RunnerEvents {
         prompt: &Prompt,
         snap: &IterationContext,
     ) {
-        let lifecycle = RunnerLifecycle::AgentStarting {
+        let lifecycle = RunnerLifecycleEvent::AgentStarting {
             signal_id: signal.id(),
         };
-        let event = Event::AgentStarting {
+        let event = HookEvent::AgentStarting {
             signal: signal.clone(),
             path: path.to_path_buf(),
             prompt: prompt.clone(),
@@ -143,12 +147,12 @@ impl RunnerEvents {
         exit: Option<i32>,
         snap: &IterationContext,
     ) {
-        let lifecycle = RunnerLifecycle::AgentFinished {
+        let lifecycle = RunnerLifecycleEvent::AgentFinished {
             signal_id: signal.id(),
             result: result_label.to_owned(),
             exit,
         };
-        let event = Event::AgentFinished {
+        let event = HookEvent::AgentFinished {
             signal: signal.clone(),
             path: path.to_path_buf(),
             result,
@@ -162,7 +166,7 @@ impl RunnerEvents {
         path: &Path,
         snap: &IterationContext,
     ) {
-        let event = Event::WorkspaceTeardownStarting {
+        let event = HookEvent::WorkspaceTeardownStarting {
             signal: signal.clone(),
             path: path.to_path_buf(),
         };
@@ -175,10 +179,10 @@ impl RunnerEvents {
         final_path: PathBuf,
         snap: &IterationContext,
     ) {
-        let lifecycle = RunnerLifecycle::WorkspaceTearDown {
+        let lifecycle = RunnerLifecycleEvent::WorkspaceTearDown {
             signal_id: signal.id(),
         };
-        let event = Event::WorkspaceTeardownFinished {
+        let event = HookEvent::WorkspaceTeardownFinished {
             signal: signal.clone(),
             path: final_path,
         };
@@ -187,15 +191,15 @@ impl RunnerEvents {
 
     pub(super) async fn runner_error(
         &mut self,
-        error_source: &'static str,
+        error_source: ErrorSource,
         signal_id: Option<SignalId>,
         message: &str,
-        event: Event,
+        event: HookEvent,
         snap: &IterationContext,
     ) {
-        let lifecycle = RunnerLifecycle::RunnerError {
+        let lifecycle = RunnerLifecycleEvent::RunnerError {
             signal_id,
-            error_source: error_source.to_owned(),
+            error_source,
             error_message: message.to_owned(),
         };
         self.emit(event, Some(&lifecycle), snap).await;
@@ -207,7 +211,7 @@ impl RunnerEvents {
         iteration_count: u32,
         snap: &IterationContext,
     ) {
-        let event = Event::RunnerFinished {
+        let event = HookEvent::RunnerFinished {
             reason,
             iteration_count,
         };

@@ -25,21 +25,27 @@ use serde::{Deserialize, Serialize};
 ///   [`Runner`](crate::Runner) handles per-signal iteration so the
 ///   hook only needs to capture state — no parent-process `kill -TERM`
 ///   loop driven by the hook script itself.
-/// * [`AgentMode::Print`] — runs the CLI non-interactively in its
+/// * [`AgentMode::Headless`] — runs the CLI non-interactively in its
 ///   one-shot mode (`claude --print`, `codex exec`, `gemini -p`,
 ///   `gh copilot suggest`, etc.). The prompt is delivered inline or on
 ///   stdin and the CLI's machine-readable output is parsed by the per-CLI
 ///   Command into an [`AgentRun`](crate::AgentRun). No tty required; works
 ///   in CI and detached instances.
 ///
-/// There is no `Default` impl. Print vs Interactive is a project-shaped
+/// There is no `Default` impl. Headless vs Interactive is a project-shaped
 /// decision: iter has no honest default because some workflows need the
 /// TUI's hook bundle and others must run headless in CI. The Iterfile
 /// must spell the choice out.
+///
+/// The grammar keyword for [`AgentMode::Headless`] stays `print` — it is a
+/// user-facing surface kept stable across this rename (R16); only the Rust
+/// variant names the concept (the no-terminal mode), not a particular CLI
+/// flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AgentMode {
     /// Run the CLI under a live TUI with a project-local hook bundle.
     Interactive,
-    /// Run the CLI in one-shot / print mode and capture stdout+stderr.
-    Print,
+    /// Run the CLI with no terminal — its one-shot / headless mode — and
+    /// capture stdout+stderr.
+    Headless,
 }

@@ -1,66 +1,69 @@
-//! [`ShellEventHandler`] — execute `shell "..."` actions for `on <event> {}`
-//! handlers.
+//! [`ShellAction`] — execute `shell "..."` actions for `on <event> {}`
+//! blocks.
 //!
-//! The handler runs a shell command when the emitter dispatches an event
-//! it was registered for. Because the [`EventEmitter`](super::EventEmitter)
-//! routes by [`EventName`](super::EventName), the handler itself carries
-//! no event-name field — it is a pure action callback.
+//! The action runs a shell command when the dispatcher routes an event it was
+//! registered for. Because the [`EventDispatcher`](iter_core::EventDispatcher)
+//! routes by [`EventName`](iter_core::EventName), the action itself carries no
+//! event-name field — it is a pure action callback.
+//!
+//! The concrete `on { shell … }` action is an operator-configured side effect
+//! (`sh -c`), not one of the six core concepts; it lives in the operator
+//! surface (cli) and renders against core's public
+//! [`Template`](iter_core::Template) and render views.
 //!
 //! # Template rendering
 //!
 //! The command string is compiled once into a [`Template`] and rendered
-//! per-event against a [`RenderContext`] — the same machinery the runner
-//! uses for prompts. Template variables include `{{signal.id}}`,
-//! `{{signal.created_at}}`, `{{today}}`, every `{{metadata.*}}` key
-//! attached to the signal, and the per-turn `{{iteration.*}}` snapshot.
+//! per-event against an [`IterationRenderContext`] — the same machinery the
+//! runner uses for prompts. Template variables include `{{signal.id}}`,
+//! `{{signal.created_at}}`, `{{today}}`, every `{{metadata.*}}` key attached
+//! to the signal, and the per-iteration `{{iteration.*}}` snapshot.
 //! Signal-less lifecycle events (`runner_starting`, `runner_finished`,
 //! `runner_error` raised before a signal was dequeued) render against a
-//! [`LifecycleRenderContext`] so `{{signal.*}}` and `{{metadata.*}}` are
+//! [`RunnerRenderContext`] so `{{signal.*}}` and `{{metadata.*}}` are
 //! deliberately absent.
 //!
 //! # Working directory
 //!
 //! When the triggering event carries a workspace path (everything after
-//! `workspace_setup_finished`), the shell command runs with that path as
-//! its cwd. Events without a workspace path (`runner_starting`,
-//! `runner_finished`, `signal_received`, `workspace_setup_starting`,
-//! `runner_error`) inherit the parent's cwd.
+//! `workspace_setup_finished`), the shell command runs with that path as its
+//! cwd. Events without a workspace path (`runner_starting`, `runner_finished`,
+//! `signal_received`, `workspace_setup_starting`, `runner_error`) inherit the
+//! parent's cwd.
 //!
-//! Shell commands run via `sh -c <cmd>` and inherit the parent's stdio.
-//! A non-zero exit status is *logged* but never propagated back to the
-//! runner — the [`EventEmitter`](super::EventEmitter) contract calls
-//! event handlers on a best-effort basis.
+//! Shell commands run via `sh -c <cmd>` and inherit the parent's stdio. A
+//! non-zero exit status is *logged* but never propagated back to the runner —
+//! the [`EventDispatcher`](iter_core::EventDispatcher) contract calls event
+//! actions on a best-effort basis.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
+use iter_core::{
+    BoxError, EventAction, HookEvent, IterationContext, IterationRenderContext,
+    RunnerRenderContext, Signal, Template, TemplateError,
+};
 use tokio::process::Command;
 use tracing::warn;
 
-use super::event::Event;
-use super::event_handler::{BoxError, EventHandler};
-use super::iteration::IterationContext;
-use crate::signal::Signal;
-use crate::template::{LifecycleRenderContext, RenderContext, Template, TemplateError};
-
-/// Event handler that runs a shell command.
+/// Event action that runs a shell command.
 ///
-/// The handler holds only the action — the compiled command template and
-/// execution logic. Which event it handles is the emitter's
+/// The action holds only the work — the compiled command template and
+/// execution logic. Which event it responds to is the dispatcher's
 /// responsibility at registration time.
 #[derive(Debug, Clone)]
-pub struct ShellEventHandler {
+pub struct ShellAction {
     command_source: String,
     compiled: Template,
 }
 
-impl ShellEventHandler {
-    /// Build a handler that runs `command` when invoked.
+impl ShellAction {
+    /// Build an action that runs `command` when invoked.
     ///
     /// # Errors
     ///
-    /// Returns [`TemplateError::InvalidSyntax`] if `command` is not a
-    /// valid Handlebars template.
+    /// Returns [`TemplateError::InvalidSyntax`] if `command` is not a valid
+    /// Handlebars template.
     pub fn new(command: impl Into<String>) -> Result<Self, TemplateError> {
         let command_source = command.into();
         let compiled = Template::compile(command_source.clone())?;
@@ -68,12 +71,6 @@ impl ShellEventHandler {
             command_source,
             compiled,
         })
-    }
-
-    /// The shell command template this handler will render and run.
-    #[must_use]
-    pub fn command(&self) -> &str {
-        &self.command_source
     }
 
     async fn run_shell(&self, rendered: &str, cwd: Option<&Path>) -> Result<(), BoxError> {
@@ -91,24 +88,26 @@ impl ShellEventHandler {
                 command = %rendered,
                 cwd = ?cwd,
                 exit = ?status.code(),
-                "shell event handler exited non-zero"
+                "shell action exited non-zero"
             );
         }
         Ok(())
     }
 }
 
-impl EventHandler for ShellEventHandler {
-    async fn handle(&self, event: &Event, iteration: &IterationContext) -> Result<(), BoxError> {
+impl EventAction for ShellAction {
+    async fn handle(
+        &self,
+        event: &HookEvent,
+        iteration: &IterationContext,
+    ) -> Result<(), BoxError> {
         let (signal, cwd) = extract_context(event);
         let render_result = match signal {
             Some(signal) => {
-                let ctx = RenderContext::new(signal, iteration);
+                let ctx = IterationRenderContext::new(signal, iteration);
                 self.compiled.render(&ctx)
             }
-            None => self
-                .compiled
-                .render(&LifecycleRenderContext::new(iteration)),
+            None => self.compiled.render(&RunnerRenderContext::new(iteration)),
         };
         let rendered = match render_result {
             Ok(text) => text,
@@ -116,7 +115,7 @@ impl EventHandler for ShellEventHandler {
                 warn!(
                     command = %self.command_source,
                     error = %err,
-                    "shell event handler template render failed"
+                    "shell action template render failed"
                 );
                 return Ok(());
             }
@@ -126,36 +125,34 @@ impl EventHandler for ShellEventHandler {
     }
 }
 
-/// Extract the signal + optional workspace-path pair that a shell handler
+/// Extract the signal + optional workspace-path pair that a shell action
 /// should use when processing `event`.
-fn extract_context(event: &Event) -> (Option<&Signal>, Option<PathBuf>) {
+fn extract_context(event: &HookEvent) -> (Option<&Signal>, Option<PathBuf>) {
     match event {
-        Event::SignalReceived { signal } | Event::WorkspaceSetupStarting { signal } => {
+        HookEvent::SignalReceived { signal } | HookEvent::WorkspaceSetupStarting { signal } => {
             (Some(signal.as_signal()), None)
         }
-        Event::WorkspaceSetupFinished { signal, path }
-        | Event::AgentStarting { signal, path, .. }
-        | Event::AgentFinished { signal, path, .. }
-        | Event::WorkspaceTeardownStarting { signal, path }
-        | Event::WorkspaceTeardownFinished { signal, path } => {
+        HookEvent::WorkspaceSetupFinished { signal, path }
+        | HookEvent::AgentStarting { signal, path, .. }
+        | HookEvent::AgentFinished { signal, path, .. }
+        | HookEvent::WorkspaceTeardownStarting { signal, path }
+        | HookEvent::WorkspaceTeardownFinished { signal, path } => {
             (Some(signal.as_signal()), Some(path.clone()))
         }
-        Event::DequeueFailed { .. }
-        | Event::RenderPromptFailed { .. }
-        | Event::WorkspaceSetupFailed { .. }
-        | Event::AgentRunFailed { .. }
-        | Event::WorkspaceTeardownFailed { .. }
-        | Event::RunnerStarting {}
-        | Event::RunnerFinished { .. } => (None, None),
+        HookEvent::DequeueFailed { .. }
+        | HookEvent::RenderPromptFailed { .. }
+        | HookEvent::WorkspaceSetupFailed { .. }
+        | HookEvent::AgentRunFailed { .. }
+        | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::RunnerStarting {}
+        | HookEvent::RunnerFinished { .. } => (None, None),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runner::event::EventName;
-    use crate::runner::event_emitter::EventEmitter;
-    use crate::signal::{Metadata, MetadataKey, MetadataValue, Signal};
+    use iter_core::{EventDispatcher, EventName, Metadata, MetadataKey, MetadataValue, Signal};
 
     fn iter_ctx() -> IterationContext {
         IterationContext::for_test()
@@ -165,36 +162,36 @@ mod tests {
         Signal::new(Metadata::new())
     }
 
-    fn torndown_event(path: PathBuf) -> Event {
-        Event::WorkspaceTeardownFinished {
+    fn torndown_event(path: PathBuf) -> HookEvent {
+        HookEvent::WorkspaceTeardownFinished {
             signal: empty_signal().into(),
             path,
         }
     }
 
     #[tokio::test]
-    async fn shell_handler_only_runs_on_registered_event() {
-        let handler = ShellEventHandler::new("true").expect("compile");
-        let mut emitter = EventEmitter::new();
-        emitter.on(EventName::AgentFinished, handler);
+    async fn shell_action_only_runs_on_registered_event() {
+        let action = ShellAction::new("true").expect("compile");
+        let mut dispatcher = EventDispatcher::new();
+        dispatcher.on(EventName::AgentFinished, action);
 
-        let report = emitter
+        let report = dispatcher
             .emit(&torndown_event(PathBuf::from("/tmp")), &iter_ctx())
             .await;
         assert!(report.is_clean());
     }
 
     #[tokio::test]
-    async fn shell_handler_logs_but_does_not_propagate_nonzero_exit() {
-        let handler = ShellEventHandler::new("false").expect("compile");
-        handler
+    async fn shell_action_logs_but_does_not_propagate_nonzero_exit() {
+        let action = ShellAction::new("false").expect("compile");
+        action
             .handle(&torndown_event(PathBuf::from("/tmp")), &iter_ctx())
             .await
             .expect("must not propagate");
     }
 
     #[tokio::test]
-    async fn shell_handler_renders_signal_and_metadata_templates() {
+    async fn shell_action_renders_signal_and_metadata_templates() {
         let tmp = tempfile::tempdir().expect("tmp");
         let ws = tmp.path().to_path_buf();
 
@@ -206,18 +203,18 @@ mod tests {
         let signal = Signal::new(metadata);
         let signal_id = signal.id().to_string();
 
-        let handler = ShellEventHandler::new("echo {{metadata.file}}:{{signal.id}} > marker.txt")
-            .expect("compile");
-        handler
+        let action =
+            ShellAction::new("echo {{metadata.file}}:{{signal.id}} > marker.txt").expect("compile");
+        action
             .handle(
-                &Event::WorkspaceTeardownFinished {
+                &HookEvent::WorkspaceTeardownFinished {
                     signal: signal.into(),
                     path: ws.clone(),
                 },
                 &iter_ctx(),
             )
             .await
-            .expect("handler ok");
+            .expect("action ok");
 
         let marker = ws.join("marker.txt");
         let contents = std::fs::read_to_string(&marker).expect("marker");
@@ -232,26 +229,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shell_handler_renders_iteration_root() {
+    async fn shell_action_renders_iteration_root() {
         let tmp = tempfile::tempdir().expect("tmp");
         let ws = tmp.path().to_path_buf();
         let signal = Signal::new(Metadata::new());
 
-        let handler = ShellEventHandler::new(
+        let action = ShellAction::new(
             "echo n={{iteration.count}} prev={{iteration.previous_result}} > iter.txt",
         )
         .expect("compile");
         let iteration = IterationContext::for_count(7);
-        handler
+        action
             .handle(
-                &Event::WorkspaceTeardownFinished {
+                &HookEvent::WorkspaceTeardownFinished {
                     signal: signal.into(),
                     path: ws.clone(),
                 },
                 &iteration,
             )
             .await
-            .expect("handler ok");
+            .expect("action ok");
 
         let contents = std::fs::read_to_string(ws.join("iter.txt")).expect("iter.txt");
         assert!(
@@ -265,49 +262,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shell_handler_lifecycle_event_renders_iteration_only() {
-        let handler =
-            ShellEventHandler::new("true {{iteration.count}} {{today}}").expect("compile");
-        handler
-            .handle(&Event::RunnerStarting {}, &iter_ctx())
+    async fn shell_action_lifecycle_event_renders_iteration_only() {
+        let action = ShellAction::new("true {{iteration.count}} {{today}}").expect("compile");
+        action
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
             .await
-            .expect("lifecycle handler ok");
+            .expect("lifecycle action ok");
     }
 
     #[tokio::test]
-    async fn shell_handler_lifecycle_event_with_signal_root_is_swallowed() {
-        let handler = ShellEventHandler::new("echo {{signal.id}}").expect("compile");
-        handler
-            .handle(&Event::RunnerStarting {}, &iter_ctx())
+    async fn shell_action_lifecycle_event_with_signal_root_is_swallowed() {
+        let action = ShellAction::new("echo {{signal.id}}").expect("compile");
+        action
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
             .await
             .expect("template error must be swallowed");
     }
 
     #[tokio::test]
-    async fn shell_handler_template_error_is_logged_not_propagated() {
-        let handler = ShellEventHandler::new("echo {{metadata.nonexistent}}").expect("compile");
-        handler
+    async fn shell_action_template_error_is_logged_not_propagated() {
+        let action = ShellAction::new("echo {{metadata.nonexistent}}").expect("compile");
+        action
             .handle(&torndown_event(PathBuf::from("/tmp")), &iter_ctx())
             .await
             .expect("template error must be swallowed");
     }
 
     #[tokio::test]
-    async fn shell_handler_uses_workspace_path_as_cwd() {
+    async fn shell_action_uses_workspace_path_as_cwd() {
         let tmp = tempfile::tempdir().expect("tmp");
         let ws = tmp.path().to_path_buf();
 
-        let handler = ShellEventHandler::new("pwd > pwd.txt").expect("compile");
-        handler
+        let action = ShellAction::new("pwd > pwd.txt").expect("compile");
+        action
             .handle(
-                &Event::WorkspaceTeardownFinished {
+                &HookEvent::WorkspaceTeardownFinished {
                     signal: empty_signal().into(),
                     path: ws.clone(),
                 },
                 &iter_ctx(),
             )
             .await
-            .expect("handler ok");
+            .expect("action ok");
 
         let pwd_contents = std::fs::read_to_string(ws.join("pwd.txt")).expect("pwd file");
         let observed = PathBuf::from(pwd_contents.trim());
@@ -318,12 +314,12 @@ mod tests {
 
     #[tokio::test]
     async fn extract_context_returns_none_for_runner_lifecycle_events() {
-        let (signal, cwd) = extract_context(&Event::RunnerStarting {});
+        let (signal, cwd) = extract_context(&HookEvent::RunnerStarting {});
         assert!(signal.is_none());
         assert!(cwd.is_none());
 
-        let (signal, cwd) = extract_context(&Event::RunnerFinished {
-            reason: crate::runner::config::RunnerTerminationReason::Once,
+        let (signal, cwd) = extract_context(&HookEvent::RunnerFinished {
+            reason: iter_core::RunnerTerminationReason::Once,
             iteration_count: 0,
         });
         assert!(signal.is_none());

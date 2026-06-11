@@ -40,7 +40,7 @@ pub struct RunnerDef {
     /// `wait` parks until a signal arrives; `loop { delay_secs = N }`
     /// synthesises an empty signal each iteration, optionally sleeping
     /// between iterations.
-    pub behavior: RunnerBehavior,
+    pub behavior: SignalAcquisition,
     /// Optional per-iteration timeout in seconds. When set, an iteration
     /// that runs longer than this fires the iter-scoped cancel token,
     /// which kills the agent process tree and surfaces an
@@ -57,7 +57,7 @@ pub struct RunnerDef {
 /// Runner loop behaviour — what the runner does when no signal is
 /// available to consume.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RunnerBehavior {
+pub enum SignalAcquisition {
     /// Block on `Queue::dequeue` until a signal arrives or the runner is
     /// cancelled. Requires a queue; `(no queue) + wait` is a semantic
     /// error.
@@ -67,7 +67,10 @@ pub enum RunnerBehavior {
     /// synthesis only fires on an empty queue. The optional `delay_secs`
     /// field controls how long to sleep between iterations (no sleep
     /// before the first iteration).
-    Loop {
+    ///
+    /// Spelled `loop { … }` in the grammar (the surface keyword is kept; the
+    /// AST variant names the concept).
+    Synthesize {
         /// Delay between iterations in seconds, or `None` for no delay.
         delay_secs: Option<i64>,
     },

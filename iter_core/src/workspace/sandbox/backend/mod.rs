@@ -20,9 +20,10 @@ pub mod macos_profile;
 
 use std::ffi::OsString;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::SandboxRequirements;
+use crate::agent::command_path::CommandPath;
 use thiserror::Error;
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -118,29 +119,14 @@ pub(super) fn build_backend() -> Result<Box<dyn SandboxBackend>, SandboxWorkspac
 pub(super) fn detect_backend_available() -> bool {
     #[cfg(target_os = "macos")]
     {
-        which_sync("sandbox-exec").is_some()
+        CommandPath::resolve("sandbox-exec").is_some()
     }
     #[cfg(target_os = "linux")]
     {
-        which_sync("bwrap").is_some()
+        CommandPath::resolve("bwrap").is_some()
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         false
     }
-}
-
-/// Synchronous `which` used by the backends and by
-/// [`detect_backend_available`]. Returns the first matching path on
-/// `PATH` or `None` when the binary is missing.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-pub(super) fn which_sync(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for entry in std::env::split_paths(&path) {
-        let candidate = entry.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
 }

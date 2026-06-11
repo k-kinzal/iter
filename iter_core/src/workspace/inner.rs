@@ -89,13 +89,10 @@ pub trait Workspace: Send + Sync {
     /// discriminant — deliberately a `&'static str` on the `Workspace` trait,
     /// distinct in role from any sandbox-kind enum.
     ///
-    /// The default returns a neutral placeholder and exists **only** as a
-    /// migration shim so existing impls compile during the workspace-axis
-    /// change; it is removed once every impl states its own name. Concrete
-    /// drivers override it.
-    fn name(&self) -> &'static str {
-        "workspace"
-    }
+    /// There is no default body: every implementation must state its own
+    /// name so a new workspace kind cannot silently inherit a neutral label
+    /// that misreports its telemetry.
+    fn name(&self) -> &'static str;
 
     /// Working path — the filesystem path the agent operates in during
     /// the **active** phase of the workspace lifecycle.

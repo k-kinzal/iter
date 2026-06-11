@@ -35,7 +35,7 @@
 //! value is a project-shaped decision iter cannot honestly pick on the
 //! operator's behalf. The agent is constructed directly from its fields.
 
-use crate::{Agent, AgentRun, AgentRunContext};
+use crate::{Agent, AgentInvocation, AgentRun};
 use async_trait::async_trait;
 
 mod command;
@@ -90,8 +90,8 @@ impl Agent for ClineAgent {
         "cline"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,

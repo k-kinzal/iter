@@ -2,7 +2,7 @@
 //!
 //! Two run modes are supported:
 //!
-//! * [`AgentMode::Print`] — the default. Spawns:
+//! * [`AgentMode::Headless`] — the default. Spawns:
 //!
 //!   ```text
 //!   gemini -p <prompt> -o json [extra-args...]
@@ -35,7 +35,7 @@
 //!   Interactive mode inherits stdin/stdout/stderr from the parent
 //!   process so `gemini`'s TUI renders correctly when iter is invoked
 //!   from a terminal. In non-tty environments (CI, detached runs) use
-//!   [`AgentMode::Print`] instead.
+//!   [`AgentMode::Headless`] instead.
 //!
 //! # Construction
 //!
@@ -47,7 +47,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -139,8 +139,8 @@ impl Agent for GeminiAgent {
         "gemini"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,
@@ -152,7 +152,7 @@ impl Agent for GeminiAgent {
             ..
         } = ctx;
         match self.mode {
-            AgentMode::Print => {
+            AgentMode::Headless => {
                 let mut command = GeminiCommand {
                     program: &self.command,
                     prompt: prompt.as_str(),
@@ -271,7 +271,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
     #[tokio::test]
     async fn emits_dash_p_prompt_and_json_format() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("hello-gemini");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -293,7 +293,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
     #[tokio::test]
     async fn print_mode_extra_args_are_forwarded_after_managed_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.args = vec!["--model".into(), "gemini-pro".into()];
         let agent = s;
         let prompt = Prompt::from("x");
@@ -309,7 +309,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
     async fn print_mode_parses_session_id_when_present() {
         let script = r#"printf '%s' '{"response":"ok","session_id":"conv-9"}'"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -321,7 +321,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
         let script = r#"printf '%s' '{"error":{"type":"ApiError","message":"boom","code":7}}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("err");
@@ -334,7 +334,7 @@ exit 1"#;
     #[tokio::test]
     async fn print_mode_startup_exit_code_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("exit 41");
-        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("err");
@@ -346,7 +346,7 @@ exit 1"#;
         let script = r#"printf '%s' '{"error":{"type":"ContextLengthExceeded","message":"too big"}}'
 exit 1"#;
         let (_guard, bin) = fake_binary_script(script);
-        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
         let err = agent.run(ctx).await.expect_err("err");
@@ -358,7 +358,7 @@ exit 1"#;
         let script =
             "printf 'ENV=%s\\n' \"$GEMINI_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"response\":\"ok\"}'";
         let (_guard, bin) = fake_binary_script(script);
-        let mut s = gemini_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = gemini_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.env = vec![("GEMINI_TEST_ENV_VAR".into(), "env-value".into())];
         let agent = s;
         let prompt = Prompt::from("x");

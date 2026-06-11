@@ -1,11 +1,11 @@
 //! `RunnerObserver` — the system-contract sink for
-//! [`RunnerLifecycle`](super::RunnerLifecycle).
+//! [`RunnerLifecycleEvent`](super::RunnerLifecycleEvent).
 //!
 //! The Runner emits two parallel output streams:
 //!
-//! 1. The user-defined [`Event`](super::Event) stream, which feeds
+//! 1. The user-defined [`HookEvent`](super::HookEvent) stream, which feeds
 //!    iterfile `on …` hooks. Failure of a hook is the user's problem.
-//! 2. The system [`RunnerLifecycle`](super::RunnerLifecycle) stream, which
+//! 2. The system [`RunnerLifecycleEvent`](super::RunnerLifecycleEvent) stream, which
 //!    feeds process-runtime observers.
 //!
 //! Stream 2 is consumed via this module's [`RunnerObserver`] trait. The
@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use futures::future::BoxFuture;
 
-use super::lifecycle::RunnerLifecycle;
+use super::lifecycle::RunnerLifecycleEvent;
 use crate::runner::BoxError;
 
 /// Async observer of the Runner's lifecycle stream.
@@ -37,7 +37,7 @@ pub trait RunnerObserver: Send + Sync {
     /// Observe a single lifecycle event.
     fn observe<'a>(
         &'a self,
-        lifecycle: &'a RunnerLifecycle,
+        lifecycle: &'a RunnerLifecycleEvent,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a;
 }
 
@@ -49,8 +49,10 @@ pub trait RunnerObserver: Send + Sync {
 pub trait DynRunnerObserver: Send + Sync {
     /// Object-safe `observe`. Mirrors [`RunnerObserver::observe`] but
     /// returns a [`BoxFuture`].
-    fn observe<'a>(&'a self, lifecycle: &'a RunnerLifecycle)
-    -> BoxFuture<'a, Result<(), BoxError>>;
+    fn observe<'a>(
+        &'a self,
+        lifecycle: &'a RunnerLifecycleEvent,
+    ) -> BoxFuture<'a, Result<(), BoxError>>;
 }
 
 /// Blanket adapter making every [`RunnerObserver`] usable via
@@ -61,7 +63,7 @@ where
 {
     fn observe<'a>(
         &'a self,
-        lifecycle: &'a RunnerLifecycle,
+        lifecycle: &'a RunnerLifecycleEvent,
     ) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(RunnerObserver::observe(self, lifecycle))
     }
@@ -77,7 +79,7 @@ where
 {
     fn observe<'a>(
         &'a self,
-        lifecycle: &'a RunnerLifecycle,
+        lifecycle: &'a RunnerLifecycleEvent,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         T::observe(self, lifecycle)
     }

@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
 use tokio::process::Command;
 
@@ -23,7 +23,7 @@ use crate::agent::process::{PromptDelivery, detect_token_limit, spawn_capture};
 ///
 /// ```no_run
 /// use iter_core::agent::GenericAgent;
-/// use iter_core::{Agent, AgentRunContext, Prompt};
+/// use iter_core::{Agent, AgentInvocation, Prompt};
 /// use iter_core::signal::SignalId;
 /// use std::path::Path;
 /// use tokio_util::sync::CancellationToken;
@@ -31,7 +31,7 @@ use crate::agent::process::{PromptDelivery, detect_token_limit, spawn_capture};
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "cat".into()]);
 /// let prompt = Prompt::from("hello");
-/// let ctx = AgentRunContext::new(
+/// let ctx = AgentInvocation::new(
 ///     Path::new("."),
 ///     &prompt,
 ///     CancellationToken::new(),
@@ -108,7 +108,7 @@ impl Agent for GenericAgent {
         "generic"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let command = self.build_command(ctx.workspace_path, ctx.prompt)?;
         let delivery = if self.stdin_prompt {
             PromptDelivery::Stdin(ctx.prompt.as_str())

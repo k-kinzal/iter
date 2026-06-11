@@ -165,7 +165,7 @@ fn check_result_string_rhs(
                 ),
             )
             .with_hint(
-                "`previous_result` is `\"none\"` on the first iteration, `\"success\"` after a clean turn, and `\"errored\"` after a stage error or non-zero agent exit",
+                "`previous_result` is `\"none\"` on the first iteration, `\"success\"` after a clean run, and `\"errored\"` after a failed operation or non-zero agent exit",
             ),
         );
     }

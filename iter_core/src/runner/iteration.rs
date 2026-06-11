@@ -3,7 +3,7 @@
 //!
 //! [`IterationState`] is a mutable accumulator the [`Runner`](super::Runner)
 //! holds across the per-signal loop: it remembers when the runner started,
-//! the result of the previous turn, and the current win/lose streak.
+//! the result of the previous iteration, and the current win/lose streak.
 //! [`IterationContext`] is the immutable view rendered against
 //! [`Template`](crate::template::Template) — it's what the user actually
 //! sees as `{{iteration.count}}`, `{{iteration.previous_result}}`, and so
@@ -50,9 +50,9 @@ impl PreviousResult {
 
 /// Mutable accumulator the runner threads through its per-signal loop.
 ///
-/// On every turn the runner snapshots the state into an
+/// On every iteration the runner snapshots the state into an
 /// [`IterationContext`] before rendering the prompt and dispatching
-/// events; after the agent finishes (or a step fails) it calls
+/// events; after the agent finishes (or an operation fails) it calls
 /// [`Self::record_success`] / [`Self::record_failure`] before incrementing
 /// `iteration_count`.
 #[derive(Debug, Clone)]
@@ -87,7 +87,7 @@ impl IterationState {
 
     /// Mark the start of a new iteration. The runner calls this just
     /// after dequeuing or synthesising the signal, before rendering the
-    /// prompt — so `iteration.started_at` reflects when *this* turn
+    /// prompt — so `iteration.started_at` reflects when *this* iteration
     /// began, not when the prior one finished.
     pub fn begin_iteration(&mut self, started_at: DateTime<Utc>) {
         self.current_iteration_started_at = started_at;
@@ -178,15 +178,15 @@ impl IterationState {
 /// * `started_at` / `runner_started_at` — RFC 3339 timestamps.
 /// * `previous_result` — `"none" | "success" | "errored"`.
 /// * `previous_exit_code` — process exit code or `null`. Templates that
-///   reference it without a previous turn surface a strict-mode error.
+///   reference it without a previous iteration surface a strict-mode error.
 /// * `previous_signal_id` — UUID v7 of the previous signal or `null`.
 /// * `consecutive_failures` / `consecutive_successes` — streak counters.
 ///
 /// The view is constructed by [`IterationState::snapshot`] and used as a
-/// child of [`RenderContext`](crate::template::context::RenderContext).
+/// child of [`IterationRenderContext`](crate::template::context::IterationRenderContext).
 #[derive(Debug, Clone, Serialize)]
 pub struct IterationContext {
-    /// 1-indexed iteration number for the turn currently rendering.
+    /// 1-indexed iteration number for the iteration currently rendering.
     pub count: u32,
     /// Wall-clock instant the current iteration began.
     #[serde(serialize_with = "serialize_rfc3339")]
@@ -198,8 +198,8 @@ pub struct IterationContext {
     /// Rendered in templates/guards as `iteration.previous_result`.
     pub previous_result: PreviousResult,
     /// Process exit code recorded for the previous iteration. Under the
-    /// `Ok = ran a turn` model this is the normalized success value `Some(0)`
-    /// after a clean turn; on a failed turn it carries the code the agent
+    /// `Ok = ran` model this is the normalized success value `Some(0)`
+    /// after a clean run; on a failed run it carries the code the agent
     /// `Err` reported (`AgentError::Failed { code }`), or `None` for failures
     /// without a process exit code (signal termination, launch failure,
     /// cancellation, timeout, token limit).

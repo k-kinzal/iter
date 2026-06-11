@@ -6,7 +6,7 @@
 //! 2. [`ShutdownController`] — single source of cancellation and the
 //!    `Option<ProcessTerminationReason>` slot that drives the terminal
 //!    status the runtime writes in `finalize`.
-//! 3. [`LifecycleObserver`] — re-emits [`RunnerLifecycle`] events as
+//! 3. [`LifecycleObserver`] — re-emits [`RunnerLifecycleEvent`] events as
 //!    `tracing::info!` records under
 //!    [`iter::lifecycle`](crate::process::observer::LIFECYCLE_TARGET);
 //!    the runtime's tracing subscriber routes them into `log.ndjson`

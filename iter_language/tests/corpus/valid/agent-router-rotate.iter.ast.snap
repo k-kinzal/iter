@@ -33,7 +33,7 @@ Iterfile {
                         (
                             "alpha",
                             Claude {
-                                mode: Print,
+                                mode: Headless,
                                 command: "claude",
                                 args: [],
                                 session_id_file: None,
@@ -43,7 +43,7 @@ Iterfile {
                         (
                             "beta",
                             Gemini {
-                                mode: Print,
+                                mode: Headless,
                                 command: "gemini",
                                 args: [],
                                 env: {},

@@ -29,7 +29,7 @@ Iterfile {
             node: NamedDef {
                 name: "copilot",
                 decl: Copilot {
-                    mode: Print,
+                    mode: Headless,
                     command: "/opt/bin/gh",
                     subcommand: Some(
                         [

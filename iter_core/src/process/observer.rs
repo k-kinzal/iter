@@ -1,5 +1,5 @@
 //! `LifecycleObserver` — the process-runtime consumer that persists
-//! [`RunnerLifecycle`] events to tracing / `log.ndjson`.
+//! [`RunnerLifecycleEvent`] events to tracing / `log.ndjson`.
 //!
 //! The observer traits ([`RunnerObserver`], [`DynRunnerObserver`]) are
 //! defined by the runner module that owns the lifecycle contract. This
@@ -45,7 +45,7 @@ use crate::log::LogStream;
 use crate::process::error::ObserverError;
 use crate::process::log::LogSender;
 use crate::runner::BoxError;
-use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
+use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycleEvent};
 use crate::signal::SignalId;
 
 pub use crate::runner::observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
@@ -66,7 +66,7 @@ pub const LIFECYCLE_BUFFER_ENV: &str = "ITER_PROCESS_LIFECYCLE_BUFFER";
 /// in their `EnvFilter` or layered `Targets` configuration.
 pub const LIFECYCLE_TARGET: &str = "iter::lifecycle";
 
-/// Persisting observer that re-emits [`RunnerLifecycle`] events as
+/// Persisting observer that re-emits [`RunnerLifecycleEvent`] events as
 /// `tracing::info!` records under [`LIFECYCLE_TARGET`].
 ///
 /// The observer holds an `mpsc::Sender` whose receiver is owned by a
@@ -83,7 +83,7 @@ pub const LIFECYCLE_TARGET: &str = "iter::lifecycle";
 /// held by the writer task, which only exits once all senders are
 /// dropped — so `closed().await` would deadlock.)
 pub struct LifecycleObserver {
-    sender: Mutex<Option<mpsc::Sender<RunnerLifecycle>>>,
+    sender: Mutex<Option<mpsc::Sender<RunnerLifecycleEvent>>>,
     writer: Mutex<Option<JoinHandle<Result<(), ObserverError>>>>,
 }
 
@@ -119,7 +119,7 @@ impl LifecycleObserver {
     /// Build an observer with an explicit channel capacity. Internal —
     /// callers should use [`Self::open_in`].
     fn with_capacity(capacity: usize, log_sender: Option<LogSender>) -> Self {
-        let (tx, rx) = mpsc::channel::<RunnerLifecycle>(capacity);
+        let (tx, rx) = mpsc::channel::<RunnerLifecycleEvent>(capacity);
         let handle = tokio::spawn(run_writer(rx, log_sender));
         Self {
             sender: Mutex::new(Some(tx)),
@@ -135,7 +135,7 @@ impl LifecycleObserver {
     #[doc(hidden)]
     #[must_use]
     pub fn null() -> Self {
-        let (tx, mut rx) = mpsc::channel::<RunnerLifecycle>(DEFAULT_LIFECYCLE_BUFFER);
+        let (tx, mut rx) = mpsc::channel::<RunnerLifecycleEvent>(DEFAULT_LIFECYCLE_BUFFER);
         let handle = tokio::spawn(async move {
             while rx.recv().await.is_some() {}
             Ok(())
@@ -176,7 +176,7 @@ impl LifecycleObserver {
     /// Direct enqueue for use by [`RunnerObserver::observe`]. Returns
     /// [`ObserverError::WriterStopped`] when the writer task is gone
     /// or the sender has been dropped via [`Self::shutdown`].
-    async fn enqueue(&self, lifecycle: RunnerLifecycle) -> Result<(), ObserverError> {
+    async fn enqueue(&self, lifecycle: RunnerLifecycleEvent) -> Result<(), ObserverError> {
         let sender = {
             let slot = self.sender.lock().await;
             slot.as_ref().cloned().ok_or(ObserverError::WriterStopped)?
@@ -191,7 +191,7 @@ impl LifecycleObserver {
 impl RunnerObserver for LifecycleObserver {
     fn observe<'a>(
         &'a self,
-        lifecycle: &'a RunnerLifecycle,
+        lifecycle: &'a RunnerLifecycleEvent,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'a {
         let cloned = lifecycle.clone();
         async move {
@@ -223,7 +223,7 @@ fn read_capacity_env() -> usize {
 /// instead of silently losing post-mortem data. On sender error the
 /// writer falls back to tracing-only mode for the rest of the run.
 async fn run_writer(
-    mut rx: mpsc::Receiver<RunnerLifecycle>,
+    mut rx: mpsc::Receiver<RunnerLifecycleEvent>,
     log_sender: Option<LogSender>,
 ) -> Result<(), ObserverError> {
     let mut log_sender = log_sender;
@@ -246,16 +246,16 @@ async fn run_writer(
     Ok(())
 }
 
-/// Re-emit a [`RunnerLifecycle`] record as a `tracing::info!` event under
+/// Re-emit a [`RunnerLifecycleEvent`] record as a `tracing::info!` event under
 /// [`LIFECYCLE_TARGET`].
 ///
 /// Each variant maps to a single human-readable message line plus the
 /// minimal set of structured fields needed to correlate with the rest
 /// of `log.ndjson`. Field names are stable so downstream consumers can
 /// `grep` or filter by structured field.
-fn emit_lifecycle(ev: &RunnerLifecycle) {
+fn emit_lifecycle(ev: &RunnerLifecycleEvent) {
     match ev {
-        RunnerLifecycle::BootstrapStarted { started_at } => {
+        RunnerLifecycleEvent::BootstrapStarted { started_at } => {
             tracing::info!(
                 target: LIFECYCLE_TARGET,
                 event = "bootstrap_started",
@@ -263,7 +263,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "runner bootstrap started"
             );
         }
-        RunnerLifecycle::BootstrapFailed { error } => {
+        RunnerLifecycleEvent::BootstrapFailed { error } => {
             tracing::error!(
                 target: LIFECYCLE_TARGET,
                 event = "bootstrap_failed",
@@ -271,7 +271,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "runner bootstrap failed"
             );
         }
-        RunnerLifecycle::SignalReceived {
+        RunnerLifecycleEvent::SignalReceived {
             signal_id,
             metadata,
             ts,
@@ -285,7 +285,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "signal received"
             );
         }
-        RunnerLifecycle::WorkspaceSetup { signal_id, path } => {
+        RunnerLifecycleEvent::WorkspaceSetup { signal_id, path } => {
             tracing::info!(
                 target: LIFECYCLE_TARGET,
                 event = "workspace_setup",
@@ -294,7 +294,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "workspace setup"
             );
         }
-        RunnerLifecycle::AgentStarting { signal_id } => {
+        RunnerLifecycleEvent::AgentStarting { signal_id } => {
             tracing::info!(
                 target: LIFECYCLE_TARGET,
                 event = "agent_starting",
@@ -302,7 +302,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "agent starting"
             );
         }
-        RunnerLifecycle::AgentFinished {
+        RunnerLifecycleEvent::AgentFinished {
             signal_id,
             result,
             exit,
@@ -316,7 +316,7 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "agent finished"
             );
         }
-        RunnerLifecycle::WorkspaceTearDown { signal_id } => {
+        RunnerLifecycleEvent::WorkspaceTearDown { signal_id } => {
             tracing::info!(
                 target: LIFECYCLE_TARGET,
                 event = "workspace_teardown",
@@ -324,17 +324,21 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
                 "workspace teardown"
             );
         }
-        RunnerLifecycle::RunnerError {
+        RunnerLifecycleEvent::RunnerError {
             signal_id,
             error_source,
             error_message,
         } => {
             let signal_id_field = signal_id.map(signal_id_short);
+            // The observability key is `source` (the error-source concept);
+            // the structured JSON event keeps `"stage"` for backward
+            // compatibility (R16). The two surfaces deliberately differ: the
+            // human/tracing key follows the vocabulary, the wire key is pinned.
             tracing::error!(
                 target: LIFECYCLE_TARGET,
                 event = "runner_error",
                 signal_id = ?signal_id_field,
-                stage = %error_source,
+                source = error_source.as_str(),
                 error = %error_message,
                 "runner error"
             );
@@ -342,24 +346,24 @@ fn emit_lifecycle(ev: &RunnerLifecycle) {
     }
 }
 
-/// Format a [`RunnerLifecycle`] as the single-line message text that
+/// Format a [`RunnerLifecycleEvent`] as the single-line message text that
 /// the writer task pushes into `log.ndjson` via
 /// [`LogSender::send_line`]. The shape mirrors the tracing
 /// subscriber's compact format ("`<message>` field=value field=value")
 /// so the NDJSON file and the foreground stderr stream remain
 /// human-comparable.
-fn format_lifecycle_line(ev: &RunnerLifecycle) -> String {
+fn format_lifecycle_line(ev: &RunnerLifecycleEvent) -> String {
     match ev {
-        RunnerLifecycle::BootstrapStarted { started_at } => {
+        RunnerLifecycleEvent::BootstrapStarted { started_at } => {
             format!(
                 "runner bootstrap started event=bootstrap_started started_at={}",
                 fmt_ts(started_at)
             )
         }
-        RunnerLifecycle::BootstrapFailed { error } => {
+        RunnerLifecycleEvent::BootstrapFailed { error } => {
             format!("runner bootstrap failed event=bootstrap_failed error={error}")
         }
-        RunnerLifecycle::SignalReceived {
+        RunnerLifecycleEvent::SignalReceived {
             signal_id,
             metadata,
             ts,
@@ -371,20 +375,20 @@ fn format_lifecycle_line(ev: &RunnerLifecycle) -> String {
                 fmt_ts(ts),
             )
         }
-        RunnerLifecycle::WorkspaceSetup { signal_id, path } => {
+        RunnerLifecycleEvent::WorkspaceSetup { signal_id, path } => {
             format!(
                 "workspace setup event=workspace_setup signal_id={} path={}",
                 signal_id_short(*signal_id),
                 path.display()
             )
         }
-        RunnerLifecycle::AgentStarting { signal_id } => {
+        RunnerLifecycleEvent::AgentStarting { signal_id } => {
             format!(
                 "agent starting event=agent_starting signal_id={}",
                 signal_id_short(*signal_id)
             )
         }
-        RunnerLifecycle::AgentFinished {
+        RunnerLifecycleEvent::AgentFinished {
             signal_id,
             result,
             exit,
@@ -396,20 +400,21 @@ fn format_lifecycle_line(ev: &RunnerLifecycle) -> String {
                 exit
             )
         }
-        RunnerLifecycle::WorkspaceTearDown { signal_id } => {
+        RunnerLifecycleEvent::WorkspaceTearDown { signal_id } => {
             format!(
                 "workspace teardown event=workspace_teardown signal_id={}",
                 signal_id_short(*signal_id)
             )
         }
-        RunnerLifecycle::RunnerError {
+        RunnerLifecycleEvent::RunnerError {
             signal_id,
             error_source,
             error_message,
         } => {
             let signal_id_field = signal_id.map_or_else(|| "None".to_owned(), signal_id_short);
+            let source = error_source.as_str();
             format!(
-                "runner error event=runner_error signal_id={signal_id_field} stage={error_source} error={error_message}"
+                "runner error event=runner_error signal_id={signal_id_field} source={source} error={error_message}"
             )
         }
     }
@@ -433,8 +438,8 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    fn sample_event(signal_id: SignalId) -> RunnerLifecycle {
-        RunnerLifecycle::AgentFinished {
+    fn sample_event(signal_id: SignalId) -> RunnerLifecycleEvent {
+        RunnerLifecycleEvent::AgentFinished {
             signal_id,
             result: "success".to_owned(),
             exit: Some(0),
@@ -524,7 +529,7 @@ mod tests {
 
     #[test]
     fn agent_finished_line_uses_result_field() {
-        let line = format_lifecycle_line(&RunnerLifecycle::AgentFinished {
+        let line = format_lifecycle_line(&RunnerLifecycleEvent::AgentFinished {
             signal_id: SignalId::new(),
             result: "token_limit".to_owned(),
             exit: None,

@@ -1,7 +1,7 @@
-//! [`EventEmitter`] — routes [`Event`]s to handlers registered for specific
+//! [`EventDispatcher`] — routes [`HookEvent`]s to handlers registered for specific
 //! [`EventName`]s.
 //!
-//! Because the [`EventHandler`] trait uses RPITIT it is not directly
+//! Because the [`EventAction`] trait uses RPITIT it is not directly
 //! dyn-compatible. The emitter therefore wraps each handler in an internal
 //! erased trait that returns a `Pin<Box<dyn Future>>` so a heterogeneous list
 //! of handlers can be stored in a `Vec`.
@@ -13,36 +13,36 @@ use std::sync::Arc;
 
 use tracing::warn;
 
-use super::event::{Event, EventName};
-use super::event_handler::{BoxError, EventHandler};
+use super::event::{EventName, HookEvent};
+use super::event_handler::{BoxError, EventAction};
 use super::iteration::IterationContext;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Internal dyn-compatible adapter for [`EventHandler`].
-trait DynEventHandler: Send + Sync {
+/// Internal dyn-compatible adapter for [`EventAction`].
+trait DynEventAction: Send + Sync {
     fn handle<'a>(
         &'a self,
-        event: &'a Event,
+        event: &'a HookEvent,
         iteration: &'a IterationContext,
     ) -> BoxFuture<'a, Result<(), BoxError>>;
 }
 
-struct DynAdapter<H: EventHandler> {
+struct DynAdapter<H: EventAction> {
     inner: H,
 }
 
-impl<H: EventHandler> DynEventHandler for DynAdapter<H> {
+impl<H: EventAction> DynEventAction for DynAdapter<H> {
     fn handle<'a>(
         &'a self,
-        event: &'a Event,
+        event: &'a HookEvent,
         iteration: &'a IterationContext,
     ) -> BoxFuture<'a, Result<(), BoxError>> {
         Box::pin(self.inner.handle(event, iteration))
     }
 }
 
-/// Report from a single [`EventEmitter::emit`] call.
+/// Report from a single [`EventDispatcher::emit`] call.
 ///
 /// The emitter's contract is **best effort** — a failing handler is logged
 /// and the remaining handlers still run — but silence is a hostile default
@@ -52,7 +52,7 @@ impl<H: EventHandler> DynEventHandler for DynAdapter<H> {
 /// back to the caller so silence becomes visible:
 /// the [`Runner`](crate::Runner) tallies `error_count` into
 /// [`RunnerSummary::event_handler_error_count`](crate::RunnerSummary::event_handler_error_count)
-/// and callers of [`EventEmitter::emit`] outside the runner can inspect
+/// and callers of [`EventDispatcher::emit`] outside the runner can inspect
 /// the count to decide whether to halt.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct EmitReport {
@@ -73,10 +73,11 @@ impl EmitReport {
     }
 }
 
-/// Event dispatcher that routes [`Event`]s to handlers by [`EventName`].
+/// Event dispatcher that routes [`HookEvent`]s to registered
+/// [`EventAction`](crate::runner::EventAction)s by [`EventName`].
 ///
-/// Handlers are registered via [`EventEmitter::on`] with an explicit
-/// [`EventName`]. On [`EventEmitter::emit`], only the handlers registered
+/// Actions are registered via [`EventDispatcher::on`] with an explicit
+/// [`EventName`]. On [`EventDispatcher::emit`], only the actions registered
 /// for the event's name are invoked, in registration order.
 ///
 /// Failing handlers are logged via [`tracing`] at `warn` level and the
@@ -85,12 +86,12 @@ impl EmitReport {
 /// `on workspace_teardown_finished { shell "..." }` can no longer vanish into the
 /// void.
 #[derive(Default, Clone)]
-pub struct EventEmitter {
-    routes: HashMap<EventName, Vec<Arc<dyn DynEventHandler>>>,
+pub struct EventDispatcher {
+    routes: HashMap<EventName, Vec<Arc<dyn DynEventAction>>>,
     handler_count: usize,
 }
 
-impl EventEmitter {
+impl EventDispatcher {
     /// Build an emitter with no registered handlers.
     #[must_use]
     pub fn new() -> Self {
@@ -104,7 +105,7 @@ impl EventEmitter {
     /// in registration order.
     pub fn on<H>(&mut self, name: EventName, handler: H)
     where
-        H: EventHandler + 'static,
+        H: EventAction + 'static,
     {
         self.routes
             .entry(name)
@@ -128,14 +129,14 @@ impl EventEmitter {
     /// Dispatch `event` to handlers registered for its [`EventName`].
     ///
     /// Takes `event` by reference so the [`Runner`](crate::Runner) can
-    /// emit the same `Event` to both the user-defined handler stream and
+    /// emit the same `HookEvent` to both the user-defined handler stream and
     /// the system observer stream without cloning. Each handler still sees
-    /// a borrowed reference; the inner trait already expects `&Event`.
+    /// a borrowed reference; the inner trait already expects `&HookEvent`.
     ///
-    /// `iteration` is the per-turn snapshot the runner builds before each
+    /// `iteration` is the per-iteration snapshot the runner builds before each
     /// emit. Handlers that render Handlebars templates against
-    /// [`RenderContext`](crate::template::RenderContext) /
-    /// [`LifecycleRenderContext`](crate::template::LifecycleRenderContext)
+    /// [`IterationRenderContext`](crate::template::IterationRenderContext) /
+    /// [`RunnerRenderContext`](crate::template::RunnerRenderContext)
     /// pair the snapshot with the event's signal (when present) so
     /// `{{iteration.*}}` resolves consistently from `runner_starting`
     /// through `runner_finished`.
@@ -145,7 +146,7 @@ impl EventEmitter {
     /// care about observability, but the [`Runner`](crate::Runner) uses
     /// it to populate
     /// [`RunnerSummary::event_handler_error_count`](crate::RunnerSummary::event_handler_error_count).
-    pub async fn emit(&self, event: &Event, iteration: &IterationContext) -> EmitReport {
+    pub async fn emit(&self, event: &HookEvent, iteration: &IterationContext) -> EmitReport {
         let name = event.name();
         let mut error_count = 0usize;
         if let Some(handlers) = self.routes.get(&name) {
@@ -165,9 +166,9 @@ impl EventEmitter {
     }
 }
 
-impl std::fmt::Debug for EventEmitter {
+impl std::fmt::Debug for EventDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventEmitter")
+        f.debug_struct("EventDispatcher")
             .field("handlers", &self.handler_count)
             .finish_non_exhaustive()
     }
@@ -182,8 +183,8 @@ mod tests {
     use super::*;
     use crate::signal::{Metadata, Signal};
 
-    fn sample_event() -> Event {
-        Event::WorkspaceTeardownFinished {
+    fn sample_event() -> HookEvent {
+        HookEvent::WorkspaceTeardownFinished {
             signal: Signal::new(Metadata::new()).into(),
             path: PathBuf::from("/tmp/iter-test"),
         }
@@ -197,10 +198,10 @@ mod tests {
         counter: Arc<AtomicUsize>,
     }
 
-    impl EventHandler for CountingHandler {
+    impl EventAction for CountingHandler {
         async fn handle(
             &self,
-            _event: &Event,
+            _event: &HookEvent,
             _iteration: &IterationContext,
         ) -> Result<(), BoxError> {
             self.counter.fetch_add(1, Ordering::SeqCst);
@@ -210,10 +211,10 @@ mod tests {
 
     struct FailingHandler;
 
-    impl EventHandler for FailingHandler {
+    impl EventAction for FailingHandler {
         async fn handle(
             &self,
-            _event: &Event,
+            _event: &HookEvent,
             _iteration: &IterationContext,
         ) -> Result<(), BoxError> {
             Err("handler failed".into())
@@ -221,13 +222,13 @@ mod tests {
     }
 
     struct CapturingHandler {
-        events: Arc<Mutex<Vec<Event>>>,
+        events: Arc<Mutex<Vec<HookEvent>>>,
     }
 
-    impl EventHandler for CapturingHandler {
+    impl EventAction for CapturingHandler {
         async fn handle(
             &self,
-            event: &Event,
+            event: &HookEvent,
             _iteration: &IterationContext,
         ) -> Result<(), BoxError> {
             self.events.lock().unwrap().push(event.clone());
@@ -237,7 +238,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_emitter_is_a_noop() {
-        let emitter = EventEmitter::new();
+        let emitter = EventDispatcher::new();
         let report = emitter.emit(&sample_event(), &iter_ctx()).await;
         assert!(report.is_clean());
         assert_eq!(report.error_count, 0);
@@ -246,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn calls_every_handler_for_matching_event() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut emitter = EventEmitter::new();
+        let mut emitter = EventDispatcher::new();
         emitter.on(
             EventName::WorkspaceTeardownFinished,
             CountingHandler {
@@ -269,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_invoke_handlers_for_other_events() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut emitter = EventEmitter::new();
+        let mut emitter = EventDispatcher::new();
         emitter.on(
             EventName::RunnerStarting,
             CountingHandler {
@@ -286,7 +287,7 @@ mod tests {
     #[tokio::test]
     async fn handler_error_does_not_abort_but_is_counted() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut emitter = EventEmitter::new();
+        let mut emitter = EventDispatcher::new();
         emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
         emitter.on(
             EventName::WorkspaceTeardownFinished,
@@ -304,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn multiple_failing_handlers_all_counted() {
-        let mut emitter = EventEmitter::new();
+        let mut emitter = EventDispatcher::new();
         emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
         emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
         emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
@@ -317,7 +318,7 @@ mod tests {
     #[tokio::test]
     async fn error_events_route_to_runner_error_name() {
         let counter = Arc::new(AtomicUsize::new(0));
-        let mut emitter = EventEmitter::new();
+        let mut emitter = EventDispatcher::new();
         emitter.on(
             EventName::RunnerError,
             CountingHandler {
@@ -325,7 +326,7 @@ mod tests {
             },
         );
 
-        let error_event = Event::AgentRunFailed {
+        let error_event = HookEvent::AgentRunFailed {
             signal_id: Signal::new(Metadata::new()).id(),
             error: "boom".into(),
         };
@@ -337,7 +338,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_emit_is_safe() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let mut emitter = EventEmitter::new();
+        let mut emitter = EventDispatcher::new();
         emitter.on(
             EventName::WorkspaceTeardownFinished,
             CapturingHandler {

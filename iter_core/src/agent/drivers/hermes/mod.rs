@@ -12,7 +12,7 @@
 //!
 //! Two run modes are supported:
 //!
-//! * [`AgentMode::Print`] — the default. Spawns:
+//! * [`AgentMode::Headless`] — the default. Spawns:
 //!
 //!   ```text
 //!   hermes -z <prompt> [extra-args...]
@@ -37,7 +37,7 @@
 //!   is a failure. No session id is surfaced.
 //!
 //!   Interactive mode inherits stdin/stdout/stderr from the parent
-//!   process. In non-tty environments use [`AgentMode::Print`].
+//!   process. In non-tty environments use [`AgentMode::Headless`].
 //!
 //! # Tool approval
 //!
@@ -64,7 +64,7 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
 
-use crate::{Agent, AgentRun, AgentRunContext, Prompt};
+use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -137,8 +137,8 @@ impl Agent for HermesAgent {
         "hermes"
     }
 
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError> {
-        let AgentRunContext {
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
+        let AgentInvocation {
             workspace_path,
             prompt,
             cancel,
@@ -147,7 +147,7 @@ impl Agent for HermesAgent {
             ..
         } = ctx;
         match self.mode {
-            AgentMode::Print => {
+            AgentMode::Headless => {
                 let mut command = HermesCommand {
                     program: &self.command,
                     prompt: prompt.as_str(),
@@ -242,7 +242,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_emits_dash_z_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("hello-hermes");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
         let run = agent.run(ctx).await.expect("run ok");
@@ -257,7 +257,7 @@ printf 'final response\n'"#;
     async fn print_mode_env_is_forwarded_to_child() {
         let (_guard, bin) =
             fake_binary_script("printf 'ENV=%s\\n' \"$HERMES_TEST_ENV_VAR\" 1>&2\nprintf 'ok\\n'");
-        let mut s = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = hermes_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.env = vec![("HERMES_TEST_ENV_VAR".into(), "env-value".into())];
         let agent = s;
         let prompt = Prompt::from("x");
@@ -269,7 +269,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_extra_args_appended_after_prompt() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
-        let mut s = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
+        let mut s = hermes_agent(bin.to_string_lossy(), AgentMode::Headless);
         s.args = vec!["--yolo".into(), "--max-turns".into(), "30".into()];
         let agent = s;
         let prompt = Prompt::from("go");
@@ -286,7 +286,7 @@ printf 'final response\n'"#;
     async fn print_mode_nonzero_exit_maps_to_launch() {
         // Exit 1 with a traceback on stderr → uncaught → Launch.
         let (_guard, bin) = fake_binary_script("printf 'Traceback: boom\\n' 1>&2\nexit 1");
-        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -298,7 +298,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_exit_two_maps_to_launch() {
         let (_guard, bin) = fake_binary_script("exit 2");
-        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))
@@ -310,7 +310,7 @@ printf 'final response\n'"#;
     #[tokio::test]
     async fn print_mode_token_limit_is_detected() {
         let (_guard, bin) = fake_binary_script("printf 'Error: context window exceeded\\n'");
-        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Print);
+        let agent = hermes_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let err = agent
             .run(ctx(Path::new("."), &prompt))

@@ -19,10 +19,10 @@ use thiserror::Error;
 
 use crate::agent::{AgentBuildError, agent_from_def, sandbox_requirements_for};
 use crate::config::build_runner_config;
-use crate::events::register_event_handlers_from_events;
+use crate::events::register_event_actions_from_events;
 use crate::prompt::{PromptBuildError, build_prompt_selector_from_prompts};
-use iter_core::Queue;
 use crate::workspace::build_workspace_factory;
+use iter_core::Queue;
 
 /// Errors produced by [`assemble_runner_builder`].
 #[derive(Debug, Error)]
@@ -70,8 +70,7 @@ pub(crate) fn assemble_runner_builder(
     once: bool,
 ) -> Result<RunnerBuilder, AssemblyError> {
     let agent = agent_from_def(agent_decl)?;
-    let workspaces =
-        build_workspace_factory(workspace_decl, sandbox_requirements_for(agent_decl));
+    let workspaces = build_workspace_factory(workspace_decl, sandbox_requirements_for(agent_decl));
     let prompt_selector = build_prompt_selector_from_prompts(prompts)?;
     let runner_config = build_runner_config(runner_decl, once);
 
@@ -83,7 +82,7 @@ pub(crate) fn assemble_runner_builder(
     if let Some(queue) = queue {
         builder = builder.queue(queue);
     }
-    builder = register_event_handlers_from_events(builder, events)
+    builder = register_event_actions_from_events(builder, events)
         .map_err(AssemblyError::EventTemplate)?;
 
     Ok(builder)
@@ -230,7 +229,7 @@ mod tests {
 
     use iter_language::{
         Action, AgentDef, AgentMode, EventHandlerDef, EventName, PromptDef, PromptExpr,
-        PromptValue, RunnerBehavior, RunnerDef, Spanned, WorkspaceDef,
+        PromptValue, RunnerDef, SignalAcquisition, Spanned, WorkspaceDef,
     };
 
     fn minimal_workspace() -> WorkspaceDef {
@@ -241,7 +240,7 @@ mod tests {
 
     fn minimal_agent() -> AgentDef {
         AgentDef::Claude {
-            mode: AgentMode::Print,
+            mode: AgentMode::Headless,
             command: "claude".into(),
             args: Vec::new(),
             session_id_file: None,
@@ -256,7 +255,7 @@ mod tests {
             workspace: "local".into(),
             queue: None,
             continue_on_error: false,
-            behavior: RunnerBehavior::Loop { delay_secs: None },
+            behavior: SignalAcquisition::Synthesize { delay_secs: None },
             iteration_timeout_secs: None,
             prompt: PromptExpr::Single(PromptValue::Inline("test prompt".into())),
             events: Vec::new(),
@@ -302,7 +301,7 @@ mod tests {
                 workspace: "local".into(),
                 queue: Some("memory".into()),
                 continue_on_error: false,
-                behavior: RunnerBehavior::Wait,
+                behavior: SignalAcquisition::Wait,
                 iteration_timeout_secs: None,
                 prompt: PromptExpr::Single(PromptValue::Inline("test prompt".into())),
                 events: Vec::new(),

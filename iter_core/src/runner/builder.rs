@@ -11,7 +11,7 @@ use crate::prompt::{PromptSelector, PromptTemplate};
 use crate::queue::Queue;
 use crate::runner::event::EventName;
 use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
-use crate::runner::{EventEmitter, EventHandler, Runner, RunnerBehavior, RunnerConfig};
+use crate::runner::{EventAction, EventDispatcher, Runner, RunnerPolicy, SignalAcquisition};
 use crate::workspace::Workspace;
 
 /// Errors emitted by [`RunnerBuilder::build`].
@@ -43,9 +43,9 @@ pub struct RunnerBuilder {
     workspaces: Option<Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>>,
     agent: Option<Box<dyn Agent>>,
     prompt_selector: Option<PromptSelector>,
-    events: EventEmitter,
+    events: EventDispatcher,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
-    config: RunnerConfig,
+    config: RunnerPolicy,
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
 }
 
@@ -56,9 +56,9 @@ impl Default for RunnerBuilder {
             workspaces: None,
             agent: None,
             prompt_selector: None,
-            events: EventEmitter::new(),
+            events: EventDispatcher::new(),
             observers: Vec::new(),
-            config: RunnerConfig::default(),
+            config: RunnerPolicy::default(),
             stdio_sink: None,
         }
     }
@@ -125,25 +125,25 @@ impl RunnerBuilder {
         self.prompt_selector(PromptSelector::single(template))
     }
 
-    /// Replace the runner's [`RunnerConfig`].
-    pub fn config(mut self, config: RunnerConfig) -> Self {
+    /// Replace the runner's [`RunnerPolicy`].
+    pub fn config(mut self, config: RunnerPolicy) -> Self {
         self.config = config;
         self
     }
 
-    /// Register an [`EventHandler`] for a specific [`EventName`].
+    /// Register an [`EventAction`] for a specific [`EventName`].
     ///
     /// The handler is only invoked when the emitter dispatches an event
-    /// whose [`Event::name`](crate::runner::Event::name) matches.
+    /// whose [`HookEvent::name`](crate::runner::HookEvent::name) matches.
     pub fn on<H>(mut self, name: EventName, handler: H) -> Self
     where
-        H: EventHandler + 'static,
+        H: EventAction + 'static,
     {
         self.events.on(name, handler);
         self
     }
 
-    /// Register an [`EventHandler`] for every [`EventName`].
+    /// Register an [`EventAction`] for every [`EventName`].
     ///
     /// The handler must be [`Clone`] because it is registered once per
     /// event name. Useful for test capture handlers and cross-cutting
@@ -151,7 +151,7 @@ impl RunnerBuilder {
     #[allow(clippy::needless_pass_by_value)]
     pub fn on_all<H>(self, handler: H) -> Self
     where
-        H: EventHandler + Clone + 'static,
+        H: EventAction + Clone + 'static,
     {
         let mut this = self;
         for &name in EventName::ALL {
@@ -160,15 +160,15 @@ impl RunnerBuilder {
         this
     }
 
-    /// Replace the [`EventEmitter`] wholesale.
-    pub fn events(mut self, events: EventEmitter) -> Self {
+    /// Replace the [`EventDispatcher`] wholesale.
+    pub fn events(mut self, events: EventDispatcher) -> Self {
         self.events = events;
         self
     }
 
     /// Register a [`RunnerObserver`] for the system observer stream.
     ///
-    /// Observers run **before** the user-defined [`EventEmitter`] handlers
+    /// Observers run **before** the user-defined [`EventDispatcher`] handlers
     /// at every runner step (rev17 §F3) so a user-installed
     /// `on workspace_teardown_finished { shell "..." }` cannot mask the system
     /// contract that backs `~/.iter/proc/<id>/log.ndjson`. Failures are
@@ -228,7 +228,7 @@ impl RunnerBuilder {
             .prompt_selector
             .ok_or(BuilderError::MissingField("prompt_selector"))?;
 
-        if self.queue.is_none() && matches!(self.config.behavior, RunnerBehavior::Wait) {
+        if self.queue.is_none() && matches!(self.config.behavior, SignalAcquisition::Wait) {
             return Err(BuilderError::InvalidConfig(
                 "behavior = wait requires a queue declaration",
             ));

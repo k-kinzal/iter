@@ -33,7 +33,7 @@ Iterfile {
                         (
                             "primary",
                             Claude {
-                                mode: Print,
+                                mode: Headless,
                                 command: "claude",
                                 args: [],
                                 session_id_file: None,
@@ -43,7 +43,7 @@ Iterfile {
                         (
                             "secondary",
                             Codex {
-                                mode: Print,
+                                mode: Headless,
                                 command: "codex",
                                 args: [],
                                 env: {},

@@ -1,12 +1,14 @@
-//! Event-handler registration — wires `on <event> { shell "..." }` blocks
+//! Event-action registration — wires `on <event> { shell "..." }` blocks
 //! from the Iterfile into the [`RunnerBuilder`].
 //!
-//! [`ShellEventHandler`] lives in [`iter_core`]; this module provides the
-//! registration functions that translate language-level declarations into
-//! core-level handler registrations.
+//! [`ShellAction`] is the operator-surface action this module builds and
+//! registers; these functions translate language-level declarations into
+//! core-level action registrations.
 
-use iter_core::{EventName, RunnerBuilder, ShellEventHandler, TemplateError};
+use iter_core::{EventName, RunnerBuilder, TemplateError};
 use iter_language::{Action, EventHandlerDef, Iterfile, Spanned};
+
+use crate::shell_action::ShellAction;
 
 /// Map a language-level [`iter_language::EventName`] to the core-level
 /// [`iter_core::EventName`] routing key.
@@ -29,20 +31,20 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 /// `builder`.
 ///
 /// Collects event handlers from all runners in the Iterfile and registers them.
-/// Convenience wrapper around [`register_event_handlers_from_events`] for the
+/// Convenience wrapper around [`register_event_actions_from_events`] for the
 /// Iterfile case. Compose-side code that ships its own event slice should
-/// call [`register_event_handlers_from_events`] directly.
+/// call [`register_event_actions_from_events`] directly.
 ///
 /// # Errors
 ///
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
-pub fn register_event_handlers(
+pub fn register_event_actions(
     mut builder: RunnerBuilder,
     iterfile: &Iterfile,
 ) -> Result<RunnerBuilder, TemplateError> {
     for runner in &iterfile.runners {
-        builder = register_event_handlers_from_events(builder, &runner.node.events)?;
+        builder = register_event_actions_from_events(builder, &runner.node.events)?;
     }
     Ok(builder)
 }
@@ -56,7 +58,7 @@ pub fn register_event_handlers(
 ///
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
-pub fn register_event_handlers_from_events(
+pub fn register_event_actions_from_events(
     mut builder: RunnerBuilder,
     events: &[Spanned<EventHandlerDef>],
 ) -> Result<RunnerBuilder, TemplateError> {
@@ -67,7 +69,7 @@ pub fn register_event_handlers_from_events(
         for action in actions {
             match action {
                 Action::Shell(cmd) => {
-                    let handler = ShellEventHandler::new(cmd.clone())?;
+                    let handler = ShellAction::new(cmd.clone())?;
                     builder = builder.on(core_name, handler);
                 }
             }
@@ -131,7 +133,7 @@ mod tests {
             "echo {{",
         )];
         let builder = iter_core::Runner::builder();
-        let result = register_event_handlers_from_events(builder, &events);
+        let result = register_event_actions_from_events(builder, &events);
         assert!(result.is_err());
     }
 }

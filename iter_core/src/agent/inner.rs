@@ -36,7 +36,7 @@ use crate::signal::{SignalId, SignalKind};
 /// of one iteration; the agent must not retain the context past its
 /// [`Agent::run`] call.
 #[non_exhaustive]
-pub struct AgentRunContext<'a> {
+pub struct AgentInvocation<'a> {
     /// Filesystem path of the workspace the agent should operate against.
     pub workspace_path: &'a Path,
     /// Rendered prompt for this iteration.
@@ -45,7 +45,7 @@ pub struct AgentRunContext<'a> {
     pub cancel: CancellationToken,
     /// Identifier of the signal that triggered this iteration. Useful for
     /// agent-side logging and correlation against
-    /// [`RunnerLifecycle`](crate::runner::RunnerLifecycle)
+    /// [`RunnerLifecycleEvent`](crate::runner::RunnerLifecycleEvent)
     /// events emitted around the same call.
     pub signal_id: SignalId,
     /// Kind of signal that triggered this iteration.
@@ -79,9 +79,9 @@ pub struct AgentRunContext<'a> {
     pub sandbox_command_prefix: &'a [OsString],
 }
 
-impl std::fmt::Debug for AgentRunContext<'_> {
+impl std::fmt::Debug for AgentInvocation<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AgentRunContext")
+        f.debug_struct("AgentInvocation")
             .field("workspace_path", &self.workspace_path)
             .field("prompt", &self.prompt)
             .field("cancel", &self.cancel)
@@ -95,7 +95,7 @@ impl std::fmt::Debug for AgentRunContext<'_> {
     }
 }
 
-impl<'a> AgentRunContext<'a> {
+impl<'a> AgentInvocation<'a> {
     /// Construct a context for one iteration.
     #[must_use]
     pub fn new(
@@ -167,7 +167,7 @@ impl<'a> AgentRunContext<'a> {
 /// per-CLI Command and projects that Command's rich, CLI-shaped result/error
 /// down to iter's domain [`AgentRun`] / [`AgentError`].
 ///
-/// An `Ok(AgentRun)` means **the agent ran a turn**. A non-zero exit, a
+/// An `Ok(AgentRun)` means **the agent ran**. A non-zero exit, a
 /// signal, an in-band failure event, or a launch failure are all `Err` —
 /// the caller never has to inspect a field inside `Ok` to learn the run
 /// failed, and no raw CLI exit code leaks past the Adapter.
@@ -193,7 +193,7 @@ pub trait Agent: Send + Sync {
     /// The context is moved into the call by value because it bundles a
     /// fresh [`CancellationToken`] (cloned per iteration by the runner)
     /// plus borrows that only live for the duration of one iteration.
-    async fn run(&self, ctx: AgentRunContext<'_>) -> Result<AgentRun, AgentError>;
+    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError>;
 
     /// Stable, human-meaningful label for this agent driver.
     ///
@@ -238,12 +238,12 @@ const ITERATION_TIMEOUT_DRAIN_GRACE: Duration =
 /// iteration timeout fires.
 pub async fn run_with_timeout(
     agent: &dyn Agent,
-    ctx: AgentRunContext<'_>,
+    ctx: AgentInvocation<'_>,
 ) -> Result<AgentRun, AgentError> {
     let timeout = ctx.iteration_timeout;
     let parent_cancel = ctx.cancel.clone();
     let iter_cancel = parent_cancel.child_token();
-    let agent_ctx = AgentRunContext {
+    let agent_ctx = AgentInvocation {
         cancel: iter_cancel.clone(),
         ..ctx
     };

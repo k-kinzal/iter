@@ -26,7 +26,6 @@ mod events;
 pub mod iteration;
 pub mod lifecycle;
 pub mod observer;
-pub mod shell_event_handler;
 
 use std::sync::Arc;
 
@@ -41,17 +40,16 @@ use crate::signal::{Signal, SignalId};
 use crate::workspace::Workspace;
 
 pub use builder::{BuilderError, RunnerBuilder};
-pub use config::{RunnerBehavior, RunnerConfig, RunnerSummary, RunnerTerminationReason};
-pub use error::RunnerExitError;
-pub use event::{Event, EventName, SharedSignal};
-pub use event_emitter::{EmitReport, EventEmitter};
-pub use event_handler::{BoxError, EventHandler};
+pub use config::{RunnerPolicy, RunnerSummary, RunnerTerminationReason, SignalAcquisition};
+pub use error::{ErrorSource, RunnerExitError};
+pub use event::{EventName, HookEvent, SharedSignal};
+pub use event_emitter::{EmitReport, EventDispatcher};
+pub use event_handler::{BoxError, EventAction};
 pub use iteration::{IterationContext, IterationState, PreviousResult};
-pub use lifecycle::{RedactedMetadata, RunnerLifecycle};
+pub use lifecycle::{RedactedMetadata, RunnerLifecycleEvent};
 pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
-pub use shell_event_handler::ShellEventHandler;
 
-use events::RunnerEvents;
+use events::RunnerEmitter;
 
 /// Drives a queue of signals through a workspace and agent.
 ///
@@ -67,12 +65,12 @@ pub struct Runner {
     pub(crate) workspaces: Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>,
     pub(crate) agent: Box<dyn Agent>,
     pub(crate) prompt_selector: PromptSelector,
-    pub(crate) events: EventEmitter,
-    pub(crate) config: RunnerConfig,
+    pub(crate) events: EventDispatcher,
+    pub(crate) config: RunnerPolicy,
     /// System-contract observer fan-out.
     ///
     /// Each registered observer receives the
-    /// [`RunnerLifecycle`] projection of every per-step `Event` *before*
+    /// [`RunnerLifecycleEvent`] projection of every lifecycle `HookEvent` *before*
     /// the user-defined `events` emitter sees it. Observer errors are
     /// tallied separately into
     /// [`RunnerSummary::observer_error_count`]; they never block
@@ -101,7 +99,7 @@ impl Runner {
     /// * the supplied [`CancellationToken`] is fired,
     /// * the queue is drained (`dequeue` returns `Ok(None)`) — only when
     ///   the runner has a queue and `behavior = wait`,
-    /// * `once` is set in [`RunnerConfig`] and one signal was processed, or
+    /// * `once` is set in [`RunnerPolicy`] and one signal was processed, or
     /// * a processing error occurs and `continue_on_error` is `false`.
     ///
     /// When `behavior = loop` is configured the runner synthesises a
@@ -120,7 +118,7 @@ impl Runner {
             observers,
             stdio_sink,
         } = self;
-        let mut events = RunnerEvents::new(emitter, observers);
+        let mut events = RunnerEmitter::new(emitter, observers);
         let runner_started_at = Utc::now();
         let mut iter_state = IterationState::new(runner_started_at);
         let mut iteration_count: u32 = 0;
@@ -149,7 +147,7 @@ impl Runner {
             Ok(s) => (s.termination_reason.clone(), s.iteration_count),
             Err(err) => (
                 RunnerTerminationReason::Error {
-                    error_source: err.error_source().to_owned(),
+                    error_source: err.error_source(),
                     message: err.message().to_owned(),
                 },
                 iteration_count,
@@ -171,8 +169,8 @@ impl Runner {
 // ─────────────────────────────────────────────────────────────────────────
 // Composition primitives for `Runner::run`.
 //
-// Each concern below holds exactly one responsibility: `RunnerEvents`
-// (in events.rs) owns the broadcast + tally pair; `ProcessingFailure`
+// Each concern below holds exactly one responsibility: `RunnerEmitter`
+// (in events.rs) owns the broadcast + tally pair; `IterationFailure`
 // and `NextSignal` are the data shapes that compose processing results;
 // `decide_after_processing_failure` is the pure failure-policy decision;
 // the `next_signal` / `render_prompt` / `drive_workspace` functions are
@@ -184,7 +182,7 @@ type BoxedError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 /// Pre-iteration failure from a queue `dequeue` call.
 ///
-/// Distinct from [`ProcessingFailure`] because dequeue errors are
+/// Distinct from [`IterationFailure`] because dequeue errors are
 /// handled asymmetrically by the run loop: they do **not** bump the
 /// iteration counter, do **not** update streak state, and are **not**
 /// subject to the `once` policy.
@@ -211,7 +209,8 @@ impl DequeueError {
         event_handler_error_count: u32,
         observer_error_count: u32,
     ) -> RunnerExitError {
-        RunnerExitError::DequeueFailed {
+        RunnerExitError {
+            error_source: ErrorSource::Dequeue,
             message: self.message,
             source: self.source,
             event_handler_error_count,
@@ -221,63 +220,34 @@ impl DequeueError {
 }
 
 /// Typed failure produced during signal processing (post-dequeue).
-enum ProcessingFailure {
-    Render {
-        signal_id: SignalId,
-        source: BoxedError,
-        message: String,
-    },
-    Setup {
-        signal_id: SignalId,
-        source: BoxedError,
-        message: String,
-    },
-    Agent {
-        signal_id: SignalId,
-        source: BoxedError,
-        message: String,
-        exit: Option<i32>,
-    },
-    Teardown {
-        signal_id: SignalId,
-        source: BoxedError,
-        message: String,
-    },
+///
+/// One shape carrying the [`ErrorSource`] that says which operation failed;
+/// the failing-operation classification is a single field, not a variant set.
+struct IterationFailure {
+    error_source: ErrorSource,
+    signal_id: SignalId,
+    source: BoxedError,
+    message: String,
+    /// Process exit code, available only for an [`ErrorSource::AgentRun`]
+    /// failure.
+    exit: Option<i32>,
 }
 
-impl ProcessingFailure {
+impl IterationFailure {
     fn signal_id(&self) -> SignalId {
-        match self {
-            Self::Render { signal_id, .. }
-            | Self::Setup { signal_id, .. }
-            | Self::Agent { signal_id, .. }
-            | Self::Teardown { signal_id, .. } => *signal_id,
-        }
+        self.signal_id
     }
 
     fn exit(&self) -> Option<i32> {
-        match self {
-            Self::Agent { exit, .. } => *exit,
-            _ => None,
-        }
+        self.exit
     }
 
     fn message(&self) -> &str {
-        match self {
-            Self::Render { message, .. }
-            | Self::Setup { message, .. }
-            | Self::Agent { message, .. }
-            | Self::Teardown { message, .. } => message,
-        }
+        &self.message
     }
 
-    fn error_source(&self) -> &'static str {
-        match self {
-            Self::Render { .. } => error::error_source::RENDER_PROMPT,
-            Self::Setup { .. } => error::error_source::WORKSPACE_SETUP,
-            Self::Agent { .. } => error::error_source::AGENT_RUN,
-            Self::Teardown { .. } => error::error_source::WORKSPACE_TEARDOWN,
-        }
+    fn error_source(&self) -> ErrorSource {
+        self.error_source
     }
 
     fn into_exit_error(
@@ -285,39 +255,12 @@ impl ProcessingFailure {
         event_handler_error_count: u32,
         observer_error_count: u32,
     ) -> RunnerExitError {
-        match self {
-            Self::Render {
-                source, message, ..
-            } => RunnerExitError::RenderPromptFailed {
-                message,
-                source,
-                event_handler_error_count,
-                observer_error_count,
-            },
-            Self::Setup {
-                source, message, ..
-            } => RunnerExitError::WorkspaceSetupFailed {
-                message,
-                source,
-                event_handler_error_count,
-                observer_error_count,
-            },
-            Self::Agent {
-                source, message, ..
-            } => RunnerExitError::AgentRunFailed {
-                message,
-                source,
-                event_handler_error_count,
-                observer_error_count,
-            },
-            Self::Teardown {
-                source, message, ..
-            } => RunnerExitError::WorkspaceTeardownFailed {
-                message,
-                source,
-                event_handler_error_count,
-                observer_error_count,
-            },
+        RunnerExitError {
+            error_source: self.error_source,
+            message: self.message,
+            source: self.source,
+            event_handler_error_count,
+            observer_error_count,
         }
     }
 }
@@ -349,7 +292,7 @@ enum FailureDecision {
 /// the *same* signal — `continue_on_error` only decides whether the loop
 /// proceeds to the next signal (`Retry`) or bubbles the error out
 /// (`Bubble`); `once` short-circuits to a single iteration.
-fn decide_after_processing_failure(cfg: &RunnerConfig) -> FailureDecision {
+fn decide_after_processing_failure(cfg: &RunnerPolicy) -> FailureDecision {
     if !cfg.continue_on_error {
         return FailureDecision::Bubble;
     }
@@ -399,12 +342,12 @@ fn with_counters(
 /// emitter.
 async fn next_signal(
     queue: Option<&dyn Queue>,
-    behavior: &RunnerBehavior,
+    behavior: &SignalAcquisition,
     cancel: &CancellationToken,
     iteration_count: u32,
 ) -> NextSignal {
     match (queue, behavior) {
-        (Some(queue), RunnerBehavior::Wait) => {
+        (Some(queue), SignalAcquisition::Wait) => {
             let dequeued = tokio::select! {
                 biased;
                 () = cancel.cancelled() => None,
@@ -417,7 +360,7 @@ async fn next_signal(
                 Some(Err(err)) => NextSignal::Failed(DequeueError::new(err)),
             }
         }
-        (Some(queue), RunnerBehavior::Loop { delay }) => {
+        (Some(queue), SignalAcquisition::Synthesize { delay }) => {
             let dequeued = tokio::select! {
                 biased;
                 () = cancel.cancelled() => Ok(None),
@@ -449,7 +392,7 @@ async fn next_signal(
                 Err(err) => NextSignal::Failed(DequeueError::new(err)),
             }
         }
-        (None, RunnerBehavior::Loop { delay }) => {
+        (None, SignalAcquisition::Synthesize { delay }) => {
             if iteration_count > 0 {
                 if let Some(d) = delay {
                     if !d.is_zero() {
@@ -466,7 +409,7 @@ async fn next_signal(
             }
             NextSignal::Got(Signal::synthesized())
         }
-        (None, RunnerBehavior::Wait) => {
+        (None, SignalAcquisition::Wait) => {
             unreachable!("(queue=None, behavior=Wait) is rejected at builder time")
         }
     }
@@ -477,13 +420,15 @@ fn render_prompt(
     signal: &Signal,
     snap: &IterationContext,
     signal_id: SignalId,
-) -> Result<Prompt, ProcessingFailure> {
+) -> Result<Prompt, IterationFailure> {
     selector.render(signal, snap).map_err(|err| {
         let message = err.to_string();
-        ProcessingFailure::Render {
+        IterationFailure {
+            error_source: ErrorSource::RenderPrompt,
             signal_id,
             source: Box::new(err),
             message,
+            exit: None,
         }
     })
 }
@@ -502,16 +447,16 @@ struct AgentRecord {
 async fn best_effort_teardown(
     workspace: &mut Box<dyn Workspace>,
     signal_id: SignalId,
-    failed_step: &str,
+    failed_operation: ErrorSource,
     cancel: &CancellationToken,
 ) {
     if let Err(teardown_err) = workspace.teardown(cancel.clone()).await {
         let message = teardown_err.to_string();
         let span = tracing::Span::current();
-        iter_tracing::record_span_error(&span, "workspace_teardown", &message);
+        iter_tracing::record_span_error(&span, ErrorSource::WorkspaceTeardown.as_str(), &message);
         tracing::warn!(
             signal_id = %signal_id,
-            failed_step = failed_step,
+            failed_operation = failed_operation.as_str(),
             error = %message,
             "best-effort workspace teardown after failure returned an \
              error; workspace may not be fully cleaned up",
@@ -520,20 +465,20 @@ async fn best_effort_teardown(
 }
 
 /// Drive the workspace bracket — setup -> agent -> teardown — for one
-/// signal, emitting lifecycle events at each step.
+/// signal, emitting lifecycle events as it goes.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 async fn drive_workspace(
     workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &dyn Agent,
-    config: &RunnerConfig,
+    config: &RunnerPolicy,
     cancel: &CancellationToken,
     stdio_sink: &Arc<dyn crate::log::OutputSink>,
-    events: &mut RunnerEvents,
+    events: &mut RunnerEmitter,
     signal: &SharedSignal,
     prompt: &Prompt,
     snap: &IterationContext,
-) -> Result<AgentRecord, ProcessingFailure> {
+) -> Result<AgentRecord, IterationFailure> {
     let signal_id = signal.id();
     let mut workspace = (workspace_factory)();
     let workspace_name = workspace.name();
@@ -553,24 +498,36 @@ async fn drive_workspace(
         .await
     {
         let message = err.to_string();
-        iter_tracing::record_span_error(&setup_span, "workspace_setup", &message);
+        iter_tracing::record_span_error(
+            &setup_span,
+            ErrorSource::WorkspaceSetup.as_str(),
+            &message,
+        );
         events
             .runner_error(
-                error::error_source::WORKSPACE_SETUP,
+                ErrorSource::WorkspaceSetup,
                 Some(signal_id),
                 &message,
-                Event::WorkspaceSetupFailed {
+                HookEvent::WorkspaceSetupFailed {
                     signal_id,
                     error: message.clone(),
                 },
                 snap,
             )
             .await;
-        best_effort_teardown(&mut workspace, signal_id, "workspace_setup", cancel).await;
-        return Err(ProcessingFailure::Setup {
+        best_effort_teardown(
+            &mut workspace,
+            signal_id,
+            ErrorSource::WorkspaceSetup,
+            cancel,
+        )
+        .await;
+        return Err(IterationFailure {
+            error_source: ErrorSource::WorkspaceSetup,
             signal_id,
             source: Box::new(err),
             message,
+            exit: None,
         });
     }
 
@@ -597,7 +554,7 @@ async fn drive_workspace(
     // teardown reclaims below.
     let sandbox_command_prefix = workspace.sandbox_command_prefix().to_vec();
     let agent_ctx =
-        crate::agent::AgentRunContext::new(&workspace_path, prompt, cancel.clone(), signal_id)
+        crate::agent::AgentInvocation::new(&workspace_path, prompt, cancel.clone(), signal_id)
             .with_signal_kind(signal.kind())
             .with_stdio_sink(stdio_sink.clone())
             .with_iteration_timeout(config.iteration_timeout)
@@ -616,8 +573,8 @@ async fn drive_workspace(
         .instrument(agent_span.clone())
         .await;
 
-    // The agent result is now a plain `Result`: `Ok` means the agent ran a
-    // turn (exit 0), `Err` carries the failure class. The lifecycle label and
+    // The agent result is now a plain `Result`: `Ok` means the agent ran
+    // (exit 0), `Err` carries the failure class. The lifecycle label and
     // the optional exit code are derived directly from it — there is no
     // separate `result_kind` projection type anymore.
     let (result_label, exit_code): (&'static str, Option<i32>) = match &agent_result {
@@ -631,7 +588,7 @@ async fn drive_workspace(
     if agent_result.is_err() {
         iter_tracing::record_span_error(
             &agent_span,
-            "agent_run",
+            ErrorSource::AgentRun.as_str(),
             &agent_result_message(result_label, exit_code),
         );
     }
@@ -653,21 +610,22 @@ async fn drive_workspace(
 
     if let Err(err) = agent_result {
         let message = err.to_string();
-        iter_tracing::record_span_error(&agent_span, "agent_run", &message);
+        iter_tracing::record_span_error(&agent_span, ErrorSource::AgentRun.as_str(), &message);
         events
             .runner_error(
-                error::error_source::AGENT_RUN,
+                ErrorSource::AgentRun,
                 Some(signal_id),
                 &message,
-                Event::AgentRunFailed {
+                HookEvent::AgentRunFailed {
                     signal_id,
                     error: message.clone(),
                 },
                 snap,
             )
             .await;
-        best_effort_teardown(&mut workspace, signal_id, "agent_run", cancel).await;
-        return Err(ProcessingFailure::Agent {
+        best_effort_teardown(&mut workspace, signal_id, ErrorSource::AgentRun, cancel).await;
+        return Err(IterationFailure {
+            error_source: ErrorSource::AgentRun,
             signal_id,
             source: Box::new(err),
             message,
@@ -692,23 +650,29 @@ async fn drive_workspace(
         .await
     {
         let message = err.to_string();
-        iter_tracing::record_span_error(&teardown_span, "workspace_teardown", &message);
+        iter_tracing::record_span_error(
+            &teardown_span,
+            ErrorSource::WorkspaceTeardown.as_str(),
+            &message,
+        );
         events
             .runner_error(
-                error::error_source::WORKSPACE_TEARDOWN,
+                ErrorSource::WorkspaceTeardown,
                 Some(signal_id),
                 &message,
-                Event::WorkspaceTeardownFailed {
+                HookEvent::WorkspaceTeardownFailed {
                     signal_id,
                     error: message.clone(),
                 },
                 snap,
             )
             .await;
-        return Err(ProcessingFailure::Teardown {
+        return Err(IterationFailure {
+            error_source: ErrorSource::WorkspaceTeardown,
             signal_id,
             source: Box::new(err),
             message,
+            exit: None,
         });
     }
     let final_path = workspace.final_path().to_path_buf();
@@ -727,18 +691,18 @@ fn agent_result_message(label: &str, exit_code: Option<i32>) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_signal(
+async fn run_iteration(
     workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &dyn Agent,
     prompt_selector: &PromptSelector,
-    config: &RunnerConfig,
+    config: &RunnerPolicy,
     cancel: &CancellationToken,
     stdio_sink: &Arc<dyn crate::log::OutputSink>,
-    events: &mut RunnerEvents,
+    events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
     iteration_count: u32,
     signal: Signal,
-) -> Result<(), ProcessingFailure> {
+) -> Result<(), IterationFailure> {
     // Wrap the dequeued signal in the shared, immutable handle exactly once,
     // before any lifecycle event is emitted. Every event for this bracket then
     // carries a cheap `Arc` clone of it rather than a deep copy of the signal.
@@ -755,25 +719,18 @@ async fn process_signal(
     let prompt = match render_prompt(prompt_selector, signal.as_signal(), &snap, signal_id) {
         Ok(p) => p,
         Err(failure) => {
-            if let ProcessingFailure::Render {
-                signal_id,
-                ref message,
-                ..
-            } = failure
-            {
-                events
-                    .runner_error(
-                        error::error_source::RENDER_PROMPT,
-                        Some(signal_id),
-                        message,
-                        Event::RenderPromptFailed {
-                            signal_id,
-                            error: message.clone(),
-                        },
-                        &snap,
-                    )
-                    .await;
-            }
+            events
+                .runner_error(
+                    failure.error_source(),
+                    Some(failure.signal_id()),
+                    failure.message(),
+                    HookEvent::RenderPromptFailed {
+                        signal_id: failure.signal_id(),
+                        error: failure.message().to_owned(),
+                    },
+                    &snap,
+                )
+                .await;
             return Err(failure);
         }
     };
@@ -798,7 +755,7 @@ async fn process_signal(
 /// Treats dequeue failures and processing failures **asymmetrically**:
 /// dequeue failures do NOT bump `iteration_count` and do NOT call
 /// `iter_state.record_failure` — they happen pre-iteration. Only
-/// `process_signal` errors bump the counter and update streak state.
+/// `run_iteration` errors bump the counter and update streak state.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
 async fn run_loop(
@@ -806,10 +763,10 @@ async fn run_loop(
     workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &dyn Agent,
     prompt_selector: &PromptSelector,
-    config: &RunnerConfig,
+    config: &RunnerPolicy,
     cancel: &CancellationToken,
     stdio_sink: &Arc<dyn crate::log::OutputSink>,
-    events: &mut RunnerEvents,
+    events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
     iteration_count: &mut u32,
     last_signal_id: &mut Option<SignalId>,
@@ -824,7 +781,7 @@ async fn run_loop(
         }
 
         // Pre-iteration snapshot (count = iteration_count + 1) so a
-        // dequeue-failure `runner_error` hook still sees the turn
+        // dequeue-failure `runner_error` hook still sees the iteration
         // number that *would* have run.
         let snap = iter_state.snapshot(*iteration_count + 1);
 
@@ -846,10 +803,10 @@ async fn run_loop(
             NextSignal::Failed(dequeue_err) => {
                 events
                     .runner_error(
-                        error::error_source::DEQUEUE,
+                        ErrorSource::Dequeue,
                         None,
                         dequeue_err.message(),
-                        Event::DequeueFailed {
+                        HookEvent::DequeueFailed {
                             error: dequeue_err.message().to_owned(),
                         },
                         &snap,
@@ -888,7 +845,7 @@ async fn run_loop(
                 if let Some(span_context) = crate::telemetry::span_context_from_signal(&signal) {
                     iter_tracing::add_span_link(&span, span_context);
                 }
-                match process_signal(
+                match run_iteration(
                     workspace_factory,
                     agent,
                     prompt_selector,
@@ -918,7 +875,7 @@ async fn run_loop(
                         span.record("iter.runner.result", "failure");
                         iter_tracing::record_span_error(
                             &span,
-                            failure.error_source(),
+                            failure.error_source().as_str(),
                             failure.message(),
                         );
                         iter_state.record_failure(failure.signal_id(), failure.exit(), Utc::now());
