@@ -2,10 +2,13 @@
 //! [`Queue`](crate::queue::Queue) — and its associated identifier and
 //! metadata types.
 //!
-//! A `Signal` carries three pieces of information:
+//! A `Signal` carries four pieces of information:
 //!
 //! * a [`SignalId`] (UUID v7) that is both unique and time-ordered;
 //! * a creation timestamp so downstream consumers can reason about age;
+//! * a [`SignalKind`] discriminator separating ordinary work from control
+//!   signals such as termination — an open, `#[non_exhaustive]` set that new
+//!   runner/trigger control semantics extend with additional typed variants;
 //! * a [`Metadata`] map of validated keys to scalar values that prompt
 //!   templates and guards read from.
 
