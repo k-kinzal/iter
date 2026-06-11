@@ -1,7 +1,5 @@
 //! Claude Code [`SandboxRequirements`] builder.
 
-use std::path::PathBuf;
-
 use crate::agent::ClaudeAgent;
 use crate::workspace::sandbox::requirements::SandboxRequirements;
 
@@ -99,8 +97,8 @@ pub fn claude(agent: &ClaudeAgent) -> SandboxRequirements {
     // entries claude aborts with "Not logged in" at the first keychain
     // read or fails to open its cache file.
     #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        let library = PathBuf::from(home).join("Library");
+    if let Some(home) = crate::home::home_dir() {
+        let library = home.join("Library");
         let keychains = library.join("Keychains");
         let cache = library.join("Caches").join("claude-cli-nodejs");
         reqs.file_reads.push(keychains.clone());
@@ -166,6 +164,7 @@ pub fn claude(agent: &ClaudeAgent) -> SandboxRequirements {
 mod tests {
     use super::*;
     use crate::agent::{AgentMode, ClaudeSettings};
+    use std::path::PathBuf;
     use tempfile::TempDir;
 
     fn agent(command: impl Into<String>) -> ClaudeAgent {

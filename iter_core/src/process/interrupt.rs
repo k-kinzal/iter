@@ -17,6 +17,37 @@
 //! exactly one place in the crate that installs the unix `SIGINT`/`SIGTERM`
 //! listeners. The interrupt records *intent only*; it never touches
 //! `~/.iter/proc/<id>/`.
+//!
+//! # The cancellation discipline (who may cancel whom, and what each owes)
+//!
+//! Cancellation in iter flows through a single [`CancellationToken`] shared by
+//! the parties of one exploration. There are exactly three things that may
+//! *fire* it, each owning the source it translates:
+//!
+//! 1. **the operator's interrupt** — `SIGINT`/`SIGTERM`, translated here. The
+//!    operator owns "stop this run".
+//! 2. **the emission budget** — a Trigger that has published its last allowed
+//!    Signal closes its Queue to drain (Trigger-side; the budget is the
+//!    Trigger's, enforced at the Queue boundary).
+//! 3. **the iteration timeout** — the Runner's per-iteration deadline
+//!    (`iteration_timeout`, a Runner policy) cancels an iteration that runs
+//!    too long.
+//!
+//! On *receipt* of cancellation, each party owes one thing and only acts on
+//! what it owns:
+//!
+//! - a **Trigger** stops publishing and lets its Queue drain;
+//! - a **Queue** closes — `dequeue` returns `Ok(None)` once drained;
+//! - an **Agent** honors the token within its termination grace and has its
+//!   process tree killed whole at the deadline (the
+//!   [`ProcessGroup`](crate::process_group::ProcessGroup) primitive);
+//! - the **Runner** completes the current iteration's teardown and reports
+//!   the outcome;
+//! - the **operator** finalizes the run record.
+//!
+//! No component cancels anything it does not own: the interrupt module never
+//! closes a Queue, the Runner never finalizes a record, a Queue never kills a
+//! process tree.
 
 use std::io;
 

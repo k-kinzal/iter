@@ -17,13 +17,12 @@ use super::trigger::{ComposeTrigger, build_trigger};
 use crate::agent::AnyAgent;
 use crate::queue::build_queue;
 use iter_core::Queue;
-use crate::workspace::AnyWorkspace;
 
 pub(crate) struct ComposeService {
     pub(crate) name: String,
     pub(crate) iterfile_path: PathBuf,
     pub(crate) queue_decl: QueueDef,
-    pub(crate) builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
+    pub(crate) builder: RunnerBuilder<AnyAgent>,
 }
 
 /// Built compose plan ready for execution by [`super::run`].
@@ -221,7 +220,7 @@ pub struct SingleServiceBuild {
     /// Path recorded into the per-service process registry entry.
     pub iterfile_path: PathBuf,
     /// Runner builder ready for `.build()`.
-    pub builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
+    pub builder: RunnerBuilder<AnyAgent>,
 }
 
 /// Build only the named service from a parsed compose file.

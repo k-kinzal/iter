@@ -22,11 +22,13 @@
 
 pub mod apply_back;
 pub mod clone;
+pub mod error;
 pub mod inner;
 pub mod local;
 pub(crate) mod mirror;
 pub mod sandbox;
 
+pub use error::WorkspaceError;
 pub use inner::Workspace;
 
 pub use apply_back::ApplyBackMode;

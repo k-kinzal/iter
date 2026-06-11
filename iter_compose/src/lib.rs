@@ -2,10 +2,10 @@
 //! types fed to [`iter_core::Runner`].
 //!
 //! This crate turns the open-ended world of "implementation crates" into the
-//! [`Runner<W, A>`](iter_core::Runner) generic. The queue axis is already a
-//! trait object (`Arc<dyn Queue>`); `AnyWorkspace` and `AnyAgent` enums still
-//! wrap each concrete workspace / agent and forward trait methods via match
-//! dispatch. The CLI instantiates `Runner<AnyWorkspace, AnyAgent>`.
+//! [`Runner<A>`](iter_core::Runner) generic. The queue and workspace axes are
+//! trait objects (`Arc<dyn Queue>`, `Box<dyn Workspace>`); only the agent axis
+//! still uses an `AnyAgent` enum that wraps each concrete agent and forwards
+//! trait methods via match dispatch. The CLI instantiates `Runner<AnyAgent>`.
 //!
 //! Trigger CLIs are separate binaries (`iter-cron`, `iter-watch`, etc.)
 //! that connect to queues through the [`iter_core::queue`] boundary and
@@ -58,4 +58,4 @@ pub use prompt::{build_prompt_selector, build_prompt_selector_from_prompts};
 pub use queue::{QueueBuildError, build_queue};
 pub use secrets::resolve_secret;
 pub use trigger_argv::queue_to_url;
-pub use workspace::{AnyWorkspace, AnyWorkspaceError, build_workspace_factory};
+pub use workspace::build_workspace_factory;

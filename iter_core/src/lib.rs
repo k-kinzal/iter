@@ -11,7 +11,9 @@
 //! The [`EventHandler`] sink trait lives alongside the runner that emits
 //! into it ([`runner`]). The [`process`] module provides OS-level
 //! process lifecycle, registry, and shutdown management used by the CLI
-//! and compose layers.
+//! and compose layers. [`process_group`] owns a spawned process tree by its
+//! OS process-group id so a cancel can SIGTERM/SIGKILL the whole tree; it is
+//! a primitive, distinct from the run-record concepts under [`process`].
 //!
 //! Signal sources (triggers) live in the per-trigger CLI crates
 //! (`iter-cron`, `iter-watch`, etc.); they connect to runners through the
@@ -25,8 +27,10 @@
 #![deny(rust_2018_idioms)]
 
 pub mod agent;
+pub mod home;
 pub mod log;
 pub mod process;
+pub mod process_group;
 pub mod prompt;
 pub mod queue;
 pub mod runner;

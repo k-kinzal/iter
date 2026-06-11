@@ -59,8 +59,8 @@ pub(crate) fn project_hooks_dir(
     workspace_path: &Path,
     service: &str,
 ) -> Result<PathBuf, AgentError> {
-    let home =
-        home_dir().ok_or_else(|| AgentError::Launch("could not resolve home directory".into()))?;
+    let home = crate::home::home_dir()
+        .ok_or_else(|| AgentError::Launch("could not resolve home directory".into()))?;
     let canonical = workspace_path.canonicalize().map_err(|e| {
         AgentError::Launch(format!(
             "canonicalize workspace path {}: {e}",
@@ -87,15 +87,6 @@ fn compute_project_id(canonical_path: &Path) -> String {
     let hash = hasher.finalize();
     let hash_prefix = hex::encode(&hash[..4]);
     format!("{basename}-{hash_prefix}")
-}
-
-fn home_dir() -> Option<PathBuf> {
-    if let Some(h) = std::env::var_os("HOME") {
-        if !h.is_empty() {
-            return Some(PathBuf::from(h));
-        }
-    }
-    None
 }
 
 /// Backup-on-install + restore-on-finalize state machine for a single

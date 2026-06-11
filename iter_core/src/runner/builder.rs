@@ -31,10 +31,15 @@ pub enum BuilderError {
 }
 
 /// Fluent builder for [`Runner`].
+///
+/// The runtime workspace axis is a trait object: the builder holds the
+/// per-iteration workspace supply as `Arc<dyn Fn() -> Box<dyn Workspace>>`
+/// (R18 — a closed enum at the definition layer, a trait object at run time),
+/// so `RunnerBuilder` carries no workspace type parameter.
 #[must_use = "call `build()` to produce a Runner"]
-pub struct RunnerBuilder<W: Workspace, A: Agent> {
+pub struct RunnerBuilder<A: Agent> {
     queue: Option<Arc<dyn Queue>>,
-    workspaces: Option<Arc<dyn Fn() -> W + Send + Sync>>,
+    workspaces: Option<Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>>,
     agent: Option<A>,
     prompt_selector: Option<PromptSelector>,
     events: EventEmitter,
@@ -43,7 +48,7 @@ pub struct RunnerBuilder<W: Workspace, A: Agent> {
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
 }
 
-impl<W: Workspace, A: Agent> Default for RunnerBuilder<W, A> {
+impl<A: Agent> Default for RunnerBuilder<A> {
     fn default() -> Self {
         Self {
             queue: None,
@@ -58,7 +63,7 @@ impl<W: Workspace, A: Agent> Default for RunnerBuilder<W, A> {
     }
 }
 
-impl<W: Workspace, A: Agent> RunnerBuilder<W, A> {
+impl<A: Agent> RunnerBuilder<A> {
     /// Create a new empty builder.
     pub fn new() -> Self {
         Self::default()
@@ -76,10 +81,15 @@ impl<W: Workspace, A: Agent> RunnerBuilder<W, A> {
         self
     }
 
-    /// Supply the workspace factory used to mint fresh workspaces.
+    /// Supply the per-iteration workspace supply used to mint a fresh
+    /// workspace for each signal.
+    ///
+    /// The supply yields a `Box<dyn Workspace>` so the runtime workspace axis
+    /// is a trait object (R18); the closed set of workspace kinds lives at the
+    /// definition layer, not here.
     pub fn workspaces<F>(mut self, factory: F) -> Self
     where
-        F: Fn() -> W + Send + Sync + 'static,
+        F: Fn() -> Box<dyn Workspace> + Send + Sync + 'static,
     {
         self.workspaces = Some(Arc::new(factory));
         self
@@ -201,7 +211,7 @@ impl<W: Workspace, A: Agent> RunnerBuilder<W, A> {
     /// Every driver now uses [`AgentError`](crate::agent::AgentError)
     /// directly — the `Agent` trait has no associated error type — so this
     /// builder needs no extra bound beyond the struct's `A: Agent`.
-    pub fn build(self) -> Result<Runner<W, A>, BuilderError> {
+    pub fn build(self) -> Result<Runner<A>, BuilderError> {
         let workspaces = self
             .workspaces
             .ok_or(BuilderError::MissingField("workspaces"))?;

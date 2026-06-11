@@ -22,7 +22,7 @@ use crate::config::build_runner_config;
 use crate::events::register_event_handlers_from_events;
 use crate::prompt::{PromptBuildError, build_prompt_selector_from_prompts};
 use iter_core::Queue;
-use crate::workspace::{AnyWorkspace, build_workspace_factory};
+use crate::workspace::build_workspace_factory;
 
 /// Errors produced by [`assemble_runner_builder`].
 #[derive(Debug, Error)]
@@ -68,13 +68,13 @@ pub(crate) fn assemble_runner_builder(
     prompts: &[Spanned<PromptDef>],
     events: &[Spanned<EventHandlerDef>],
     once: bool,
-) -> Result<RunnerBuilder<AnyWorkspace, AnyAgent>, AssemblyError> {
+) -> Result<RunnerBuilder<AnyAgent>, AssemblyError> {
     let agent = build_agent(agent_decl)?;
     let workspaces = build_workspace_factory(workspace_decl, agent.sandbox_requirements());
     let prompt_selector = build_prompt_selector_from_prompts(prompts)?;
     let runner_config = build_runner_config(runner_decl, once);
 
-    let mut builder = Runner::<AnyWorkspace, AnyAgent>::builder()
+    let mut builder = Runner::<AnyAgent>::builder()
         .workspaces(workspaces)
         .agent(agent)
         .prompt_selector(prompt_selector)
@@ -98,7 +98,7 @@ pub(crate) fn assemble_from_root(
     runner: &RunnerDef,
     queue_override: Option<Arc<dyn Queue>>,
     once: bool,
-) -> Result<RunnerBuilder<AnyWorkspace, AnyAgent>, AssemblyError> {
+) -> Result<RunnerBuilder<AnyAgent>, AssemblyError> {
     let agent_decl = root
         .agents
         .iter()
@@ -214,9 +214,9 @@ fn build_prompt_decls_from_expr(
 /// process), while compose in-process services skip it (multiple
 /// services would race on the global slot).
 pub(crate) fn wire_builder_runtime(
-    mut builder: RunnerBuilder<AnyWorkspace, AnyAgent>,
+    mut builder: RunnerBuilder<AnyAgent>,
     runtime: &ProcessRuntime,
-) -> RunnerBuilder<AnyWorkspace, AnyAgent> {
+) -> RunnerBuilder<AnyAgent> {
     builder = builder.observer(runtime.observer().clone());
     builder = builder.stdio_sink(runtime.sink());
     builder

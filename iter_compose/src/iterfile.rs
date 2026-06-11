@@ -34,7 +34,6 @@ use crate::process_lifecycle::{
     leaves_record_non_terminal, log_finalize_report,
 };
 use crate::queue::QueueBuildError;
-use crate::workspace::AnyWorkspace;
 
 pub use crate::process_lifecycle::RunRecordMetadata;
 
@@ -313,7 +312,7 @@ fn build_iterfile_builder(
     arg_overrides: &BTreeMap<String, String>,
 ) -> Result<
     (
-        iter_core::RunnerBuilder<AnyWorkspace, AnyAgent>,
+        iter_core::RunnerBuilder<AnyAgent>,
         PathBuf,
     ),
     IterfileError,
@@ -358,7 +357,7 @@ fn build_compose_service_builder(
     once: bool,
 ) -> Result<
     (
-        iter_core::RunnerBuilder<AnyWorkspace, AnyAgent>,
+        iter_core::RunnerBuilder<AnyAgent>,
         PathBuf,
     ),
     IterfileError,

@@ -6,6 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::Workspace;
+use crate::workspace::WorkspaceError;
+use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
 
@@ -56,12 +58,17 @@ impl LocalWorkspace {
     pub fn is_set_up(&self) -> bool {
         self.set_up
     }
-}
 
-impl Workspace for LocalWorkspace {
-    type Error = LocalWorkspaceError;
-
-    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
+    /// Materialise the workspace, returning the concrete
+    /// [`LocalWorkspaceError`]. The [`Workspace`] trait impl erases this into
+    /// [`WorkspaceError`]; callers holding a concrete `LocalWorkspace` get the
+    /// precise error here.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LocalWorkspaceError`] when the base path is missing or is not
+    /// a directory.
+    pub async fn setup(&mut self, cancel: CancellationToken) -> Result<(), LocalWorkspaceError> {
         // LocalWorkspace setup is a quick validate-only step with no
         // natural cancel point; accept the token and drop it.
         drop(cancel);
@@ -80,7 +87,19 @@ impl Workspace for LocalWorkspace {
         Ok(())
     }
 
-    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
+    /// Tear the workspace down, returning the concrete [`LocalWorkspaceError`]
+    /// (see [`setup`](Self::setup) for the erasure note).
+    ///
+    /// # Errors
+    ///
+    /// Infallible today (always returns `Ok`); the `Result` and `async` are
+    /// kept to match the [`Workspace`] trait so the trait impl can delegate
+    /// uniformly.
+    #[allow(clippy::unused_async)]
+    pub async fn teardown(
+        &mut self,
+        cancel: CancellationToken,
+    ) -> Result<(), LocalWorkspaceError> {
         // The target directory is the source of truth; there is nothing to
         // clean up. We only flip the set_up flag so that
         // [`is_set_up`] accurately reflects reality. Pure noop — nothing
@@ -89,6 +108,25 @@ impl Workspace for LocalWorkspace {
         self.set_up = false;
         tracing::debug!(path = %self.base.display(), "local workspace torn down");
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Workspace for LocalWorkspace {
+    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        LocalWorkspace::setup(self, cancel)
+            .await
+            .map_err(WorkspaceError::new)
+    }
+
+    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        LocalWorkspace::teardown(self, cancel)
+            .await
+            .map_err(WorkspaceError::new)
+    }
+
+    fn name(&self) -> &'static str {
+        "local"
     }
 
     fn path(&self) -> &Path {

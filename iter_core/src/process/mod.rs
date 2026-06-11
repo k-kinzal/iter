@@ -38,14 +38,12 @@ pub mod error;
 pub mod handle;
 pub mod id;
 pub mod interrupt;
-pub mod lifecycle;
 pub mod log;
 pub mod metadata;
 pub mod observer;
 pub mod paths;
 pub mod pid_file;
 pub mod proc_info;
-pub mod process_group;
 pub mod record;
 pub mod registry;
 pub mod runtime;
@@ -53,7 +51,6 @@ pub mod shutdown;
 pub mod spawner;
 pub mod status;
 
-pub use crate::runner::{DynRunnerObserver, RedactedMetadata, RunnerLifecycle, RunnerObserver};
 pub use adoption::adopt_from_argv;
 pub use error::{
     AdoptError, LockedSectionError, ObserverError, ProcessError, RegistryError, Result,
@@ -66,9 +63,6 @@ pub use log::{
     DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,
     install_global_log_sender, open_output,
 };
-// Generic log primitives re-exported for callers that previously imported
-// them through `crate::process`.
-pub use crate::log::{LogEntry, LogStream, NdjsonReadError, NdjsonReader};
 pub use metadata::ProcessMetadata;
 pub use observer::{
     DEFAULT_LIFECYCLE_BUFFER, LIFECYCLE_BUFFER_ENV, LIFECYCLE_TARGET, LifecycleObserver,
@@ -82,7 +76,6 @@ pub use proc_info::{
     ProcessStartTime, current_identity, identity_for, pid_in_process_table,
     process_is_alive_with_start_time, process_start_time,
 };
-pub use process_group::ProcessGroup;
 pub use record::{ProcessRecord, list_default, list_under};
 pub use registry::{MetadataDraft, ProcessRegistry, RegisterError};
 pub use runtime::{FinalizeReport, ProcessRuntime};

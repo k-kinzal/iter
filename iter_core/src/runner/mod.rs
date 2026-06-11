@@ -4,6 +4,16 @@
 //! The runner exposes a single `run` method that returns once one of the
 //! configured termination conditions fires (or the supplied
 //! [`CancellationToken`] is triggered).
+//!
+//! # Cancellation
+//!
+//! The Runner is one party in the crate-wide cancellation discipline
+//! documented at [`process::interrupt`](crate::process::interrupt). It may
+//! *fire* cancellation only through its own iteration timeout
+//! (`iteration_timeout`); on *receipt* it owes exactly one thing — complete
+//! the current iteration's teardown and report the outcome. It never closes a
+//! Queue, kills an Agent's process tree directly, or finalizes a run record;
+//! each of those belongs to the party that owns it.
 
 pub mod builder;
 pub mod config;
@@ -52,9 +62,9 @@ use events::RunnerEvents;
 /// operate without a queue, synthesising signals on each iteration. The
 /// builder rejects the inconsistent `(queue=None, behavior=Wait)`
 /// combination.
-pub struct Runner<W: Workspace, A: Agent> {
+pub struct Runner<A: Agent> {
     pub(crate) queue: Option<Arc<dyn Queue>>,
-    pub(crate) workspaces: Arc<dyn Fn() -> W + Send + Sync>,
+    pub(crate) workspaces: Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>,
     pub(crate) agent: A,
     pub(crate) prompt_selector: PromptSelector,
     pub(crate) events: EventEmitter,
@@ -75,13 +85,12 @@ pub struct Runner<W: Workspace, A: Agent> {
     pub(crate) stdio_sink: Arc<dyn crate::log::OutputSink>,
 }
 
-impl<W, A> Runner<W, A>
+impl<A> Runner<A>
 where
-    W: Workspace + 'static,
     A: Agent + 'static,
 {
     /// Start a fluent [`RunnerBuilder`].
-    pub fn builder() -> RunnerBuilder<W, A> {
+    pub fn builder() -> RunnerBuilder<A> {
         RunnerBuilder::new()
     }
 
@@ -493,14 +502,12 @@ struct AgentRecord {
 ///
 /// Calls `Workspace::teardown` once without emitting lifecycle events.
 /// If teardown also fails, logs via `tracing::warn!`.
-async fn best_effort_teardown<W>(
-    workspace: &mut W,
+async fn best_effort_teardown(
+    workspace: &mut Box<dyn Workspace>,
     signal_id: SignalId,
     failed_step: &str,
     cancel: &CancellationToken,
-) where
-    W: Workspace,
-{
+) {
     if let Err(teardown_err) = workspace.teardown(cancel.clone()).await {
         let message = teardown_err.to_string();
         let span = tracing::Span::current();
@@ -519,8 +526,8 @@ async fn best_effort_teardown<W>(
 /// signal, emitting lifecycle events at each step.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
-async fn drive_workspace<W, A>(
-    workspace_factory: &(dyn Fn() -> W + Send + Sync),
+async fn drive_workspace<A>(
+    workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &A,
     config: &RunnerConfig,
     cancel: &CancellationToken,
@@ -531,11 +538,11 @@ async fn drive_workspace<W, A>(
     snap: &IterationContext,
 ) -> Result<AgentRecord, ProcessingFailure>
 where
-    W: Workspace + 'static,
     A: Agent + 'static,
 {
     let signal_id = signal.id();
     let mut workspace = (workspace_factory)();
+    let workspace_name = workspace.name();
 
     events.workspace_setup_starting(signal, snap).await;
 
@@ -543,7 +550,7 @@ where
         "iter.workspace.setup",
         iter.signal.id = %signal_id,
         iter.signal.kind = %signal.kind(),
-        iter.workspace.r#type = std::any::type_name::<W>(),
+        iter.workspace.name = workspace_name,
         iter.workspace.path = field::Empty,
     );
     if let Err(err) = workspace
@@ -675,7 +682,7 @@ where
         "iter.workspace.teardown",
         iter.signal.id = %signal_id,
         iter.signal.kind = %signal.kind(),
-        iter.workspace.r#type = std::any::type_name::<W>(),
+        iter.workspace.name = workspace_name,
         iter.workspace.path = %workspace_path_attr.display(),
     );
     if let Err(err) = workspace
@@ -719,8 +726,8 @@ fn agent_result_message(label: &str, exit_code: Option<i32>) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn process_signal<W, A>(
-    workspace_factory: &(dyn Fn() -> W + Send + Sync),
+async fn process_signal<A>(
+    workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &A,
     prompt_selector: &PromptSelector,
     config: &RunnerConfig,
@@ -732,7 +739,6 @@ async fn process_signal<W, A>(
     signal: Signal,
 ) -> Result<(), ProcessingFailure>
 where
-    W: Workspace + 'static,
     A: Agent + 'static,
 {
     let now = Utc::now();
@@ -790,9 +796,9 @@ where
 /// `process_signal` errors bump the counter and update streak state.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_lines)]
-async fn run_loop<W, A>(
+async fn run_loop<A>(
     queue: Option<&dyn Queue>,
-    workspace_factory: &(dyn Fn() -> W + Send + Sync),
+    workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &A,
     prompt_selector: &PromptSelector,
     config: &RunnerConfig,
@@ -804,7 +810,6 @@ async fn run_loop<W, A>(
     last_signal_id: &mut Option<SignalId>,
 ) -> Result<RunnerSummary, RunnerExitError>
 where
-    W: Workspace + 'static,
     A: Agent + 'static,
 {
     loop {

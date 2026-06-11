@@ -27,7 +27,7 @@ use std::time::Duration;
 
 use crate::current_sandbox_prefix;
 use crate::log::{LogStream, OutputSink};
-use crate::process::process_group::{self, ProcessGroup};
+use crate::process_group::{self, ProcessGroup};
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;

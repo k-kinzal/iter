@@ -1,83 +1,25 @@
-//! `AnyWorkspace` enum + the `build_workspace_factory` builder.
+//! The per-iteration workspace supply: `build_workspace_factory` translates a
+//! [`WorkspaceDef`] into a closure that mints a fresh `Box<dyn Workspace>` for
+//! every signal.
+//!
+//! The runtime workspace axis is a trait object (R18): the closed set of
+//! workspace kinds lives at the definition layer ([`WorkspaceDef`]); at run
+//! time the runner only needs "something that sets up", so the supply yields
+//! `Box<dyn Workspace>`. There is no run-time enum wrapper.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use iter_core::workspace::{
-    ApplyBackMode, CloneSettings, CloneWorkspace, CloneWorkspaceError, LocalWorkspace,
-    LocalWorkspaceError, SandboxPolicy, SandboxWorkspace, SandboxWorkspaceError,
+    ApplyBackMode, CloneSettings, CloneWorkspace, LocalWorkspace, SandboxPolicy, SandboxWorkspace,
 };
 use iter_core::{SandboxRequirements, Workspace};
 use iter_language::{ApplyBackDef, CloneApplyBackMode, WorkspaceDef};
-use thiserror::Error;
-use tokio_util::sync::CancellationToken;
-
-/// Enum dispatch wrapper over every concrete [`iter_core::Workspace`]
-/// implementation.
-#[derive(Debug)]
-pub enum AnyWorkspace {
-    /// Direct-on-disk [`LocalWorkspace`].
-    Local(LocalWorkspace),
-    /// Temp-directory [`CloneWorkspace`].
-    Clone(Box<CloneWorkspace>),
-    /// Container-backed [`SandboxWorkspace`].
-    Sandbox(Box<SandboxWorkspace>),
-}
-
-/// Aggregated error type returned by [`AnyWorkspace`]'s [`Workspace`] impl.
-#[derive(Debug, Error)]
-pub enum AnyWorkspaceError {
-    /// Forwarded error from [`LocalWorkspace`].
-    #[error(transparent)]
-    Local(LocalWorkspaceError),
-    /// Forwarded error from [`CloneWorkspace`].
-    #[error(transparent)]
-    Clone(CloneWorkspaceError),
-    /// Forwarded error from [`SandboxWorkspace`].
-    #[error(transparent)]
-    Sandbox(SandboxWorkspaceError),
-}
-
-impl Workspace for AnyWorkspace {
-    type Error = AnyWorkspaceError;
-
-    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
-        match self {
-            Self::Local(w) => w.setup(cancel).await.map_err(AnyWorkspaceError::Local),
-            Self::Clone(w) => w.setup(cancel).await.map_err(AnyWorkspaceError::Clone),
-            Self::Sandbox(w) => w.setup(cancel).await.map_err(AnyWorkspaceError::Sandbox),
-        }
-    }
-
-    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
-        match self {
-            Self::Local(w) => w.teardown(cancel).await.map_err(AnyWorkspaceError::Local),
-            Self::Clone(w) => w.teardown(cancel).await.map_err(AnyWorkspaceError::Clone),
-            Self::Sandbox(w) => w.teardown(cancel).await.map_err(AnyWorkspaceError::Sandbox),
-        }
-    }
-
-    fn path(&self) -> &Path {
-        match self {
-            Self::Local(w) => w.path(),
-            Self::Clone(w) => w.path(),
-            Self::Sandbox(w) => w.path(),
-        }
-    }
-
-    fn final_path(&self) -> &Path {
-        match self {
-            Self::Local(w) => w.final_path(),
-            Self::Clone(w) => w.final_path(),
-            Self::Sandbox(w) => w.final_path(),
-        }
-    }
-}
 
 /// Frozen workspace configuration extracted from an [`Iterfile`](iter_language::Iterfile).
 ///
 /// We snapshot the AST values into a `Send + Sync` payload so the
-/// workspace factory closure can be cloned across threads
+/// workspace supply closure can be cloned across threads
 /// without holding a reference to the AST itself.
 ///
 /// Every project-shaped knob is stored unconditionally here — there are
@@ -114,9 +56,9 @@ enum WorkspaceSpec {
 }
 
 impl WorkspaceSpec {
-    fn instantiate(&self) -> AnyWorkspace {
+    fn instantiate(&self) -> Box<dyn Workspace> {
         match self {
-            Self::Local { base } => AnyWorkspace::Local(LocalWorkspace::new(base.clone())),
+            Self::Local { base } => Box::new(LocalWorkspace::new(base.clone())),
             Self::Clone {
                 base,
                 excludes,
@@ -125,7 +67,7 @@ impl WorkspaceSpec {
                 apply_back,
                 apply_back_excludes,
                 apply_back_includes,
-            } => AnyWorkspace::Clone(Box::new(CloneWorkspace::new(
+            } => Box::new(CloneWorkspace::new(
                 base.clone(),
                 CloneSettings {
                     excludes: excludes.clone(),
@@ -135,8 +77,8 @@ impl WorkspaceSpec {
                     apply_back_excludes: apply_back_excludes.clone(),
                     apply_back_includes: apply_back_includes.clone(),
                 },
-            ))),
-            Self::Sandbox(spec) => AnyWorkspace::Sandbox(Box::new(SandboxWorkspace::new(
+            )),
+            Self::Sandbox(spec) => Box::new(SandboxWorkspace::new(
                 spec.base.clone(),
                 CloneSettings {
                     excludes: spec.excludes.clone(),
@@ -148,7 +90,7 @@ impl WorkspaceSpec {
                 },
                 spec.policy.clone(),
                 spec.requirements.clone(),
-            ))),
+            )),
         }
     }
 }
@@ -177,27 +119,27 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
     }
 }
 
-/// Build a workspace factory from a [`WorkspaceDef`].
+/// Build the per-iteration workspace supply from a [`WorkspaceDef`].
 ///
 /// The returned closure clones the captured spec on every call so that each
-/// signal sees a fresh, not-yet-set-up workspace — exactly the contract
-/// demanded by [`iter_core::Runner`].
+/// signal sees a fresh, not-yet-set-up `Box<dyn Workspace>` — exactly the
+/// contract demanded by [`iter_core::Runner`].
 ///
 /// `agent_requirements` is the agent's declared lower bound (what the agent
 /// needs to function) and is merged into every
-/// [`SandboxWorkspace`](iter_core::workspace::SandboxWorkspace) the factory
+/// [`SandboxWorkspace`](iter_core::workspace::SandboxWorkspace) the supply
 /// yields. The workspace policy (the project's upper bound) comes from the
 /// DSL; the requirements come from the agent. For non-sandbox workspaces the
 /// parameter is unused.
 ///
-/// The factory closure is constructed eagerly here; setup-time validation
-/// is deferred to [`Workspace::setup`] on the produced workspace, which is
-/// why this function is infallible.
-#[must_use = "the returned factory closure is not useful unless called"]
+/// The closure is constructed eagerly here; setup-time validation is deferred
+/// to [`Workspace::setup`] on the produced workspace, which is why this
+/// function is infallible.
+#[must_use = "the returned workspace supply closure is not useful unless called"]
 pub fn build_workspace_factory(
     decl: &WorkspaceDef,
     agent_requirements: SandboxRequirements,
-) -> impl Fn() -> AnyWorkspace + Send + Sync + use<> {
+) -> impl Fn() -> Box<dyn Workspace> + Send + Sync + use<> {
     let spec = match decl {
         WorkspaceDef::Local { base } => WorkspaceSpec::Local {
             base: PathBuf::from(base),
@@ -265,10 +207,10 @@ mod tests {
         let factory = build_workspace_factory(&decl, SandboxRequirements::default());
         let a = factory();
         let b = factory();
-        match (a, b) {
-            (AnyWorkspace::Local(_), AnyWorkspace::Local(_)) => {}
-            other => panic!("expected two LocalWorkspaces, got {other:?}"),
-        }
+        // The supply yields trait objects; each carries the workspace-kind
+        // label rather than a concrete type the caller can match on.
+        assert_eq!(a.name(), "local");
+        assert_eq!(b.name(), "local");
     }
 
     fn sync_apply_back() -> ApplyBackDef {
@@ -291,7 +233,7 @@ mod tests {
         };
         let factory = build_workspace_factory(&decl, SandboxRequirements::default());
         let w = factory();
-        assert!(matches!(w, AnyWorkspace::Clone(_)));
+        assert_eq!(w.name(), "clone");
     }
 
     #[test]
@@ -306,7 +248,7 @@ mod tests {
         };
         let factory = build_workspace_factory(&decl, SandboxRequirements::default());
         let w = factory();
-        assert!(matches!(w, AnyWorkspace::Clone(_)));
+        assert_eq!(w.name(), "clone");
     }
 
     #[test]
@@ -327,6 +269,6 @@ mod tests {
         };
         let factory = build_workspace_factory(&decl, SandboxRequirements::default());
         let w = factory();
-        assert!(matches!(w, AnyWorkspace::Sandbox(_)));
+        assert_eq!(w.name(), "sandbox");
     }
 }

@@ -1,14 +1,19 @@
 //! [`Workspace`] trait — the environment in which an agent runs.
 //!
-//! Uses Return-Position-Impl-Trait-In-Trait (RPITIT) so that implementors
-//! can write `async fn` bodies without paying for an extra allocation per
-//! call. The associated futures are required to be `Send` so they can be
-//! polled by the multi-threaded `tokio` runtime.
+//! The trait is **dyn-compatible**: the per-iteration workspace supply yields
+//! `Box<dyn Workspace>`. To make `dyn Workspace` legal, the methods return
+//! boxed futures (via [`async_trait`](async_trait::async_trait)) and the
+//! per-implementation error is erased into [`WorkspaceError`] — `dyn
+//! Workspace` names no associated type. Dispatch cost is irrelevant here:
+//! every `setup`/`teardown` does filesystem work (or spawns a sandbox) that
+//! dominates an indirect call by orders of magnitude.
 
-use std::future::Future;
 use std::path::Path;
 
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
+
+use crate::workspace::WorkspaceError;
 
 /// The environment an [`Agent`](crate::agent::Agent) operates in.
 ///
@@ -61,27 +66,35 @@ use tokio_util::sync::CancellationToken;
 /// to any child processes, and return an error promptly once it fires.
 ///
 /// [`SandboxWorkspace`]: crate::workspace::SandboxWorkspace
+#[async_trait]
 pub trait Workspace: Send + Sync {
-    /// Workspace-specific error type.
-    type Error: std::error::Error + Send + Sync + 'static;
-
     /// Materialise the workspace so that an agent can use it.
     ///
     /// `cancel` fires when the runner wants `setup` to abort early.
-    fn setup(
-        &mut self,
-        cancel: CancellationToken,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError>;
 
     /// Tear the workspace down once the agent is done.
     ///
     /// `cancel` fires when the runner wants `teardown` to abort early.
     /// Implementations should still make a best effort to leave the host
     /// filesystem in a consistent state even when `teardown` is interrupted.
-    fn teardown(
-        &mut self,
-        cancel: CancellationToken,
-    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
+    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError>;
+
+    /// Stable, human-meaningful label for this workspace kind.
+    ///
+    /// Surfaced as the `iter.workspace.name` telemetry attribute so a span
+    /// names *what kind of* workspace ran (e.g. `"local"`, `"clone"`,
+    /// `"sandbox"`) rather than a Rust type path. This is a **label**, not a
+    /// discriminant — deliberately a `&'static str` on the `Workspace` trait,
+    /// distinct in role from any sandbox-kind enum.
+    ///
+    /// The default returns a neutral placeholder and exists **only** as a
+    /// migration shim so existing impls compile during the workspace-axis
+    /// change; it is removed once every impl states its own name. Concrete
+    /// drivers override it.
+    fn name(&self) -> &'static str {
+        "workspace"
+    }
 
     /// Working path — the filesystem path the agent operates in during
     /// the **active** phase of the workspace lifecycle.

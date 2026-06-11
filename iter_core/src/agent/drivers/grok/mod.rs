@@ -127,7 +127,10 @@ pub struct GrokAgent {
 }
 
 fn home_subpath(leaf: &str) -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(leaf))
+    // Routes through the single core base-dir helper, which treats an empty
+    // `$HOME` as unset (`None`) — intentional; do not revert to a raw
+    // `var_os("HOME")` that would yield a bogus `"".join(leaf)`.
+    crate::home::home_dir().map(|h| h.join(leaf))
 }
 
 impl GrokAgent {

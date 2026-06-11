@@ -71,7 +71,7 @@ pub const LOCKS_SUBDIR: &str = ".locks";
 /// Returns an error if the operation fails.
 /// `~/.iter/proc/` and `~/.iter/proc/.locks/` exist with mode `0o700`.
 pub fn proc_root_default() -> Result<PathBuf, ProcessError> {
-    let home = home_dir().ok_or_else(|| {
+    let home = crate::home::home_dir().ok_or_else(|| {
         ProcessError::Io(io::Error::new(
             io::ErrorKind::NotFound,
             "could not resolve home directory",
@@ -162,18 +162,6 @@ impl ProcPaths {
     pub fn join(&self, name: &str) -> PathBuf {
         self.dir.join(name)
     }
-}
-
-/// Resolve `$HOME` (or platform equivalent). Lifted from the existing
-/// `instance::store` helper so the `process` module does not depend on
-/// `instance` during the migration.
-fn home_dir() -> Option<PathBuf> {
-    if let Some(h) = std::env::var_os("HOME") {
-        if !h.is_empty() {
-            return Some(PathBuf::from(h));
-        }
-    }
-    None
 }
 
 /// `mkdir -p <dir>` with the supplied mode (unix only; windows returns

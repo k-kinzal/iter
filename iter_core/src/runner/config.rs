@@ -75,7 +75,7 @@ pub struct RunnerConfig {
     ///
     /// Absent in older NDJSON payloads: deserializes as `None`.
     ///
-    /// [`ProcessGroup`]: crate::process::ProcessGroup
+    /// [`ProcessGroup`]: crate::process_group::ProcessGroup
     /// [`RunnerLifecycle::AgentFinished`]: crate::runner::RunnerLifecycle::AgentFinished
     /// [`AgentError::Cancelled`]: crate::agent::AgentError::Cancelled
     #[serde(default)] // backward compat with payloads that predate this field

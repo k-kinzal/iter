@@ -2,6 +2,12 @@
 //! so iter can SIGTERM/SIGKILL the entire tree (including grandchildren) on
 //! cancel.
 //!
+//! This is a **process-tree primitive**, not a run-record concept: it lives
+//! at the crate root, beside [`process`](crate::process), because owning the
+//! tree spawned *during one iteration* belongs to the Agent's invocation,
+//! whereas tracking processes *across runs* is the operator's run record. The
+//! two are deliberately kept apart.
+//!
 //! Why this exists: the agent (`claude --print` etc.) often spawns its own
 //! sub-processes (sandboxed shells, tool invocations, recursive `iter run`s).
 //! Killing only the direct child leaves those grandchildren running,

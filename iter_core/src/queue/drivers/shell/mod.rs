@@ -7,12 +7,17 @@
 //!   serialized [`Envelope`](crate::queue::envelope::Envelope) is written to
 //!   the child's stdin; a non-zero exit becomes
 //!   [`ShellQueueError::EnqueueFailed`]. A 30-second default timeout
-//!   (configurable via the queue declaration) terminates a stuck child with
-//!   `SIGTERM`.
+//!   (configurable via the queue declaration) reaps a stuck child's whole
+//!   process tree via [`ProcessGroup`](crate::process_group::ProcessGroup)
+//!   (SIGTERM, a short grace, then SIGKILL) so a runaway script cannot leak
+//!   grandchildren.
 //! * **Dequeue.** A long-lived child reads NDJSON signal records on its
 //!   stdout. The reader task pushes parsed signals into an MPSC channel that
 //!   [`ShellQueue::dequeue`] receives from. If the dequeue child exits before
-//!   `close()`, the queue respawns it.
+//!   `close()`, the queue respawns it. On cancel or read failure the reader
+//!   reaps the child's whole process tree through the same
+//!   [`ProcessGroup`](crate::process_group::ProcessGroup) primitive the agent
+//!   invocation uses.
 //!
 //! The dequeue NDJSON format supports
 //! either a full envelope (`{"v":1,"signal":...,"priority":...}`) or the
@@ -42,27 +47,18 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use crate::process_group::{self, ProcessGroup};
 use crate::queue::QueueError;
 use crate::queue::envelope::encode_signal;
 use crate::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
 use crate::{Priority, Queue};
 use async_trait::async_trait;
 
-#[cfg(unix)]
-async fn terminate_child(child: &mut tokio::process::Child) {
-    if let Some(id) = child.id() {
-        unsafe {
-            libc::kill(libc::pid_t::try_from(id).unwrap_or(0), libc::SIGTERM);
-        }
-    }
-    drop(child.wait().await);
-}
-
-#[cfg(not(unix))]
-async fn terminate_child(child: &mut tokio::process::Child) {
-    let _ = child.start_kill();
-    drop(child.wait().await);
-}
+/// SIGTERM-to-SIGKILL grace for a shell child's process tree. A stuck enqueue
+/// or a cancelled dequeue is not expected to clean up gracefully, so this is
+/// deliberately short — long enough for a well-behaved script to exit on
+/// SIGTERM, short enough that cleanup is snappy.
+const SHELL_TERMINATION_GRACE: Duration = Duration::from_millis(250);
 
 /// Wire-shape of one NDJSON line emitted by the dequeue script.
 ///
@@ -144,8 +140,13 @@ impl ShellQueue {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // Put the enqueue child in its own process group so a timeout reaps
+        // the whole tree (the script plus any grandchildren it backgrounded),
+        // not just the direct child.
+        process_group::configure(&mut command);
 
         let mut child = command.spawn()?;
+        let mut group = ProcessGroup::from_child(&child);
 
         if let Some(mut stdin) = child.stdin.take() {
             // A child that exits before reading (e.g. `exit 17`) closes stdin
@@ -177,7 +178,16 @@ impl ShellQueue {
                 }
             }
             Ok(Err(e)) => Err(ShellQueueError::Io(e)),
-            Err(_) => Err(ShellQueueError::EnqueueTimeout(timeout_dur)),
+            Err(_) => {
+                // `wait_with_output` consumed `child`; on timeout its future
+                // is dropped here, which hands the pid to tokio's background
+                // reaper (so the direct child cannot become a lasting zombie).
+                // We still SIGTERM→SIGKILL the whole group by its pgid so the
+                // script's grandchildren are reaped too, not just the direct
+                // child, before surfacing the timeout.
+                group.terminate(SHELL_TERMINATION_GRACE).await;
+                Err(ShellQueueError::EnqueueTimeout(timeout_dur))
+            }
         }
     }
 }
@@ -283,6 +293,9 @@ async fn reader_loop(
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        // Own the dequeue child by its process group so cancel/read-failure
+        // reaps the whole tree, not just the direct child.
+        process_group::configure(&mut command);
 
         let Ok(mut child) = command.spawn() else {
             // Spawn failure (binary missing, fork failure) — give the
@@ -292,9 +305,11 @@ async fn reader_loop(
             }
             continue;
         };
+        let mut group = ProcessGroup::from_child(&child);
 
         let Some(stdout) = child.stdout.take() else {
-            terminate_child(&mut child).await;
+            group.terminate(SHELL_TERMINATION_GRACE).await;
+            drop(child.wait().await);
             continue;
         };
         let mut reader = BufReader::new(stdout).lines();
@@ -303,7 +318,8 @@ async fn reader_loop(
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => {
-                    terminate_child(&mut child).await;
+                    group.terminate(SHELL_TERMINATION_GRACE).await;
+                    drop(child.wait().await);
                     return;
                 }
                 line = reader.next_line() => {
@@ -314,7 +330,8 @@ async fn reader_loop(
                             }
                             if let Ok(parsed) = parse_ndjson_line(&text) {
                                 if tx.send(parsed).await.is_err() {
-                                    terminate_child(&mut child).await;
+                                    group.terminate(SHELL_TERMINATION_GRACE).await;
+                                    drop(child.wait().await);
                                     return;
                                 }
                             } else {
@@ -325,11 +342,13 @@ async fn reader_loop(
                         }
                         Ok(None) => {
                             // EOF — child closed stdout. Reap and respawn.
+                            // `group` drops here as a no-op safety net.
                             drop(child.wait().await);
                             break;
                         }
                         Err(_) => {
-                            terminate_child(&mut child).await;
+                            group.terminate(SHELL_TERMINATION_GRACE).await;
+                            drop(child.wait().await);
                             break;
                         }
                     }
@@ -413,6 +432,45 @@ mod tests {
             MetadataValue::String(label.into()),
         );
         Signal::new(metadata)
+    }
+
+    /// `kill(pid, 0)` liveness probe — returns `true` while the process
+    /// exists, `false` once it has been reaped.
+    #[cfg(unix)]
+    fn pid_alive(pid: i32) -> bool {
+        // SAFETY: `kill(pid, 0)` is the canonical liveness probe; signal 0
+        // performs permission/existence checks without delivering.
+        let rc = unsafe { libc::kill(pid, 0) };
+        if rc == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    /// Poll `pid_alive` until it reports dead or the budget elapses.
+    #[cfg(unix)]
+    async fn wait_until_dead(pid: i32) -> bool {
+        for _ in 0..100 {
+            if !pid_alive(pid) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        !pid_alive(pid)
+    }
+
+    /// Poll `path` until a script has written a pid into it.
+    #[cfg(unix)]
+    async fn read_recorded_pid(path: &std::path::Path) -> i32 {
+        for _ in 0..50 {
+            if let Ok(text) = std::fs::read_to_string(path) {
+                if let Ok(pid) = text.trim().parse::<i32>() {
+                    return pid;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("script never recorded a grandchild pid");
     }
 
     #[test]
@@ -513,10 +571,22 @@ mod tests {
         q.close().await.expect("close");
     }
 
+    /// On enqueue timeout the stuck child's **whole process tree** must be
+    /// reaped, not just the direct child — otherwise a script that backgrounds
+    /// work leaks grandchildren reparented to init. The enqueue script
+    /// backgrounds a `sleep`, records the grandchild pid, then blocks so the
+    /// enqueue times out; afterwards the grandchild must be dead.
+    #[cfg(unix)]
     #[tokio::test]
-    async fn enqueue_timeout_kills_stuck_child() {
+    async fn enqueue_timeout_reaps_stuck_child_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("grandchild.pid");
+        let script = format!(
+            "sleep 60 & echo $! > {}; wait",
+            pidfile.to_str().expect("utf8 path")
+        );
         let config = ShellQueueConfig {
-            enqueue: "sleep 30".into(),
+            enqueue: script,
             dequeue: "true".into(),
             close: None,
             interpreter: None,
@@ -531,6 +601,15 @@ mod tests {
             err.downcast_ref::<ShellQueueError>(),
             Some(ShellQueueError::EnqueueTimeout(_))
         ));
+
+        // The script recorded the backgrounded grandchild's pid before
+        // blocking; after the timeout reaped the group it must die.
+        let grandchild = read_recorded_pid(&pidfile).await;
+        assert!(
+            wait_until_dead(grandchild).await,
+            "grandchild should be reaped via the process group on enqueue timeout"
+        );
+
         q.close().await.expect("close");
     }
 
@@ -570,5 +649,44 @@ mod tests {
             .expect("ok");
         assert!(result.is_none());
         q.close().await.expect("close");
+    }
+
+    /// Cancelling the dequeue reader (via `close`) must reap the dequeue
+    /// child's **whole process tree**, not just the direct child — the same
+    /// guarantee the enqueue-timeout path makes. The dequeue script
+    /// backgrounds a `sleep`, records its pid, then blocks; after `close`
+    /// the grandchild must be dead.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dequeue_cancel_reaps_child_tree() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("grandchild.pid");
+        // Record the grandchild pid, then block forever on `wait` with no
+        // output on stdout so the reader parks in `next_line()`.
+        let script = format!(
+            "sleep 60 & echo $! > {}; wait",
+            pidfile.to_str().expect("utf8 path")
+        );
+        let config = ShellQueueConfig {
+            enqueue: "true".into(),
+            dequeue: script,
+            close: None,
+            interpreter: None,
+            enqueue_timeout: None,
+        };
+        let q = ShellQueue::new(config).expect("new");
+
+        // The reader spawned the dequeue child at construction; wait for the
+        // backgrounded grandchild's pid to land.
+        let grandchild = read_recorded_pid(&pidfile).await;
+        assert!(pid_alive(grandchild), "grandchild should be alive pre-close");
+
+        // `close` cancels the reader, which reaps the dequeue child's group.
+        q.close().await.expect("close");
+
+        assert!(
+            wait_until_dead(grandchild).await,
+            "grandchild should be reaped via the process group on dequeue cancel"
+        );
     }
 }

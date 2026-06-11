@@ -15,7 +15,6 @@
 //!
 //! The signal-processing steps are stubbed via fake `Workspace`
 //! and `Agent` impls. We rely on `InMemoryQueue` for the queue.
-use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -28,6 +27,7 @@ use super::*;
 use crate::agent::{AgentRun, AgentRunContext};
 use crate::prompt::PromptTemplate;
 use crate::queue::{InMemoryQueue, Priority, QueueError};
+use crate::workspace::WorkspaceError;
 use async_trait::async_trait;
 use crate::signal::{Metadata, Signal};
 
@@ -35,12 +35,12 @@ struct FakeWorkspace {
     path: PathBuf,
 }
 
+#[async_trait]
 impl Workspace for FakeWorkspace {
-    type Error = Infallible;
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         Ok(())
     }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         Ok(())
     }
     fn path(&self) -> &Path {
@@ -60,14 +60,14 @@ struct FailingTeardownWorkspace {
     teardown_calls: Arc<AtomicUsize>,
 }
 
+#[async_trait]
 impl Workspace for FailingTeardownWorkspace {
-    type Error = std::io::Error;
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         Ok(())
     }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         self.teardown_calls.fetch_add(1, Ordering::SeqCst);
-        Err(std::io::Error::other("boom"))
+        Err(WorkspaceError::new(std::io::Error::other("boom")))
     }
     fn path(&self) -> &Path {
         &self.path
@@ -89,14 +89,14 @@ struct FailingSetupWorkspace {
     teardown_calls: Arc<AtomicUsize>,
 }
 
+#[async_trait]
 impl Workspace for FailingSetupWorkspace {
-    type Error = std::io::Error;
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
-        Err(std::io::Error::other("setup-boom"))
+    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        Err(WorkspaceError::new(std::io::Error::other("setup-boom")))
     }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         self.teardown_calls.fetch_add(1, Ordering::SeqCst);
-        Err(std::io::Error::other("teardown-boom"))
+        Err(WorkspaceError::new(std::io::Error::other("teardown-boom")))
     }
     fn path(&self) -> &Path {
         &self.path
@@ -123,12 +123,12 @@ impl TransientWorkspace {
     }
 }
 
+#[async_trait]
 impl Workspace for TransientWorkspace {
-    type Error = Infallible;
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         Ok(())
     }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
         Ok(())
     }
     fn path(&self) -> &Path {
@@ -252,34 +252,40 @@ impl EventHandler for FailFirstHandler {
     }
 }
 
-fn make_provider() -> impl Fn() -> FakeWorkspace + Send + Sync {
-    || FakeWorkspace {
-        path: PathBuf::from("/tmp/iter-runner-test"),
+fn make_provider() -> impl Fn() -> Box<dyn Workspace> + Send + Sync {
+    || -> Box<dyn Workspace> {
+        Box::new(FakeWorkspace {
+            path: PathBuf::from("/tmp/iter-runner-test"),
+        })
     }
 }
 
 fn make_failing_teardown_provider() -> (
-    impl Fn() -> FailingTeardownWorkspace + Send + Sync,
+    impl Fn() -> Box<dyn Workspace> + Send + Sync,
     Arc<AtomicUsize>,
 ) {
     let teardown_calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&teardown_calls);
-    let factory = move || FailingTeardownWorkspace {
-        path: PathBuf::from("/tmp/iter-runner-test"),
-        teardown_calls: Arc::clone(&counter),
+    let factory = move || -> Box<dyn Workspace> {
+        Box::new(FailingTeardownWorkspace {
+            path: PathBuf::from("/tmp/iter-runner-test"),
+            teardown_calls: Arc::clone(&counter),
+        })
     };
     (factory, teardown_calls)
 }
 
 fn make_failing_setup_provider() -> (
-    impl Fn() -> FailingSetupWorkspace + Send + Sync,
+    impl Fn() -> Box<dyn Workspace> + Send + Sync,
     Arc<AtomicUsize>,
 ) {
     let teardown_calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&teardown_calls);
-    let factory = move || FailingSetupWorkspace {
-        path: PathBuf::from("/tmp/iter-runner-test"),
-        teardown_calls: Arc::clone(&counter),
+    let factory = move || -> Box<dyn Workspace> {
+        Box::new(FailingSetupWorkspace {
+            path: PathBuf::from("/tmp/iter-runner-test"),
+            teardown_calls: Arc::clone(&counter),
+        })
     };
     (factory, teardown_calls)
 }
@@ -315,7 +321,7 @@ async fn once_path_emits_runner_starting_and_finished_exactly_once() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -357,7 +363,7 @@ async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
     // Pre-cancel so the runner short-circuits on the first
     // `cancel.is_cancelled()` check at the top of the loop.
     cancel.cancel();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -395,7 +401,7 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
     // takes the QueueDrained exit branch.
     Queue::close(queue.as_ref()).await.unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -440,7 +446,7 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<FailingTeardownWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -493,7 +499,7 @@ async fn error_path_carries_handler_counts_in_exit_error() {
         calls: Arc::clone(&calls),
     };
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<FailingTeardownWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -568,7 +574,7 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
         .unwrap();
     let handler = CapturingIterHandler::default();
     let (provider, _teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<FailingTeardownWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -660,7 +666,7 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
         events: Arc::clone(&events_buf),
         calls: Arc::clone(&calls),
     };
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -699,7 +705,7 @@ async fn iteration_timeout_kills_long_running_agent() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, SleepyAgent>::builder()
+    let runner = Runner::<SleepyAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(SleepyAgent::new(Duration::from_secs(60)))
@@ -748,7 +754,7 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -802,7 +808,7 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, SleepyAgent>::builder()
+    let runner = Runner::<SleepyAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(SleepyAgent::new(Duration::from_secs(60)))
@@ -853,7 +859,7 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, SleepyAgent>::builder()
+    let runner = Runner::<SleepyAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(agent)
@@ -895,7 +901,7 @@ async fn iteration_timeout_drain_yields_to_parent_cancel() {
         .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
-    let runner = Runner::<FakeWorkspace, SluggishCleanupAgent>::builder()
+    let runner = Runner::<SluggishCleanupAgent>::builder()
             .queue(Arc::clone(&queue))
             .workspaces(make_provider())
             // Outlast DRAIN_GRACE comfortably so the only way the test
@@ -958,7 +964,7 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, FailingAgent>::builder()
+    let runner = Runner::<FailingAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(FailingAgent)
@@ -1043,7 +1049,7 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, teardown_calls) = make_failing_setup_provider();
-    let runner = Runner::<FailingSetupWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)
@@ -1130,7 +1136,7 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
         .unwrap();
     let handler = CapturingHandler::default();
     let (provider, teardown_calls) = make_failing_teardown_provider();
-    let runner = Runner::<FailingTeardownWorkspace, FailingAgent>::builder()
+    let runner = Runner::<FailingAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(FailingAgent)
@@ -1224,7 +1230,7 @@ impl Queue for FailingQueue {
 async fn dequeue_failure_without_continue_on_error_exits_with_error() {
     let queue: Arc<dyn Queue> = Arc::new(FailingQueue::new(1));
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1284,7 +1290,7 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1334,7 +1340,7 @@ async fn terminate_signal_stops_runner_gracefully() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1372,7 +1378,7 @@ async fn work_signals_before_terminate_are_all_processed() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<FakeWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(make_provider())
         .agent(StubAgent)
@@ -1395,7 +1401,8 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
     let persistent_path = persistent_dir.path().to_path_buf();
 
     let expected = persistent_path.clone();
-    let provider = move || TransientWorkspace::new(persistent_path.clone());
+    let provider =
+        move || -> Box<dyn Workspace> { Box::new(TransientWorkspace::new(persistent_path.clone())) };
 
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
@@ -1403,7 +1410,7 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let runner = Runner::<TransientWorkspace, StubAgent>::builder()
+    let runner = Runner::<StubAgent>::builder()
         .queue(Arc::clone(&queue))
         .workspaces(provider)
         .agent(StubAgent)

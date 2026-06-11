@@ -8,7 +8,9 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::workspace::WorkspaceError;
 use crate::{ITER_SANDBOX_COMMAND_PREFIX, SandboxRequirements, Workspace, encode_prefix_env};
+use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
 
@@ -132,12 +134,18 @@ impl SandboxWorkspace {
     pub fn detect_backend_available() -> bool {
         detect_backend_available()
     }
-}
 
-impl Workspace for SandboxWorkspace {
-    type Error = SandboxWorkspaceError;
-
-    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
+    /// Materialise the sandbox, returning the concrete
+    /// [`SandboxWorkspaceError`]. The [`Workspace`] trait impl erases this into
+    /// [`WorkspaceError`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxWorkspaceError`] when cancelled, when the base path is
+    /// missing or not a directory, when a filter fails to compile, when
+    /// materialising the mirror fails, or when the sandbox backend cannot be
+    /// prepared.
+    pub async fn setup(&mut self, cancel: CancellationToken) -> Result<(), SandboxWorkspaceError> {
         if cancel.is_cancelled() {
             return Err(SandboxWorkspaceError::Cancelled);
         }
@@ -202,7 +210,17 @@ impl Workspace for SandboxWorkspace {
         Ok(())
     }
 
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), Self::Error> {
+    /// Tear down the sandbox, returning the concrete [`SandboxWorkspaceError`]
+    /// (see [`setup`](Self::setup) for the erasure note).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxWorkspaceError`] when reconciling the mirror back into
+    /// the base directory (apply-back) fails.
+    pub async fn teardown(
+        &mut self,
+        _cancel: CancellationToken,
+    ) -> Result<(), SandboxWorkspaceError> {
         if !self.set_up {
             return Ok(());
         }
@@ -235,6 +253,25 @@ impl Workspace for SandboxWorkspace {
         self.set_up = false;
         tracing::debug!(base = %self.base.display(), "sandbox workspace torn down");
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Workspace for SandboxWorkspace {
+    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        SandboxWorkspace::setup(self, cancel)
+            .await
+            .map_err(WorkspaceError::new)
+    }
+
+    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        SandboxWorkspace::teardown(self, cancel)
+            .await
+            .map_err(WorkspaceError::new)
+    }
+
+    fn name(&self) -> &'static str {
+        "sandbox"
     }
 
     fn path(&self) -> &Path {

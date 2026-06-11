@@ -5,6 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::Workspace;
+use crate::workspace::WorkspaceError;
+use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
 
@@ -91,12 +93,16 @@ impl CloneWorkspace {
             ApplyBackMode::Merge => Ok(mirror.merge_back().await?),
         }
     }
-}
 
-impl Workspace for CloneWorkspace {
-    type Error = CloneWorkspaceError;
-
-    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
+    /// Materialise the mirror, returning the concrete [`CloneWorkspaceError`].
+    /// The [`Workspace`] trait impl erases this into [`WorkspaceError`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CloneWorkspaceError`] when the base path is missing or not a
+    /// directory, when a clone/apply-back filter fails to compile, or when
+    /// materialising the mirror fails.
+    pub async fn setup(&mut self, cancel: CancellationToken) -> Result<(), CloneWorkspaceError> {
         // The copy path is pure filesystem work with no natural cancel point;
         // accept the token for signature compatibility and drop it.
         drop(cancel);
@@ -132,7 +138,15 @@ impl Workspace for CloneWorkspace {
         Ok(())
     }
 
-    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), Self::Error> {
+    /// Reconcile and tear down the mirror, returning the concrete
+    /// [`CloneWorkspaceError`] (see [`setup`](Self::setup) for the erasure
+    /// note).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CloneWorkspaceError`] when reconciling the mirror back into
+    /// the base directory (apply-back) fails.
+    pub async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), CloneWorkspaceError> {
         drop(cancel);
         if !self.set_up {
             // Teardown without setup is a no-op rather than an error so it
@@ -147,6 +161,25 @@ impl Workspace for CloneWorkspace {
         self.set_up = false;
         tracing::debug!(base = %self.base.display(), "clone workspace torn down");
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Workspace for CloneWorkspace {
+    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        CloneWorkspace::setup(self, cancel)
+            .await
+            .map_err(WorkspaceError::new)
+    }
+
+    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+        CloneWorkspace::teardown(self, cancel)
+            .await
+            .map_err(WorkspaceError::new)
+    }
+
+    fn name(&self) -> &'static str {
+        "clone"
     }
 
     fn path(&self) -> &Path {
