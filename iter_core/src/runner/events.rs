@@ -4,14 +4,14 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use super::config::RunnerTerminationReason;
-use super::event::Event;
+use super::event::{Event, SharedSignal};
 use super::event_emitter::EventEmitter;
 use super::iteration::IterationContext;
 use crate::agent::AgentRun;
 use crate::prompt::Prompt;
 use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycle};
 use crate::runner::observer::DynRunnerObserver;
-use crate::signal::{Signal, SignalId};
+use crate::signal::SignalId;
 
 /// Owns the dual emission stream (system observers + user handlers) plus
 /// the per-stream error tallies that surface as
@@ -73,7 +73,7 @@ impl RunnerEvents {
 
     pub(super) async fn signal_received(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         ts: DateTime<Utc>,
         snap: &IterationContext,
     ) {
@@ -90,7 +90,7 @@ impl RunnerEvents {
 
     pub(super) async fn workspace_setup_starting(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         snap: &IterationContext,
     ) {
         let event = Event::WorkspaceSetupStarting {
@@ -101,7 +101,7 @@ impl RunnerEvents {
 
     pub(super) async fn workspace_setup_finished(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         path: &Path,
         snap: &IterationContext,
     ) {
@@ -118,7 +118,7 @@ impl RunnerEvents {
 
     pub(super) async fn agent_starting(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         path: &Path,
         prompt: &Prompt,
         snap: &IterationContext,
@@ -136,7 +136,7 @@ impl RunnerEvents {
 
     pub(super) async fn agent_finished(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         path: &Path,
         result: Result<AgentRun, String>,
         result_label: &str,
@@ -158,7 +158,7 @@ impl RunnerEvents {
 
     pub(super) async fn workspace_teardown_starting(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         path: &Path,
         snap: &IterationContext,
     ) {
@@ -171,7 +171,7 @@ impl RunnerEvents {
 
     pub(super) async fn workspace_teardown_finished(
         &mut self,
-        signal: &Signal,
+        signal: &SharedSignal,
         final_path: PathBuf,
         snap: &IterationContext,
     ) {

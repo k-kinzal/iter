@@ -9,13 +9,22 @@ use serde::{Deserialize, Serialize};
 
 use super::id::SignalId;
 use super::kind::SignalKind;
-use super::metadata::Metadata;
+use super::metadata::{Metadata, MetadataKey, MetadataValue};
 
 /// A pure event flowing through the [`Queue`](crate::queue::Queue).
 ///
 /// A `Signal` carries an [`SignalId`], a creation timestamp, a
 /// [`SignalKind`] discriminator, and a [`Metadata`] map that templates
 /// can interpolate when rendering a prompt.
+///
+/// A `Signal` is an **immutable unit of work**: once constructed it never
+/// changes. It is a value object identified by its [`SignalId`], carried by
+/// reference — and shared across an iteration's lifecycle events via
+/// [`SharedSignal`](crate::runner::SharedSignal) — for the whole bracket. To
+/// derive a signal that carries additional metadata (for example a trigger
+/// injecting trace context before publishing), construct a new one with
+/// [`Signal::with_metadata_value`] rather than mutating in place; there is no
+/// mutable metadata accessor by design.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signal {
     id: SignalId,
@@ -117,9 +126,23 @@ impl Signal {
         &self.metadata
     }
 
-    /// Mutably borrow the metadata map.
-    pub fn metadata_mut(&mut self) -> &mut Metadata {
-        &mut self.metadata
+    /// Derive a new `Signal` that additionally carries `key` → `value` in its
+    /// metadata, preserving this signal's id, creation time, and kind.
+    ///
+    /// The derived signal keeps the **same** [`SignalId`] — it is the same
+    /// unit of work with enriched metadata, not a new one. Because the builder
+    /// consumes `self`, the caller holds the derived signal as a replacement
+    /// for the original, never a same-id sibling.
+    ///
+    /// A `Signal` is immutable after construction (see the type docs); this
+    /// consuming builder is the supported way to add metadata, keeping the
+    /// value-object contract intact. An existing entry for `key` is replaced.
+    /// Triggers use it to inject trace context onto a freshly minted signal
+    /// before enqueueing it.
+    #[must_use]
+    pub fn with_metadata_value(mut self, key: MetadataKey, value: MetadataValue) -> Self {
+        self.metadata.insert(key, value);
+        self
     }
 }
 
@@ -162,6 +185,31 @@ mod tests {
         let back: Signal = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(signal, back);
         assert_eq!(back.kind(), SignalKind::Terminate);
+    }
+
+    #[test]
+    fn metadata_changes_produce_a_new_signal_leaving_the_original_intact() {
+        // `Signal` is immutable: the only public way to add metadata is to
+        // construct a new signal. This pins that contract — there is no
+        // `metadata_mut`-style accessor to mutate a signal in place.
+        let original = Signal::new(Metadata::new());
+        let key = MetadataKey::new("traceparent").expect("key");
+
+        let derived = original
+            .clone()
+            .with_metadata_value(key.clone(), MetadataValue::String("ctx".into()));
+
+        // The original is untouched...
+        assert!(original.metadata().get(&key).is_none());
+        // ...while the derived signal carries the new entry but keeps the
+        // identity, creation time, and kind of the signal it was derived from.
+        assert_eq!(derived.id(), original.id());
+        assert_eq!(derived.created_at(), original.created_at());
+        assert_eq!(derived.kind(), original.kind());
+        assert!(matches!(
+            derived.metadata().get(&key),
+            Some(MetadataValue::String(_)),
+        ));
     }
 
     #[test]

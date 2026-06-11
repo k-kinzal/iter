@@ -280,8 +280,7 @@ impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
         span: tracing::Span,
     ) -> Result<(), CommandTriggerError<iter_core::queue::QueueError>> {
         async move {
-            let mut signal = signal;
-            iter_core::telemetry::inject_current_context_into_signal(&mut signal);
+            let signal = iter_core::telemetry::inject_current_context_into_signal(signal);
             self.queue
                 .enqueue(signal, self.priority)
                 .await

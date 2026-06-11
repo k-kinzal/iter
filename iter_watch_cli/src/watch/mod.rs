@@ -461,8 +461,7 @@ impl<Q: Queue + ?Sized + 'static> WatchTrigger<Q> {
         span: tracing::Span,
     ) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         async move {
-            let mut signal = signal;
-            iter_core::telemetry::inject_current_context_into_signal(&mut signal);
+            let signal = iter_core::telemetry::inject_current_context_into_signal(signal);
             self.queue
                 .enqueue(signal, self.priority)
                 .await

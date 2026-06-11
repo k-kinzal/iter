@@ -131,13 +131,15 @@ impl EventHandler for ShellEventHandler {
 fn extract_context(event: &Event) -> (Option<&Signal>, Option<PathBuf>) {
     match event {
         Event::SignalReceived { signal } | Event::WorkspaceSetupStarting { signal } => {
-            (Some(signal), None)
+            (Some(signal.as_signal()), None)
         }
         Event::WorkspaceSetupFinished { signal, path }
         | Event::AgentStarting { signal, path, .. }
         | Event::AgentFinished { signal, path, .. }
         | Event::WorkspaceTeardownStarting { signal, path }
-        | Event::WorkspaceTeardownFinished { signal, path } => (Some(signal), Some(path.clone())),
+        | Event::WorkspaceTeardownFinished { signal, path } => {
+            (Some(signal.as_signal()), Some(path.clone()))
+        }
         Event::DequeueFailed { .. }
         | Event::RenderPromptFailed { .. }
         | Event::WorkspaceSetupFailed { .. }
@@ -165,7 +167,7 @@ mod tests {
 
     fn torndown_event(path: PathBuf) -> Event {
         Event::WorkspaceTeardownFinished {
-            signal: empty_signal(),
+            signal: empty_signal().into(),
             path,
         }
     }
@@ -209,7 +211,7 @@ mod tests {
         handler
             .handle(
                 &Event::WorkspaceTeardownFinished {
-                    signal,
+                    signal: signal.into(),
                     path: ws.clone(),
                 },
                 &iter_ctx(),
@@ -243,7 +245,7 @@ mod tests {
         handler
             .handle(
                 &Event::WorkspaceTeardownFinished {
-                    signal,
+                    signal: signal.into(),
                     path: ws.clone(),
                 },
                 &iteration,
@@ -299,7 +301,7 @@ mod tests {
         handler
             .handle(
                 &Event::WorkspaceTeardownFinished {
-                    signal: empty_signal(),
+                    signal: empty_signal().into(),
                     path: ws.clone(),
                 },
                 &iter_ctx(),

@@ -43,7 +43,7 @@ use crate::workspace::Workspace;
 pub use builder::{BuilderError, RunnerBuilder};
 pub use config::{RunnerBehavior, RunnerConfig, RunnerSummary, RunnerTerminationReason};
 pub use error::RunnerExitError;
-pub use event::{Event, EventName};
+pub use event::{Event, EventName, SharedSignal};
 pub use event_emitter::{EmitReport, EventEmitter};
 pub use event_handler::{BoxError, EventHandler};
 pub use iteration::{IterationContext, IterationState, PreviousResult};
@@ -530,7 +530,7 @@ async fn drive_workspace(
     cancel: &CancellationToken,
     stdio_sink: &Arc<dyn crate::log::OutputSink>,
     events: &mut RunnerEvents,
-    signal: &Signal,
+    signal: &SharedSignal,
     prompt: &Prompt,
     snap: &IterationContext,
 ) -> Result<AgentRecord, ProcessingFailure> {
@@ -732,13 +732,20 @@ async fn process_signal(
     iteration_count: u32,
     signal: Signal,
 ) -> Result<(), ProcessingFailure> {
+    // Wrap the dequeued signal in the shared, immutable handle exactly once,
+    // before any lifecycle event is emitted. Every event for this bracket then
+    // carries a cheap `Arc` clone of it rather than a deep copy of the signal.
+    // Runner control flow still operates on the signal by reference: it derefs
+    // to `&Signal`, and `signal.as_signal()` hands the bare `&Signal` to the
+    // functions (e.g. `render_prompt`) that require it.
+    let signal = SharedSignal::new(signal);
     let now = Utc::now();
     iter_state.begin_iteration(now);
     let snap = iter_state.snapshot(iteration_count + 1);
     let signal_id = signal.id();
 
     events.signal_received(&signal, now, &snap).await;
-    let prompt = match render_prompt(prompt_selector, &signal, &snap, signal_id) {
+    let prompt = match render_prompt(prompt_selector, signal.as_signal(), &snap, signal_id) {
         Ok(p) => p,
         Err(failure) => {
             if let ProcessingFailure::Render {

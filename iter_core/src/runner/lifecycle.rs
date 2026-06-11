@@ -334,7 +334,7 @@ mod tests {
 
         // Shared concept — both streams carry it in their own shape.
         drop(Event::AgentFinished {
-            signal: crate::signal::Signal::synthesized(),
+            signal: crate::signal::Signal::synthesized().into(),
             path: PathBuf::from("/tmp"),
             result: Ok(crate::agent::AgentRun::empty()),
         });

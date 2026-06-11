@@ -184,7 +184,7 @@ mod tests {
 
     fn sample_event() -> Event {
         Event::WorkspaceTeardownFinished {
-            signal: Signal::new(Metadata::new()),
+            signal: Signal::new(Metadata::new()).into(),
             path: PathBuf::from("/tmp/iter-test"),
         }
     }

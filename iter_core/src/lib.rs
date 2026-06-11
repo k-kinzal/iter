@@ -47,7 +47,7 @@ pub use queue::{Priority, Queue};
 pub use runner::{
     BoxError, BuilderError, Event, EventEmitter, EventHandler, EventName, IterationContext,
     IterationState, PreviousResult, Runner, RunnerBehavior, RunnerBuilder, RunnerConfig,
-    RunnerExitError, RunnerSummary, RunnerTerminationReason, ShellEventHandler,
+    RunnerExitError, RunnerSummary, RunnerTerminationReason, SharedSignal, ShellEventHandler,
 };
 pub use signal::{
     Metadata, MetadataError, MetadataKey, MetadataValue, Signal, SignalId, SignalKind,

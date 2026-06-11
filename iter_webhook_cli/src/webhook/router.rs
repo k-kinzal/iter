@@ -83,8 +83,9 @@ pub(super) async fn handle_webhook<Q: Queue + ?Sized + 'static>(
                         .into_response();
                 }
             };
-            let mut signal = Signal::new(metadata);
-            iter_core::telemetry::inject_current_context_into_signal(&mut signal);
+            let signal = iter_core::telemetry::inject_current_context_into_signal(Signal::new(
+                metadata,
+            ));
             if let Err(e) = state.queue.enqueue(signal, route.priority).await {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
