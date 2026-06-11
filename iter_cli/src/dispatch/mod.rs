@@ -2,9 +2,10 @@
 //!
 //! Each function here corresponds to one variant of
 //! [`crate::cli::Command`]. They are deliberately thin: argv parsing happens
-//! in `cli.rs`, composition happens in [`iter_compose`], and these handlers
-//! do little more than wire those two halves together and forward the
-//! result.
+//! in `cli.rs`, composition happens in the CLI's composition layer
+//! ([`crate::compose`], [`crate::iterfile`], and the per-noun start
+//! modules), and these handlers do little more than wire those two halves
+//! together and forward the result.
 
 pub(crate) mod attach;
 pub(crate) mod compose;

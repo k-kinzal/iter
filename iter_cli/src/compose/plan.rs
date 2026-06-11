@@ -214,8 +214,6 @@ pub fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, Compose
 
 /// Output of [`build_single_service`].
 pub struct SingleServiceBuild {
-    /// Service name as declared in compose.
-    pub name: String,
     /// Path recorded into the per-service process registry entry.
     pub iterfile_path: PathBuf,
     /// Runner builder ready for `.build()`.
@@ -299,13 +297,12 @@ pub fn build_single_service(
         queue_decl,
     )?;
     let ComposeService {
-        name: built_name,
+        name: _,
         iterfile_path,
         queue_decl: _,
         builder,
     } = service;
     Ok(SingleServiceBuild {
-        name: built_name,
         iterfile_path,
         builder,
     })

@@ -100,7 +100,7 @@ impl RunnerBuilder {
     ///
     /// The agent is a trait object (`Box<dyn Agent>`): the closed set of
     /// agent kinds lives at the definition layer, and the runtime drives a
-    /// single boxed agent (R18). The `iter_compose` translation fn boxes the
+    /// single boxed agent (R18). The operator's translation fn boxes the
     /// concrete driver it selects from the agent definition; standalone
     /// callers box the agent themselves.
     pub fn agent(mut self, agent: Box<dyn Agent>) -> Self {
@@ -186,7 +186,7 @@ impl RunnerBuilder {
 
     /// Install the [`OutputSink`](crate::log::OutputSink) every
     /// agent invocation should tee its child stdout/stderr through. The
-    /// `iter_compose` entry point wires this from
+    /// operator's start path supplies this from
     /// `ProcessRuntime::sink()` so agent output reaches the per-process
     /// `log.ndjson`. Standalone runners may leave it unset — the runner
     /// falls back to a [`NoopSink`](crate::log::NoopSink) in that case.

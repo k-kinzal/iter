@@ -1,7 +1,7 @@
 //! Top-level orchestration for `compose.iter`: load → build → run.
 //!
 //! This module is the compose-side counterpart to
-//! [`iter_cli::dispatch::run`]: it parses a `compose.iter` source file,
+//! [`crate::dispatch::run`]: it parses a `compose.iter` source file,
 //! constructs every named queue and service declared in it,
 //! and spawns them concurrently behind a single
 //! [`tokio_util::sync::CancellationToken`].
@@ -24,8 +24,8 @@ use std::path::Path;
 
 use iter_language::{Compose, parse_compose};
 
-pub use error::{ComposeError, ServiceRunError, ServiceSubprocessError, TargetedSpawnError};
-pub use plan::{ComposePlan, SingleServiceBuild, build, build_single_service};
+pub use error::{ComposeError, TargetedSpawnError};
+pub use plan::{ComposePlan, build, build_single_service};
 pub use run::{run, spawn_targeted_service};
 pub use service::{
     CompletedTask, ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID,

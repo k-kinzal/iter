@@ -16,7 +16,14 @@ path = "src/main.rs"
 iter_core.workspace = true
 iter_tracing.workspace = true
 iter_language.workspace = true
-iter_compose.workspace = true
+# Signal-source binaries the compose run spawns. Transient: a downward
+# cli → trigger-CLI edge (cycle-free) that survives until the trigger
+# subprocess spawner replaces in-process dispatch (plan Inc 5g).
+iter_cron_cli.workspace = true
+iter_watch_cli.workspace = true
+iter_command_cli.workspace = true
+iter_files_cli.workspace = true
+iter_webhook_cli.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
 tokio-util = { workspace = true }
@@ -29,6 +36,10 @@ tabwriter.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono = { workspace = true }
+async-trait.workspace = true
+globset.workspace = true
+percent-encoding.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

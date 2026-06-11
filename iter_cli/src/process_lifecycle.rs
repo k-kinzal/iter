@@ -10,7 +10,7 @@
 //! show up in `iter ps` exactly the same way `iter run` records do.
 //!
 //! The adopted (`--process-id`) bootstrap is iterfile-specific and
-//! lives in `iter_compose::iterfile` — only the foreground path is
+//! lives in `crate::iterfile` — only the foreground path is
 //! shared here.
 
 use std::collections::BTreeMap;

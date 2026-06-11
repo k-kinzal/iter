@@ -1,10 +1,10 @@
 //! Clap-side adapter for `iter run`.
 //!
 //! This file's only job is to translate the Clap-bound [`RunArgs`] into
-//! an [`iter_compose::iterfile::RunInput`] and hand off to
-//! [`iter_compose::iterfile::handle`]. All iter-side logic — iterfile
+//! an [`crate::iterfile::RunInput`] and hand off to
+//! [`crate::iterfile::handle`]. All iter-side logic — iterfile
 //! reading, parsing, runner construction, process-registry bookkeeping,
-//! and finalisation — lives in `iter_compose::iterfile`.
+//! and finalisation — lives in `crate::iterfile`.
 //!
 //! Iterfile loading deliberately happens inside the handler, not here:
 //! when `--process-id` is set, the parent has already allocated an
@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use iter_compose::iterfile::{
+use crate::iterfile::{
     self, IterfileError, RunInput, RunMode, RunRecordMetadata, RunSource,
 };
 use iter_core::process::ProcessId;
@@ -107,7 +107,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         | IterfileError::QueueBuild(_)
         | IterfileError::Runner(_)
         | IterfileError::Lifecycle(_)
-        | IterfileError::Assembly(iter_compose::AssemblyError::QueueBuild(_)) => exit_codes::RUNTIME,
+        | IterfileError::Assembly(crate::AssemblyError::QueueBuild(_)) => exit_codes::RUNTIME,
         IterfileError::Parse { .. }
         | IterfileError::MissingSection(_)
         | IterfileError::Arg(_)
@@ -129,7 +129,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
 ///
 /// # Errors
 ///
-/// Returns the error surfaced by [`iter_compose::iterfile::handle`].
+/// Returns the error surfaced by [`crate::iterfile::handle`].
 pub async fn run_run(args: RunArgs, prefs: TracingPreferences) -> Result<(), RunCmdError> {
     let iterfile_path: PathBuf = args
         .iterfile
@@ -140,7 +140,7 @@ pub async fn run_run(args: RunArgs, prefs: TracingPreferences) -> Result<(), Run
     // that `canonical_iterfile` produces for the detach branch. The
     // adopted (`--process-id`) branch deliberately bypasses this check —
     // the parent has already allocated a registry record that needs to
-    // be flipped to a terminal state, and `iter_compose::iterfile::handle`
+    // be flipped to a terminal state, and `crate::iterfile::handle`
     // owns that finalisation.
     let iterfile_path = if args.process_id.is_some() {
         iterfile_path
@@ -201,11 +201,11 @@ fn init_run_telemetry(
     let Some(service_name) = args.service.as_deref() else {
         return telemetry::init(args.debug, prefs);
     };
-    let Ok(root) = iter_compose::load_compose(iterfile_path) else {
+    let Ok(root) = crate::load_compose(iterfile_path) else {
         return telemetry::init(args.debug, prefs);
     };
     let project =
-        iter_compose::project_slug(iterfile_path, None).unwrap_or_else(|_| "iter".to_string());
+        crate::project_slug(iterfile_path, None).unwrap_or_else(|_| "iter".to_string());
     telemetry::init_for_compose(
         args.debug,
         prefs,

@@ -24,6 +24,55 @@ mod output;
 mod telemetry;
 mod tracing_preferences;
 
+// Composition layer absorbed from the former `iter_compose` crate. compose
+// differs from `iter run` in cardinality, not kind, so the operator owns both
+// (R11): turning an `iter_language` definition into a running `Runner`, and
+// managing the compose run on top of those iter processes. Each module keeps
+// its concept name; within the CLI this stays a module boundary.
+mod agent;
+mod arg;
+mod assembly;
+mod compose;
+mod config;
+mod discovery;
+mod events;
+mod iterfile;
+mod process_lifecycle;
+mod project;
+mod project_lock;
+mod prompt;
+mod queue;
+mod secrets;
+mod trigger_argv;
+mod workspace;
+
+pub use agent::{agent_from_def, sandbox_requirements_for};
+pub use assembly::AssemblyError;
+pub use compose::{
+    CompletedTask, ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,
+    LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME,
+    LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TargetedSpawnError, TriggerLifecycleState,
+    TriggerRunError, TriggerStatus, build, is_compose_filename, load_compose, read_trigger_status,
+    run, spawn_targeted_service, trigger_state_dir, trigger_state_root,
+};
+pub use config::build_runner_config;
+pub use discovery::{
+    ActiveOrchestrator, DiscoveryError, ProjectMember, find_active_orchestrator,
+    list_all_members_by_project, list_project_members, open_default_registry,
+};
+pub use events::{register_event_handlers, register_event_handlers_from_events};
+pub use process_lifecycle::{
+    AdoptedBootstrapError, RunRecordMetadata, bootstrap_adopted, derive_finalize_reason,
+    leaves_record_non_terminal, log_finalize_report,
+};
+pub use project::{ENV_PROJECT_NAME, ProjectSlugError, SlugValidationError, project_slug};
+pub use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
+pub use prompt::{build_prompt_selector, build_prompt_selector_from_prompts};
+pub use queue::{QueueBuildError, build_queue};
+pub use secrets::resolve_secret;
+pub use trigger_argv::queue_to_url;
+pub use workspace::build_workspace_factory;
+
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -245,7 +294,7 @@ fn run_run_dispatch(args: RunArgs, prefs: TracingPreferences) -> Result<(), Iter
 ///
 /// Adopted children (`iter run --process-id <ULID>`) are an explicit
 /// exception: a parse/read failure here would `?`-exit the child
-/// before [`iter_compose::iterfile::handle`] reaches `bootstrap_adopted`,
+/// before [`crate::iterfile::handle`] reaches `bootstrap_adopted`,
 /// leaving the parent-allocated registry record dangling `Initializing`
 /// until bootstrap-grace reconciles it. Since the preferences are consumed
 /// only by the telemetry layer (their sole field is `log_level`), we degrade

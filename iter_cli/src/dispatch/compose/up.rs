@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-use iter_compose::iterfile::RunRecordMetadata;
-use iter_compose::{
+use crate::iterfile::RunRecordMetadata;
+use crate::{
     OrchestratorContext, ProjectLockError, ProjectMember, acquire_project_lock, build,
     find_active_orchestrator, list_project_members, load_compose, project_slug, run,
 };
@@ -33,7 +33,7 @@ use super::{ComposeUpError, canonical_compose_path, resolve_compose_path};
 /// * **Foreground** (default): the in-process orchestrator runs directly,
 ///   without registering itself. Services inside the plan still register
 ///   their own foreground records via
-///   [`iter_compose::process_lifecycle::bootstrap_foreground`].
+///   [`crate::process_lifecycle::bootstrap_foreground`].
 ///
 /// # Errors
 ///
@@ -71,7 +71,7 @@ pub async fn run_compose_up(
 /// see them as part of the same project. If no orchestrator exists, the
 /// current process's identity is used as a fallback.
 async fn run_compose_up_targeted(args: ComposeUpArgs) -> Result<(), ComposeUpError> {
-    use iter_compose::spawn_targeted_service;
+    use crate::spawn_targeted_service;
 
     if !args.detach {
         return Err(ComposeUpError::TargetedRequiresDetach);
@@ -182,8 +182,8 @@ async fn run_compose_up_inline(
     let cancel =
         install_signal_handlers(CancellationToken::new()).map_err(ComposeUpError::Signals)?;
     let policy = match args.on_failure {
-        ComposeFailure::Abort => iter_compose::FailurePolicy::AbortAll,
-        ComposeFailure::Continue => iter_compose::FailurePolicy::Continue,
+        ComposeFailure::Abort => crate::FailurePolicy::AbortAll,
+        ComposeFailure::Continue => crate::FailurePolicy::Continue,
     };
     let metadata = RunRecordMetadata {
         argv: rebuild_argv(&args),

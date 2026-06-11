@@ -10,9 +10,9 @@ use crate::log::{LogEntry, LogStream, WriterErrorSlot, WriterMsg, writer_dead_er
 /// Cheap, cloneable handle on the [`ProcessLogSink`](super::sink::ProcessLogSink)
 /// writer-task channel.
 ///
-/// The tracing subscriber's `MakeWriter` wiring lives in `iter_compose`
-/// — it uses a `LogSender` to push tracing-formatted lines into the same
-/// NDJSON pipeline as agent stdio.
+/// The tracing subscriber's `MakeWriter` support lives in the CLI
+/// (`iter_cli`) — it uses a `LogSender` to push tracing-formatted lines into
+/// the same NDJSON pipeline as agent stdio.
 #[derive(Clone)]
 pub struct LogSender {
     pub(super) sender: mpsc::Sender<WriterMsg>,

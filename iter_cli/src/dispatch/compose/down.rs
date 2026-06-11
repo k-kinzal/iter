@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use iter_compose::{
+use crate::{
     ProjectMember, build, find_active_orchestrator, list_project_members, load_compose,
 };
 use iter_core::process::{

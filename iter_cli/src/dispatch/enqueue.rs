@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iter_compose::{ComposeError, build_queue, is_compose_filename, load_compose};
+use crate::{ComposeError, build_queue, is_compose_filename, load_compose};
 use iter_core::Queue;
 use iter_core::queue::{Priority, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
@@ -212,7 +212,7 @@ fn load_iterfile_queue(path: &Path) -> Result<QueueDef, EnqueueCmdError> {
 }
 
 fn autodetect_file() -> Option<PathBuf> {
-    let compose = PathBuf::from(iter_compose::DEFAULT_COMPOSE_FILE);
+    let compose = PathBuf::from(crate::DEFAULT_COMPOSE_FILE);
     if compose.exists() {
         return Some(compose);
     }

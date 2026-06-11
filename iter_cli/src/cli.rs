@@ -462,7 +462,7 @@ pub struct ComposeUpArgs {
     pub debug: bool,
 }
 
-/// Mirror of [`iter_compose::FailurePolicy`] for clap parsing.
+/// Mirror of [`crate::FailurePolicy`] for clap parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ComposeFailure {
     /// Cancel every other task on the first error.

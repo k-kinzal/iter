@@ -1926,14 +1926,22 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 name = "iter_cli"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "clap",
  "clap_complete",
- "iter_compose",
+ "globset",
+ "iter_command_cli",
  "iter_core",
+ "iter_cron_cli",
+ "iter_files_cli",
  "iter_language",
  "iter_tracing",
+ "iter_watch_cli",
+ "iter_webhook_cli",
+ "libc",
  "nix",
+ "percent-encoding",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -1956,34 +1964,6 @@ dependencies = [
  "iter_tracing",
  "nix",
  "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "iter_compose"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "globset",
- "iter_command_cli",
- "iter_core",
- "iter_cron_cli",
- "iter_files_cli",
- "iter_language",
- "iter_tracing",
- "iter_watch_cli",
- "iter_webhook_cli",
- "libc",
- "percent-encoding",
- "pretty_assertions",
  "serde",
  "serde_json",
  "tempfile",

@@ -1,10 +1,10 @@
 //! `iter compose` — `up`, `validate`, `config`, `ls`, `ps`, `down` dispatchers.
 //!
 //! Each public function here corresponds to one variant of
-//! [`crate::cli::ComposeCmd`]. The heavy lifting lives in
-//! [`iter_compose`] — these handlers are thin wrappers that resolve the
-//! file path, install the shutdown handler, render diagnostics, and forward
-//! the result.
+//! [`crate::cli::ComposeCmd`]. The heavy lifting lives in the CLI's compose
+//! run modules ([`crate::compose`]) — these handlers are thin wrappers that
+//! resolve the file path, install the shutdown handler, render diagnostics,
+//! and forward the result.
 //!
 //! `config` is the static plan listing (queues / services / triggers parsed
 //! from `compose.iter`). `ls` / `ps` / `down` operate on the **runtime**
@@ -17,7 +17,7 @@ mod up;
 
 use std::path::{Path, PathBuf};
 
-use iter_compose::{ComposeError, DEFAULT_COMPOSE_FILE, ProjectSlugError, project_slug};
+use crate::{ComposeError, DEFAULT_COMPOSE_FILE, ProjectSlugError, project_slug};
 use thiserror::Error;
 
 use crate::output::{IntoExitCode, exit_codes};
@@ -69,7 +69,7 @@ pub enum ComposeUpError {
     OrchestratorIdentity(#[source] Box<iter_core::process::ProcessError>),
     /// Scanning the registry for an existing project orchestrator failed.
     #[error("scanning registry for active project: {0}")]
-    Discovery(#[source] Box<iter_compose::DiscoveryError>),
+    Discovery(#[source] Box<crate::DiscoveryError>),
     /// A live orchestrator already owns this project slug.
     #[error(
         "project {project:?} is already up (orchestrator pid {orchestrator_pid}); \
@@ -140,7 +140,7 @@ pub enum ComposeUpError {
     },
     /// A targeted service's queue is not URL-addressable.
     #[error(transparent)]
-    TargetedSpawn(#[from] iter_compose::TargetedSpawnError),
+    TargetedSpawn(#[from] crate::TargetedSpawnError),
     /// `--source` did not match any service's build path.
     #[error(
         "--source {} does not match any service's build path in the compose file",
@@ -155,7 +155,7 @@ pub enum ComposeUpError {
     /// starting this project" message; the variant carries the source
     /// for everything else (e.g. `mkdir` failures).
     #[error(transparent)]
-    ProjectLock(#[from] iter_compose::ProjectLockError),
+    ProjectLock(#[from] crate::ProjectLockError),
 }
 
 impl From<ComposeError> for ComposeUpError {
@@ -170,8 +170,8 @@ impl From<ProjectSlugError> for ComposeUpError {
     }
 }
 
-impl From<iter_compose::DiscoveryError> for ComposeUpError {
-    fn from(value: iter_compose::DiscoveryError) -> Self {
+impl From<crate::DiscoveryError> for ComposeUpError {
+    fn from(value: crate::DiscoveryError) -> Self {
         Self::Discovery(Box::new(value))
     }
 }
@@ -230,7 +230,7 @@ impl IntoExitCode for ComposePlanError {
 pub enum ComposeRuntimeError {
     /// Walking the local registry to discover compose-tagged runners failed.
     #[error(transparent)]
-    Discovery(#[from] iter_compose::DiscoveryError),
+    Discovery(#[from] crate::DiscoveryError),
     /// Resolving the project slug for `ps` / `down` failed.
     #[error(transparent)]
     ProjectSlug(Box<ProjectSlugError>),
