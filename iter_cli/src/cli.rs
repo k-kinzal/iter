@@ -17,7 +17,7 @@
 //!   iter compose up
 //!   iter compose ls       (alias: iter compose ps)
 //!   iter compose validate
-//!   iter validate <PATH>  (autodetect Iterfile vs compose.iter)
+//!   iter validate <PATH>  (Iterfile; compose files go to `iter compose validate`)
 //!   iter completions <SHELL>
 //! ```
 //!
@@ -86,12 +86,13 @@ pub enum Command {
         cmd: ComposeCmd,
     },
 
-    /// Validate an Iterfile or compose.iter and exit with non-zero on the
-    /// first error. The file kind is detected from its basename.
+    /// Validate an Iterfile and exit with non-zero on the first error.
+    /// Compose files are validated by `iter compose validate`; the exact
+    /// basename `compose.iter` delegates there with a stderr note.
     #[command(after_help = "EXAMPLES:\n  \
-                      iter validate Iterfile\n  \
-                      iter validate compose.iter\n  \
-                      iter validate --format json compose.iter")]
+                      iter validate\n  \
+                      iter validate path/to/Iterfile\n  \
+                      iter validate --format json Iterfile")]
     Validate {
         /// Path to the file (defaults to `./Iterfile`).
         path: Option<PathBuf>,

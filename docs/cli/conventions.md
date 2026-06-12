@@ -94,8 +94,10 @@ Errors are printed to stderr as a single headline with any causal chain below it
 
 `iter compose` commands that read a compose file default to `./compose.iter`.
 
-`iter validate` defaults to `./Iterfile` and detects whether the named path is an
-Iterfile or a compose file from its basename.
+`iter validate` defaults to `./Iterfile` and always validates the named path as
+an Iterfile; compose files are validated by `iter compose validate -f`. The
+exact basename `compose.iter` is a compatibility exception: it delegates to
+compose validation and notes the delegation on stderr.
 
 Process records live in the local iter process registry under `~/.iter/proc`.
 Operators should use CLI commands rather than editing the registry directly.

@@ -1,6 +1,6 @@
 # iter validate
 
-Validate an Iterfile or compose file.
+Validate an Iterfile.
 
 ## Usage
 
@@ -18,26 +18,33 @@ iter validate [OPTIONS] [PATH]
 
 ## Behavior
 
-The command detects the file kind from the path basename:
+Each deliverable has one validation verb:
 
-- compose filenames are validated as compose files,
-- all other paths are validated as Iterfiles.
+- Iterfiles are validated by `iter validate`.
+- Compose files are validated by
+  [`iter compose validate -f <path>`](compose/validate.md), whatever the
+  file is named.
 
-For compose files, validation loads and builds the compose plan. For Iterfiles,
-validation parses the Iterfile and reports success when the file is valid.
+`iter validate` always parses `PATH` as an Iterfile, whatever it is named,
+with one compatibility exception: the exact basename `compose.iter`
+delegates to `iter compose validate` and prints a note on stderr:
 
-Use [`compose/validate.md`](compose/validate.md) when the command should default
-to `./compose.iter`.
+```text
+note: compose files are validated by 'iter compose validate'; delegating
+```
+
+A compose-format file under any other name fails Iterfile validation, and
+the diagnostics end with a hint pointing at `iter compose validate -f <path>`.
 
 ## Output
 
-Iterfile text success output:
+Text success output:
 
 ```text
 OK
 ```
 
-Compose text success output:
+Delegated `compose.iter` success output matches `iter compose validate`:
 
 ```text
 OK (<queues> queue, <services> service, <triggers> trigger)
@@ -55,9 +62,8 @@ Diagnostics are written to stderr on failure.
 
 ```sh
 iter validate
-iter validate Iterfile
-iter validate compose.iter
-iter validate --format json compose.iter
+iter validate path/to/Iterfile
+iter validate --format json
 ```
 
 ## Related

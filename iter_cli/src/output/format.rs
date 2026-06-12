@@ -34,6 +34,22 @@ pub(crate) enum ValidateFormat {
     Json,
 }
 
+/// Validate-summary envelope shared by `iter validate --format json` and
+/// `iter compose validate --format json`.
+#[derive(Debug, Serialize)]
+pub(crate) struct ValidateOk {
+    pub(crate) ok: bool,
+    pub(crate) summary: ValidateSummary,
+}
+
+/// The `summary` block of [`ValidateOk`].
+#[derive(Debug, Serialize)]
+pub(crate) struct ValidateSummary {
+    pub(crate) queues: usize,
+    pub(crate) services: usize,
+    pub(crate) triggers: usize,
+}
+
 /// Pretty-print a single value as JSON to stdout.
 pub(crate) fn print_json_pretty<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
     let body = serde_json::to_string_pretty(value)?;

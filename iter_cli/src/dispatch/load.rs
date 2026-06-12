@@ -30,7 +30,14 @@ pub(crate) enum LoadError {
     },
     /// The parser produced one or more error-severity diagnostics.
     #[error("{rendered}")]
-    Parse { rendered: String },
+    Parse {
+        rendered: String,
+        /// The leading diagnostic reports a compose-only named section
+        /// (`queue main file { ... }`). `iter validate` keys its
+        /// "use 'iter compose validate'" hint off this flag instead of
+        /// re-parsing the file under a second grammar.
+        compose_section: bool,
+    },
 }
 
 impl IntoExitCode for LoadError {
@@ -64,6 +71,7 @@ fn render_diagnostics(path: &Path, source: &str, diags: &[Diagnostic]) -> LoadEr
                 "iterfile {} failed to parse with no diagnostics",
                 path.display()
             ),
+            compose_section: false,
         };
     }
     let label = path
@@ -77,7 +85,26 @@ fn render_diagnostics(path: &Path, source: &str, diags: &[Diagnostic]) -> LoadEr
     }
     LoadError::Parse {
         rendered: rendered.trim_end().to_owned(),
+        compose_section: diags.first().is_some_and(is_compose_section_diag),
     }
+}
+
+/// Whether `diag` reports a compose-only construct. Two shapes exist:
+/// named sections (`queue main file { ... }`, `trigger nightly cron
+/// { ... }`) read under the Iterfile grammar as a section with an
+/// unexpected second identifier, and a `service` block is an unknown
+/// Iterfile keyword. The check matches the analyzer's messages because
+/// these constructs carry no dedicated diagnostic code — and a second
+/// parse under the compose grammar would be a heavier way to get the
+/// same answer.
+fn is_compose_section_diag(diag: &Diagnostic) -> bool {
+    if diag.message == "unknown top-level keyword `service`" {
+        return true;
+    }
+    diag.message.starts_with("unexpected second identifier")
+        && ["queue", "trigger"]
+            .iter()
+            .any(|kw| diag.message.ends_with(&format!("after `{kw}` section")))
 }
 
 #[cfg(test)]
@@ -126,6 +153,51 @@ runner {
         let path = dir.path().join("does-not-exist");
         let err = load_iterfile(Some(&path)).expect_err("must fail");
         assert!(err.to_string().contains("reading iterfile"));
+    }
+
+    #[test]
+    fn compose_named_section_sets_compose_section_flag() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pipeline.iter");
+        std::fs::write(&path, "queue main file { path = \"./q\" }\n").expect("write");
+        let err = load_iterfile(Some(&path)).expect_err("must fail");
+        let LoadError::Parse {
+            compose_section, ..
+        } = err
+        else {
+            panic!("expected parse error, got {err:?}");
+        };
+        assert!(compose_section, "named queue section must set the flag");
+    }
+
+    #[test]
+    fn compose_service_section_sets_compose_section_flag() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("pipeline.iter");
+        std::fs::write(&path, "service api { build = \"./Iterfile\" }\n").expect("write");
+        let err = load_iterfile(Some(&path)).expect_err("must fail");
+        let LoadError::Parse {
+            compose_section, ..
+        } = err
+        else {
+            panic!("expected parse error, got {err:?}");
+        };
+        assert!(compose_section, "leading service block must set the flag");
+    }
+
+    #[test]
+    fn iterfile_errors_do_not_set_compose_section_flag() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("Iterfile");
+        std::fs::write(&path, "queue redis { }\n").expect("write");
+        let err = load_iterfile(Some(&path)).expect_err("must fail");
+        let LoadError::Parse {
+            compose_section, ..
+        } = err
+        else {
+            panic!("expected parse error, got {err:?}");
+        };
+        assert!(!compose_section, "single-kind section must not set the flag");
     }
 
     #[test]

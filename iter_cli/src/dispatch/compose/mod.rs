@@ -23,10 +23,7 @@ use thiserror::Error;
 use crate::output::{IntoExitCode, exit_codes};
 
 pub use down::run_compose_down;
-pub use inspect::{
-    run_compose_config, run_compose_ls, run_compose_ps, run_compose_validate,
-    validate_path_autodetect,
-};
+pub use inspect::{run_compose_config, run_compose_ls, run_compose_ps, run_compose_validate};
 pub use up::run_compose_up;
 
 /// Errors produced by `iter compose up`.
@@ -333,36 +330,6 @@ pub(crate) fn compose_error_exit_code(e: &ComposeError) -> i32 {
         ComposeError::Queue(_) | ComposeError::QueueBuild { .. } => exit_codes::RUNTIME,
         ComposeError::UnresolvedAnonymousQueueRef | ComposeError::UnresolvedServiceQueue(_) => {
             exit_codes::INTERNAL
-        }
-    }
-}
-
-/// Errors produced by [`validate_path_autodetect`].
-#[derive(Debug, Error)]
-pub enum ValidateAutodetectError {
-    /// Validating an Iterfile failed.
-    #[error(transparent)]
-    Load(#[from] crate::dispatch::load::LoadError),
-    /// Validating a `compose.iter` failed.
-    #[error("validating compose file at {}: {source}", path.display())]
-    Compose {
-        /// Resolved compose file path.
-        path: PathBuf,
-        /// Underlying error.
-        #[source]
-        source: Box<ComposePlanError>,
-    },
-    /// Serialising the validate-JSON envelope failed.
-    #[error("serializing validate output: {0}")]
-    JsonSerialize(#[source] serde_json::Error),
-}
-
-impl IntoExitCode for ValidateAutodetectError {
-    fn exit_code(&self) -> i32 {
-        match self {
-            Self::Load(e) => e.exit_code(),
-            Self::Compose { source, .. } => source.exit_code(),
-            Self::JsonSerialize(_) => exit_codes::INTERNAL,
         }
     }
 }

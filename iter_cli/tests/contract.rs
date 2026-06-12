@@ -415,6 +415,182 @@ fn validate_json_missing_path_errors() {
     );
 }
 
+/// Write a minimal valid compose file under `name` (plus the Iterfile its
+/// service builds) so validate tests can exercise compose-format content
+/// under arbitrary basenames.
+fn write_compose_fixture(dir: &Path, name: &str) {
+    let queue_path = dir.join("q");
+    std::fs::write(
+        dir.join(name),
+        format!(
+            "queue main file {{ path = \"{}\" }}\n\
+             service api {{\n\
+                 build = \"./Iterfile\"\n\
+                 queue = main\n\
+             }}\n",
+            queue_path.display()
+        ),
+    )
+    .expect("write compose fixture");
+    std::fs::write(
+        dir.join("Iterfile"),
+        "workspace local { base = \".\" }\n\
+         agent claude {\n  mode = print\n  command = \"claude\"\n}\n\
+         runner {\n  agent = claude\n  workspace = local\n  continue_on_error = false\n  behavior = wait\n  prompt = \"hi\"\n}\n",
+    )
+    .expect("write iterfile fixture");
+}
+
+/// The two-verb rule: `iter validate` owns the Iterfile and `iter compose
+/// validate` owns the compose file. The exact basename `compose.iter` is
+/// the one compatibility carve-out — `iter validate compose.iter` delegates
+/// to compose validation, says so on stderr, and keeps the compose
+/// validator's stdout shape and exit code.
+#[test]
+fn validate_compose_basename_delegates_with_note() {
+    let dir = TempDir::new().expect("tempdir");
+    write_compose_fixture(dir.path(), "compose.iter");
+    let out = run_iter(dir.path(), &["validate", "compose.iter"]);
+    assert!(
+        out.status.success(),
+        "delegated validation must succeed; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("OK (1 queue, 1 service, 0 trigger)"),
+        "delegation must keep the compose summary line; stdout=\n{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("note: compose files are validated by 'iter compose validate'; delegating"),
+        "delegation note missing from stderr; stderr=\n{stderr}"
+    );
+}
+
+/// Delegation keeps the compose validator's `--format json` envelope:
+/// one compact object with the compose summary counts, not the Iterfile
+/// envelope's fixed `services: 1` shape.
+#[test]
+fn validate_compose_basename_delegates_json_format() {
+    let dir = TempDir::new().expect("tempdir");
+    write_compose_fixture(dir.path(), "compose.iter");
+    let out = run_iter(dir.path(), &["validate", "--format", "json", "compose.iter"]);
+    assert!(
+        out.status.success(),
+        "delegated JSON validation must succeed; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("delegated output must be valid JSON");
+    assert_eq!(parsed["ok"], serde_json::Value::Bool(true));
+    assert_eq!(parsed["summary"]["queues"], 1);
+    assert_eq!(parsed["summary"]["services"], 1);
+    assert_eq!(parsed["summary"]["triggers"], 0);
+}
+
+/// A compose-format file under any non-canonical name fails Iterfile
+/// validation with `CONFIG (64)`, and the diagnostics end with a hint
+/// naming the verb that owns compose files. `dev.compose.iter` is included
+/// deliberately: the old basename autodetection special-cased the
+/// `*.compose.iter` suffix, and this pins that the carve-out is now the
+/// exact basename only.
+#[test]
+fn validate_compose_format_under_other_name_gets_compose_hint() {
+    let dir = TempDir::new().expect("tempdir");
+    for name in ["pipeline.iter", "dev.compose.iter"] {
+        write_compose_fixture(dir.path(), name);
+        let out = run_iter(dir.path(), &["validate", name]);
+        assert!(
+            !out.status.success(),
+            "{name} must fail Iterfile validation"
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(64),
+            "CONFIG (64) expected for {name}; stderr=\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains(&format!(
+                "hint: this looks like a compose file; use 'iter compose validate -f {name}'"
+            )),
+            "compose hint missing for {name}; stderr=\n{stderr}"
+        );
+    }
+}
+
+/// A compose file that opens with a `service` block (no named queue
+/// above it) also gets the hint — `service` is an unknown Iterfile
+/// keyword rather than a named-section error, and the hint must cover
+/// both shapes.
+#[test]
+fn validate_service_first_compose_file_gets_compose_hint() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::write(
+        dir.path().join("services.iter"),
+        "service api {\n    build = \"./Iterfile\"\n    queue = main\n}\n",
+    )
+    .expect("write compose file");
+    let out = run_iter(dir.path(), &["validate", "services.iter"]);
+    assert!(
+        !out.status.success(),
+        "service-first compose file must fail Iterfile validation"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("hint: this looks like a compose file; use 'iter compose validate -f services.iter'"),
+        "compose hint missing for service-first file; stderr=\n{stderr}"
+    );
+}
+
+/// A plain Iterfile under a non-canonical name validates as an Iterfile —
+/// no basename magic, no delegation note.
+#[test]
+fn validate_iterfile_under_any_basename_is_validated_as_iterfile() {
+    let dir = TempDir::new().expect("tempdir");
+    std::fs::write(
+        dir.path().join("worker.iter"),
+        "queue memory\n\
+         workspace local { base = \".\" }\n\
+         agent claude {\n  mode = print\n  command = \"claude\"\n}\n\
+         runner {\n  agent = claude\n  workspace = local\n  queue = memory\n  continue_on_error = false\n  behavior = wait\n  prompt = \"hi\"\n}\n",
+    )
+    .expect("write iterfile");
+    let out = run_iter(dir.path(), &["validate", "worker.iter"]);
+    assert!(
+        out.status.success(),
+        "Iterfile under non-canonical name must validate; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "OK\n");
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("delegating"),
+        "no delegation note expected for an Iterfile"
+    );
+}
+
+/// `iter compose validate -f` accepts compose files under any basename —
+/// the compose verb keys on the flag, never on what the file is called.
+#[test]
+fn compose_validate_dash_f_accepts_any_basename() {
+    let dir = TempDir::new().expect("tempdir");
+    write_compose_fixture(dir.path(), "exp-1.iter");
+    let out = run_iter(dir.path(), &["compose", "validate", "-f", "exp-1.iter"]);
+    assert!(
+        out.status.success(),
+        "compose validate -f exp-1.iter must succeed; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("OK (1 queue, 1 service, 0 trigger)"),
+        "compose summary line expected; stdout=\n{stdout}"
+    );
+}
+
 /// Completion scripts for every shell are not just non-empty — they are
 /// actually shell script bytes, not Rust panic output. A regression where
 /// `clap_complete::generate` panics inside the generator would surface

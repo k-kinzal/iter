@@ -1,39 +1,18 @@
-use std::path::PathBuf;
-
 use crate::{
-    ComposePlan, ProjectMember, build, is_compose_filename, list_all_members_by_project,
-    list_project_members, load_compose, read_trigger_status, trigger_state_root,
+    ComposePlan, ProjectMember, build, list_all_members_by_project, list_project_members,
+    load_compose, read_trigger_status, trigger_state_root,
 };
 use chrono::{DateTime, Utc};
 use iter_core::process::{PidFileState, process_is_alive_with_start_time};
 use serde::Serialize;
 
 use crate::cli::{ComposeConfigArgs, ComposeLsArgs, ComposePsArgs, ComposeValidateArgs};
-use crate::dispatch::load::load_iterfile;
 use crate::output::{
-    OutputFormat, Table, ValidateFormat, cli_println, print_json_array, print_json_compact,
-    print_ndjson_record, relative_time, trunc_id,
+    OutputFormat, Table, ValidateFormat, ValidateOk, ValidateSummary, cli_println,
+    print_json_array, print_json_compact, print_ndjson_record, relative_time, trunc_id,
 };
 
-use super::{
-    ComposePlanError, ComposeRuntimeError, ValidateAutodetectError, resolve_compose_path,
-    runtime_project_slug,
-};
-
-/// Validate-summary envelope shared by `iter validate --format json` and
-/// `iter compose validate --format json`.
-#[derive(Debug, Serialize)]
-struct ValidateOk {
-    ok: bool,
-    summary: ValidateSummary,
-}
-
-#[derive(Debug, Serialize)]
-struct ValidateSummary {
-    queues: usize,
-    services: usize,
-    triggers: usize,
-}
+use super::{ComposePlanError, ComposeRuntimeError, resolve_compose_path, runtime_project_slug};
 
 /// Handle `iter compose validate`.
 ///
@@ -381,47 +360,4 @@ fn collect_trigger_status_rows(project: &str) -> Vec<ComposePsTriggerRow> {
     }
     rows.sort_by(|a, b| a.trigger.cmp(&b.trigger));
     rows
-}
-
-/// Run `iter validate` against either an Iterfile or a compose.iter,
-/// auto-detected by basename. Used by [`crate::dispatch::run_validate`].
-///
-/// # Errors
-///
-/// Forwarded from the underlying loader / validator.
-pub fn validate_path_autodetect(
-    path: Option<&std::path::Path>,
-    format: ValidateFormat,
-) -> Result<(), ValidateAutodetectError> {
-    let resolved = match path {
-        Some(p) => p.to_path_buf(),
-        None => PathBuf::from("Iterfile"),
-    };
-    if is_compose_filename(&resolved) {
-        run_compose_validate(&ComposeValidateArgs {
-            file: Some(resolved.clone()),
-            format,
-        })
-        .map_err(|source| ValidateAutodetectError::Compose {
-            path: resolved,
-            source: Box::new(source),
-        })
-    } else {
-        let loaded = load_iterfile(Some(&resolved))?;
-        match format {
-            ValidateFormat::Text => cli_println!("OK"),
-            ValidateFormat::Json => {
-                let envelope = ValidateOk {
-                    ok: true,
-                    summary: ValidateSummary {
-                        queues: loaded.iterfile.queues.len(),
-                        services: 1,
-                        triggers: 0,
-                    },
-                };
-                print_json_compact(&envelope).map_err(ValidateAutodetectError::JsonSerialize)?;
-            }
-        }
-        Ok(())
-    }
 }
