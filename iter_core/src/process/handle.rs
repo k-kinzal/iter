@@ -34,7 +34,7 @@ use crate::process::pid_file::PidFileState;
 use crate::process::proc_info::process_is_alive_with_start_time;
 use crate::process::record::ProcessRecord;
 use crate::process::session::ProcessSession;
-use crate::process::signal::{self, SignalKind};
+use crate::process::posix_signal::{self, PosixSignal};
 use crate::process::status::{ProcessStatus, TransitionResult};
 use crate::process::status_file::ProcessStatusFile;
 
@@ -149,7 +149,7 @@ impl ProcessHandle {
     /// [`ProcessError::IllegalTransition`] so the caller can render
     /// "already stopped".
     pub async fn stop(&self) -> Result<TransitionResult> {
-        self.signal_and_kill(SignalKind::Term).await
+        self.signal_and_kill(PosixSignal::Term).await
     }
 
     /// `SIGKILL` analogue of [`Self::stop`].
@@ -157,7 +157,7 @@ impl ProcessHandle {
     ///
     /// Returns an error if the operation fails.
     pub async fn kill(&self) -> Result<TransitionResult> {
-        self.signal_and_kill(SignalKind::Kill).await
+        self.signal_and_kill(PosixSignal::Kill).await
     }
 
     /// Force-deliver `SIGKILL` to a process whose record is already terminal
@@ -231,7 +231,7 @@ impl ProcessHandle {
         if !process_is_alive_with_start_time(&identity)? {
             return Ok(false);
         }
-        signal::send(identity.pid.as_raw(), SignalKind::Kill)?;
+        posix_signal::send(identity.pid.as_raw(), PosixSignal::Kill)?;
         Ok(true)
     }
 
@@ -290,14 +290,14 @@ impl ProcessHandle {
         Ok(())
     }
 
-    async fn signal_and_kill(&self, kind: SignalKind) -> Result<TransitionResult> {
+    async fn signal_and_kill(&self, kind: PosixSignal) -> Result<TransitionResult> {
         // Best-effort signal — an absent / unreadable pid file is not a
         // hard failure (the record may already be terminal, or still in the
         // bootstrap window before pid is published). Errors from the actual
         // signalling are surfaced; the status transition is attempted in any
         // case so the caller's record-level intent is recorded.
         if let Some(pid) = current_pid(&self.record) {
-            signal::send(pid, kind)?;
+            posix_signal::send(pid, kind)?;
         }
         let sf = self.status_file.clone();
         match sf
@@ -318,7 +318,7 @@ impl ProcessHandle {
     }
 }
 
-/// Resolve the recorded `pid` into a target for [`signal::send`], or `None`
+/// Resolve the recorded `pid` into a target for [`posix_signal::send`], or `None`
 /// when the pid file is absent / corrupt / non-unix. The signal path is
 /// best-effort, so a missing pid is never an error.
 #[cfg(unix)]

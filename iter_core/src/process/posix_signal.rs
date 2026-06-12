@@ -1,5 +1,10 @@
 //! POSIX signal delivery for [`crate::process::handle::ProcessHandle`].
 //!
+//! Named `posix_signal` because the domain noun Signal — the unit of
+//! outside information a Runner consumes ([`crate::signal`]) — owns the
+//! word "signal" exclusively; the OS-level vocabulary carries the `Posix`
+//! qualifier.
+//!
 //! Best-effort: an absent / already-exited target (`ESRCH`) is treated as
 //! success because the caller's intent is "make sure this pid is no longer
 //! holding state", and a nonexistent process satisfies that trivially. All
@@ -9,9 +14,10 @@ use crate::process::error::{ProcessError, Result};
 use crate::process::pid_file::ProcessIdentity;
 use crate::process::proc_info::process_is_alive_with_start_time;
 
-/// Which POSIX signal `ProcessHandle::stop` / `kill` should deliver.
+/// Which POSIX signal to deliver (`ProcessHandle::stop` / `kill`,
+/// [`signal_identity`]).
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum SignalKind {
+pub enum PosixSignal {
     /// `SIGTERM` — graceful termination request.
     Term,
     /// `SIGKILL` — forced termination.
@@ -19,7 +25,7 @@ pub(crate) enum SignalKind {
 }
 
 #[cfg(unix)]
-pub(crate) fn send(pid: u32, kind: SignalKind) -> Result<()> {
+pub(crate) fn send(pid: u32, kind: PosixSignal) -> Result<()> {
     use nix::errno::Errno;
     use nix::sys::signal::{Signal, kill};
     use nix::unistd::Pid as NixPid;
@@ -27,8 +33,8 @@ pub(crate) fn send(pid: u32, kind: SignalKind) -> Result<()> {
     let raw = i32::try_from(pid)
         .map_err(|_| ProcessError::Io(std::io::Error::other(format!("pid {pid} out of range"))))?;
     let sig = match kind {
-        SignalKind::Term => Signal::SIGTERM,
-        SignalKind::Kill => Signal::SIGKILL,
+        PosixSignal::Term => Signal::SIGTERM,
+        PosixSignal::Kill => Signal::SIGKILL,
     };
     match kill(NixPid::from_raw(raw), sig) {
         Ok(()) | Err(Errno::ESRCH) => Ok(()),
@@ -37,7 +43,7 @@ pub(crate) fn send(pid: u32, kind: SignalKind) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-pub(crate) fn send(_pid: u32, _kind: SignalKind) -> Result<()> {
+pub(crate) fn send(_pid: u32, _kind: PosixSignal) -> Result<()> {
     Err(ProcessError::Io(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "signal delivery is unix-only",
@@ -52,7 +58,7 @@ pub(crate) fn send(_pid: u32, _kind: SignalKind) -> Result<()> {
 ///
 /// Returns [`ProcessError::Io`] for any errno other than `ESRCH`.
 pub fn signal_pid_term(pid: u32) -> Result<()> {
-    send(pid, SignalKind::Term)
+    send(pid, PosixSignal::Term)
 }
 
 /// Send `SIGKILL` to an arbitrary pid that is **not** part of the local
@@ -63,7 +69,7 @@ pub fn signal_pid_term(pid: u32) -> Result<()> {
 ///
 /// Returns [`ProcessError::Io`] for any errno other than `ESRCH`.
 pub fn signal_pid_kill(pid: u32) -> Result<()> {
-    send(pid, SignalKind::Kill)
+    send(pid, PosixSignal::Kill)
 }
 
 /// Re-verify the identity's `pid+start_time` fingerprint immediately before
@@ -95,31 +101,18 @@ pub fn signal_pid_kill(pid: u32) -> Result<()> {
 /// Returns [`ProcessError::Io`] for any errno other than `ESRCH`, or any
 /// error surfaced by the fingerprint cross-check.
 #[cfg(unix)]
-pub fn signal_identity(identity: &ProcessIdentity, kind: SignalDelivery) -> Result<bool> {
+pub fn signal_identity(identity: &ProcessIdentity, kind: PosixSignal) -> Result<bool> {
     if !process_is_alive_with_start_time(identity)? {
         return Ok(false);
     }
-    let raw_kind = match kind {
-        SignalDelivery::Term => SignalKind::Term,
-        SignalDelivery::Kill => SignalKind::Kill,
-    };
-    send(identity.pid.as_raw(), raw_kind)?;
+    send(identity.pid.as_raw(), kind)?;
     Ok(true)
 }
 
 #[cfg(not(unix))]
-pub fn signal_identity(_identity: &ProcessIdentity, _kind: SignalDelivery) -> Result<bool> {
+pub fn signal_identity(_identity: &ProcessIdentity, _kind: PosixSignal) -> Result<bool> {
     Err(ProcessError::Io(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "signal_identity is unix-only",
     )))
-}
-
-/// Public wrapper over [`SignalKind`] for callers of [`signal_identity`].
-#[derive(Clone, Copy, Debug)]
-pub enum SignalDelivery {
-    /// `SIGTERM`.
-    Term,
-    /// `SIGKILL`.
-    Kill,
 }

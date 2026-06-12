@@ -14,19 +14,172 @@
 //! shared here.
 
 use std::collections::BTreeMap;
+use std::error::Error as StdError;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use iter_core::process::registry::MetadataDraft;
 use iter_core::process::{
-    AdoptError, FinalizeReport, LifecycleObserver, ObserverError, OutputPolicy, ProcessError,
-    ProcessId, ProcessOutput, ProcessRegistry, ProcessRuntime, ProcessStatus,
-    ProcessTerminationReason, RegisterError, ShutdownController, StartupError, adopt_from_argv,
-    current_identity, open_output,
+    AdoptError, FinalizeReport, Interrupt, LifecycleObserver, ObserverError, OutputPolicy,
+    ProcessError, ProcessId, ProcessOutput, ProcessRegistry, ProcessRuntime, ProcessStatus,
+    RegisterError, ShutdownIntent, StartupError, adopt_from_argv, current_identity, open_output,
+    spawn_interrupt_listener,
 };
 use thiserror::Error;
 use tracing::warn;
+
+/// Boxed error trait object carried inside
+/// [`ProcessTerminationReason::RunnerError`].
+pub type BoxError = Box<dyn StdError + Send + Sync + 'static>;
+
+/// Why the process exited its main run loop — the run record's
+/// termination classification.
+///
+/// This taxonomy belongs to the run record (the operator's durable
+/// memory under `~/.iter/proc`), so it lives here with the record's
+/// finalisation rather than in core: core's `process::interrupt` records
+/// the *intent* to shut down ([`ShutdownIntent`]) and nothing else.
+///
+/// Per rev17 §J1, this is the input [`terminal_status_for`] needs in
+/// order to pick a terminal [`ProcessStatus`]:
+///
+/// | reason            | terminal status |
+/// |-------------------|-----------------|
+/// | `Completed`       | `Stopped`       |
+/// | `RunnerError(_)`  | `Failed`        |
+/// | `SignalTerm`      | `Killed`        |
+/// | `SignalInt`       | `Killed`        |
+///
+/// A panicking runner is deliberately absent: the runner is awaited
+/// inline, so a panic unwinds past the finalize path and the record is
+/// promoted to a terminal state by the registry reconciler
+/// (`refresh_status`) instead.
+#[derive(Debug)]
+pub enum ProcessTerminationReason {
+    /// Runner returned `Ok(_)` from its main loop.
+    Completed,
+    /// Runner returned `Err(_)` from its main loop.
+    RunnerError(BoxError),
+    /// `SIGTERM` was observed before the runner returned.
+    SignalTerm,
+    /// `SIGINT` (Ctrl-C) was observed before the runner returned.
+    SignalInt,
+}
+
+/// Map a [`ProcessTerminationReason`] to its terminal [`ProcessStatus`]
+/// per the rev17 §J1 table.
+#[must_use]
+pub fn terminal_status_for(reason: &ProcessTerminationReason) -> ProcessStatus {
+    match reason {
+        ProcessTerminationReason::Completed => ProcessStatus::Stopped,
+        ProcessTerminationReason::RunnerError(_) => ProcessStatus::Failed,
+        ProcessTerminationReason::SignalTerm | ProcessTerminationReason::SignalInt => {
+            ProcessStatus::Killed
+        }
+    }
+}
+
+/// Reason-recording layer over a [`ShutdownIntent`].
+///
+/// Core's interrupt module owns the OS-signal → cancellation mirror and
+/// records intent only; classifying *why* the run ended belongs to the
+/// run record and therefore lives here, with its operator. Cloning is
+/// cheap (`Arc` + token internals) and shares both the token and the
+/// reason slot. The first [`Self::cancel`] wins; the recorded reason is
+/// what [`derive_finalize_reason`] feeds into [`terminal_status_for`]
+/// when the record is finalised.
+#[derive(Debug, Clone)]
+pub struct TerminationRecorder {
+    intent: ShutdownIntent,
+    reason: Arc<Mutex<Option<ProcessTerminationReason>>>,
+}
+
+impl TerminationRecorder {
+    /// Create a recorder around a fresh [`ShutdownIntent`] and an empty
+    /// reason slot.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            intent: ShutdownIntent::new(),
+            reason: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Return a clone of the underlying [`ShutdownIntent`]. Cheap — the
+    /// token internals are reference-counted and the clone shares them.
+    #[must_use]
+    pub fn intent(&self) -> ShutdownIntent {
+        self.intent.clone()
+    }
+
+    /// Trigger shutdown and record the reason.
+    ///
+    /// First call wins: subsequent invocations leave the recorded reason
+    /// untouched and only ensure the underlying token is fired
+    /// (idempotent).
+    pub fn cancel(&self, reason: ProcessTerminationReason) {
+        // `Mutex::lock` only fails if a previous holder panicked. Since
+        // every code path here only takes the lock long enough to
+        // `take`/`insert`, that should not happen — but if it does we
+        // recover the inner state and proceed: we'd rather record a
+        // best-effort reason than block on a poisoned shutdown.
+        let mut slot = match self.reason.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        if slot.is_none() {
+            *slot = Some(reason);
+        }
+        drop(slot);
+        self.intent.cancel();
+    }
+
+    /// Take the recorded reason, leaving the slot empty.
+    ///
+    /// Returns `None` until the first [`Self::cancel`] (or
+    /// signal-handler trigger) records one.
+    #[must_use]
+    pub fn reason_taken(&self) -> Option<ProcessTerminationReason> {
+        let mut slot = match self.reason.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        slot.take()
+    }
+
+    /// Mirror `SIGINT`/`SIGTERM` onto this recorder.
+    ///
+    /// Spawns core's interrupt listener and records [`SignalTerm`] or
+    /// [`SignalInt`] when a signal fires, firing the underlying token.
+    /// The task self-terminates if the token fires for any other reason.
+    /// On non-unix targets only `Ctrl-C` is wired and it records
+    /// [`SignalInt`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying [`std::io::Error`] if the unix signal
+    /// listeners cannot be installed.
+    ///
+    /// [`SignalTerm`]: ProcessTerminationReason::SignalTerm
+    /// [`SignalInt`]: ProcessTerminationReason::SignalInt
+    pub fn install_signal_handlers(&self) -> std::io::Result<()> {
+        let recorder = self.clone();
+        spawn_interrupt_listener(self.intent.token(), move |which| {
+            let reason = match which {
+                Interrupt::Terminate => ProcessTerminationReason::SignalTerm,
+                Interrupt::Interrupt => ProcessTerminationReason::SignalInt,
+            };
+            recorder.cancel(reason);
+        })
+    }
+}
+
+impl Default for TerminationRecorder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Bookkeeping recorded into the registry entry's `meta.json`.
 ///
@@ -58,8 +211,8 @@ pub enum AdoptedBootstrapError {
         #[source]
         source: AdoptError,
     },
-    /// Wiring the runtime side files (observer, output sink, shutdown
-    /// controller) failed after adoption succeeded.
+    /// Wiring the runtime side files (observer, output sink, termination
+    /// recorder) failed after adoption succeeded.
     #[error(transparent)]
     Lifecycle(#[from] LifecycleError),
 }
@@ -108,7 +261,7 @@ pub(crate) async fn bootstrap_foreground(
     iterfile_path: &Path,
     metadata: &RunRecordMetadata,
     labels: Option<BTreeMap<String, String>>,
-) -> Result<Option<ProcessRuntime>, LifecycleError> {
+) -> Result<Option<(ProcessRuntime, TerminationRecorder)>, LifecycleError> {
     let registry = match ProcessRegistry::open_default() {
         Ok(r) => r,
         Err(err) => {
@@ -150,7 +303,7 @@ pub(crate) async fn bootstrap_foreground(
     // which is wrong for an interactive `iter run` invocation.
     let output_policy = OutputPolicy::Passthrough;
 
-    let (observer, output, shutdown) =
+    let (observer, output, termination) =
         match wire_runtime_pieces(session.paths().dir(), &output_policy).await {
             Ok(triple) => triple,
             Err(err) => {
@@ -203,8 +356,9 @@ pub(crate) async fn bootstrap_foreground(
         return Err(LifecycleError::LockedInitialWrite(err));
     }
 
-    Ok(Some(ProcessRuntime::new(
-        session, shutdown, observer, output,
+    Ok(Some((
+        ProcessRuntime::new(session, termination.intent(), observer, output),
+        termination,
     )))
 }
 
@@ -223,11 +377,12 @@ pub(crate) async fn bootstrap_foreground(
 /// 1. Calling [`adopt_from_argv`], which atomically flips the record
 ///    `Initializing → Running`, publishes the pid file, and deletes the
 ///    bootstrap token.
-/// 2. Wiring the observer + output sink + signal-driven shutdown
-///    controller in [`OutputPolicy::LogOnly`] mode (consistent with the
-///    on-disk fd layout the parent set up).
-/// 3. Returning a [`ProcessRuntime`] the caller is responsible for
-///    finalising on exit so the record reaches a terminal state.
+/// 2. Wiring the observer + output sink + signal-driven
+///    [`TerminationRecorder`] in [`OutputPolicy::LogOnly`] mode
+///    (consistent with the on-disk fd layout the parent set up).
+/// 3. Returning a [`ProcessRuntime`] (plus its recorder) the caller is
+///    responsible for finalising on exit so the record reaches a
+///    terminal state.
 ///
 /// On any post-adoption failure the record is best-effort transitioned
 /// `Running → Failed` so it does not dangle.
@@ -237,7 +392,7 @@ pub(crate) async fn bootstrap_foreground(
 /// Any [`AdoptedBootstrapError`] variant.
 pub async fn bootstrap_adopted(
     process_id: ProcessId,
-) -> Result<ProcessRuntime, AdoptedBootstrapError> {
+) -> Result<(ProcessRuntime, TerminationRecorder), AdoptedBootstrapError> {
     let registry = ProcessRegistry::open_default().map_err(AdoptedBootstrapError::RegistryOpen)?;
     let session = adopt_from_argv(registry.proc_root(), process_id)
         .await
@@ -251,9 +406,10 @@ pub async fn bootstrap_adopted(
     };
 
     match wire_runtime_pieces(session.paths().dir(), &output_policy).await {
-        Ok((observer, output, shutdown)) => {
-            Ok(ProcessRuntime::new(session, shutdown, observer, output))
-        }
+        Ok((observer, output, termination)) => Ok((
+            ProcessRuntime::new(session, termination.intent(), observer, output),
+            termination,
+        )),
         Err(err) => {
             if let Err(transition_err) = session
                 .status_file()
@@ -271,7 +427,7 @@ pub async fn bootstrap_adopted(
 }
 
 /// Open the per-process side files (lifecycle observer, output sink,
-/// signal-handling shutdown controller) shared by both adopted and
+/// signal-handling [`TerminationRecorder`]) shared by both adopted and
 /// foreground runs.
 ///
 /// `pub(crate)` so [`crate::iterfile`]'s adopted-mode bootstrap can
@@ -283,7 +439,7 @@ pub async fn bootstrap_adopted(
 pub(crate) async fn wire_runtime_pieces(
     dir: &Path,
     output_policy: &OutputPolicy,
-) -> Result<(Arc<LifecycleObserver>, ProcessOutput, ShutdownController), LifecycleError> {
+) -> Result<(Arc<LifecycleObserver>, ProcessOutput, TerminationRecorder), LifecycleError> {
     let output = open_output(output_policy)
         .await
         .map_err(LifecycleError::Stdio)?;
@@ -292,11 +448,11 @@ pub(crate) async fn wire_runtime_pieces(
             .await
             .map_err(LifecycleError::Observer)?,
     );
-    let shutdown = ShutdownController::new();
-    shutdown
+    let termination = TerminationRecorder::new();
+    termination
         .install_signal_handlers()
         .map_err(LifecycleError::InstallSignalHandlers)?;
-    Ok((observer, output, shutdown))
+    Ok((observer, output, termination))
 }
 
 /// Log non-clean entries from a [`FinalizeReport`].
@@ -334,21 +490,128 @@ pub fn leaves_record_non_terminal(err: &ProcessError) -> bool {
 }
 
 /// Derive a [`ProcessTerminationReason`] from a runner result and
-/// shutdown state.
+/// recorded shutdown state.
 ///
-/// The shutdown controller wins when set (signals already recorded a
-/// reason). Otherwise `Completed` for clean returns and
-/// `RunnerError(msg)` for failures.
+/// The recorded reason wins when set (a signal handler or the compose
+/// orchestrator already classified the exit). Otherwise `Completed` for
+/// clean returns and `RunnerError(msg)` for failures.
 #[must_use]
 pub fn derive_finalize_reason(
     runner_failure_message: Option<String>,
-    shutdown: &ShutdownController,
+    termination: &TerminationRecorder,
 ) -> ProcessTerminationReason {
-    if let Some(reason) = shutdown.reason_taken() {
+    if let Some(reason) = termination.reason_taken() {
         return reason;
+    }
+    if termination.intent().is_cancelled() {
+        // The token fired without going through `cancel(reason)` — an
+        // external clone of the token was cancelled directly. The runner
+        // result still classifies the exit correctly, but surface the
+        // unusual path.
+        warn!("shutdown intent fired without a recorded reason; classifying from the runner result");
     }
     match runner_failure_message {
         None => ProcessTerminationReason::Completed,
         Some(msg) => ProcessTerminationReason::RunnerError(msg.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_status_table_matches_rev17_j1() {
+        assert_eq!(
+            terminal_status_for(&ProcessTerminationReason::Completed),
+            ProcessStatus::Stopped
+        );
+        assert_eq!(
+            terminal_status_for(&ProcessTerminationReason::RunnerError("boom".into())),
+            ProcessStatus::Failed
+        );
+        assert_eq!(
+            terminal_status_for(&ProcessTerminationReason::SignalTerm),
+            ProcessStatus::Killed
+        );
+        assert_eq!(
+            terminal_status_for(&ProcessTerminationReason::SignalInt),
+            ProcessStatus::Killed
+        );
+    }
+
+    #[test]
+    fn new_recorder_starts_uncancelled_and_unrecorded() {
+        let r = TerminationRecorder::new();
+        assert!(!r.intent().is_cancelled());
+        assert!(r.reason_taken().is_none());
+    }
+
+    #[test]
+    fn cancel_records_reason_and_fires_intent() {
+        let r = TerminationRecorder::new();
+        r.cancel(ProcessTerminationReason::Completed);
+        assert!(r.intent().is_cancelled());
+        let reason = r.reason_taken().expect("reason recorded");
+        assert!(matches!(reason, ProcessTerminationReason::Completed));
+        // intent stays cancelled even after the slot is drained.
+        assert!(r.intent().is_cancelled());
+    }
+
+    #[test]
+    fn first_cancel_wins() {
+        let r = TerminationRecorder::new();
+        r.cancel(ProcessTerminationReason::SignalTerm);
+        r.cancel(ProcessTerminationReason::SignalInt);
+        let reason = r.reason_taken().expect("reason recorded");
+        assert!(
+            matches!(reason, ProcessTerminationReason::SignalTerm),
+            "first reason should win, got {reason:?}"
+        );
+    }
+
+    #[test]
+    fn clones_share_reason_slot_and_intent() {
+        let a = TerminationRecorder::new();
+        let b = a.clone();
+        b.cancel(ProcessTerminationReason::RunnerError("boom".into()));
+        assert!(a.intent().is_cancelled());
+        let reason = a.reason_taken().expect("clone shares slot");
+        assert!(matches!(reason, ProcessTerminationReason::RunnerError(_)));
+    }
+
+    #[test]
+    fn derive_prefers_recorded_reason_over_runner_result() {
+        let r = TerminationRecorder::new();
+        r.cancel(ProcessTerminationReason::SignalInt);
+        let reason = derive_finalize_reason(Some("boom".into()), &r);
+        assert!(matches!(reason, ProcessTerminationReason::SignalInt));
+    }
+
+    #[test]
+    fn derive_classifies_runner_results_when_nothing_recorded() {
+        let r = TerminationRecorder::new();
+        assert!(matches!(
+            derive_finalize_reason(None, &r),
+            ProcessTerminationReason::Completed
+        ));
+        assert!(matches!(
+            derive_finalize_reason(Some("boom".into()), &r),
+            ProcessTerminationReason::RunnerError(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn install_signal_handlers_does_not_panic() {
+        // We can't reliably synthesize SIGINT/SIGTERM in unit tests, so
+        // this just confirms the install call succeeds and the spawned
+        // task exits cleanly when the recorder is cancelled externally.
+        let r = TerminationRecorder::new();
+        r.install_signal_handlers().expect("install");
+        r.cancel(ProcessTerminationReason::Completed);
+        // Yield long enough for the spawned task to observe the cancel
+        // and exit. Test passes if nothing deadlocks or panics.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(r.intent().is_cancelled());
     }
 }

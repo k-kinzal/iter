@@ -3,9 +3,12 @@
 //!
 //! 1. [`ProcessSession`] — owns the proc directory and the
 //!    `Arc<ProcessStatusFile>` that every status writer routes through.
-//! 2. [`ShutdownController`] — single source of cancellation and the
-//!    `Option<ProcessTerminationReason>` slot that drives the terminal
-//!    status the runtime writes in `finalize`.
+//! 2. [`ShutdownIntent`] — the shared cancellation token handed to the
+//!    runner and any cancellation-aware downstream task. Classifying *why*
+//!    the run ended (`ProcessTerminationReason`) is the run record's
+//!    concern and lives with its operator (`iter_cli`'s
+//!    `process_lifecycle`), which derives the terminal status that
+//!    `finalize` writes.
 //! 3. [`LifecycleObserver`] — re-emits [`RunnerLifecycleEvent`] events as
 //!    `tracing::info!` records under
 //!    [`iter::lifecycle`](crate::process::observer::LIFECYCLE_TARGET);
@@ -48,10 +51,10 @@ use tracing::warn;
 use crate::log::OutputSink;
 use crate::process::error::ProcessError;
 use crate::process::id::ProcessId;
+use crate::process::interrupt::ShutdownIntent;
 use crate::process::log::{LogSender, ProcessOutput};
 use crate::process::observer::LifecycleObserver;
 use crate::process::session::ProcessSession;
-use crate::process::shutdown::{ProcessTerminationReason, ShutdownController};
 use crate::process::status::{ProcessStatus, TransitionResult};
 
 /// The four orchestrator pieces composed into one struct.
@@ -63,7 +66,7 @@ use crate::process::status::{ProcessStatus, TransitionResult};
 /// status and reports any best-effort errors.
 pub struct ProcessRuntime {
     session: Arc<ProcessSession>,
-    shutdown: ShutdownController,
+    shutdown: ShutdownIntent,
     observer: Arc<LifecycleObserver>,
     sink: Arc<dyn OutputSink>,
     log_sender: Option<LogSender>,
@@ -76,7 +79,7 @@ impl ProcessRuntime {
     /// observer Arc, and output sink are obtained through the accessors.
     pub fn new(
         session: Arc<ProcessSession>,
-        shutdown: ShutdownController,
+        shutdown: ShutdownIntent,
         observer: Arc<LifecycleObserver>,
         output: ProcessOutput,
     ) -> Self {
@@ -102,10 +105,10 @@ impl ProcessRuntime {
         self.session.id()
     }
 
-    /// Borrow the [`ShutdownController`]. Clone it (cheap) to hand
+    /// Borrow the [`ShutdownIntent`]. Clone it (cheap) to hand
     /// cancellation tokens to long-lived tasks.
     #[must_use]
-    pub fn shutdown(&self) -> &ShutdownController {
+    pub fn shutdown(&self) -> &ShutdownIntent {
         &self.shutdown
     }
 
@@ -136,11 +139,12 @@ impl ProcessRuntime {
     /// observer shutdown fail. Each best-effort failure is collected into
     /// the returned [`FinalizeReport`].
     ///
-    /// `reason` may be `None` when the run loop returned via an external
-    /// token cancellation that bypassed [`ShutdownController::cancel`];
-    /// that path is treated as `Completed` for accounting purposes but a
-    /// `tracing::warn!` is logged so the unusual exit is observable.
-    pub async fn finalize(self, reason: Option<ProcessTerminationReason>) -> FinalizeReport {
+    /// `target` is the terminal status the caller derived from the run's
+    /// termination classification (`ProcessTerminationReason`, owned by
+    /// `iter_cli`'s `process_lifecycle` per the rev17 §J1 table). The
+    /// runtime only owns the *transition* to it, including the
+    /// Initializing-fallback demotions in [`write_terminal`].
+    pub async fn finalize(self, target: ProcessStatus) -> FinalizeReport {
         let Self {
             session,
             shutdown: _shutdown,
@@ -173,10 +177,9 @@ impl ProcessRuntime {
         // finalize is called.
         drop(sink);
 
-        // 3. Resolve the terminal status from the recorded reason and
-        //    write it. Always attempt this — operator visibility into
-        //    record state is what justifies the whole subsystem.
-        let target = terminal_status_for(reason.as_ref());
+        // 3. Write the caller-derived terminal status. Always attempt
+        //    this — operator visibility into record state is what
+        //    justifies the whole subsystem.
         let (status_write, status_write_error) = match write_terminal(&session, target).await {
             Ok(t) => (Some(t), None),
             Err(e) => (None, Some(e)),
@@ -222,25 +225,6 @@ impl FinalizeReport {
         self.stdio_errors.is_empty()
             && self.observer_errors.is_empty()
             && self.status_write_error.is_none()
-    }
-}
-
-/// Map a [`ProcessTerminationReason`] to its terminal [`ProcessStatus`]
-/// per the rev17 §J1 table.
-///
-/// `None` reason (= external token cancelled the runner without going
-/// through [`ShutdownController::cancel`]) maps to `Stopped` so the
-/// record converges to a clean shape; the caller is expected to log at
-/// `warn!`.
-pub(crate) fn terminal_status_for(reason: Option<&ProcessTerminationReason>) -> ProcessStatus {
-    match reason {
-        Some(ProcessTerminationReason::Completed) | None => ProcessStatus::Stopped,
-        Some(ProcessTerminationReason::RunnerError(_) | ProcessTerminationReason::PanicCaught) => {
-            ProcessStatus::Failed
-        }
-        Some(ProcessTerminationReason::SignalTerm | ProcessTerminationReason::SignalInt) => {
-            ProcessStatus::Killed
-        }
     }
 }
 
@@ -363,36 +347,10 @@ mod tests {
         );
         ProcessRuntime::new(
             session,
-            ShutdownController::new(),
+            ShutdownIntent::new(),
             observer,
             ProcessOutput::noop(),
         )
-    }
-
-    #[test]
-    fn terminal_status_table_matches_rev17_j1() {
-        assert_eq!(
-            terminal_status_for(Some(&ProcessTerminationReason::Completed)),
-            ProcessStatus::Stopped
-        );
-        assert_eq!(
-            terminal_status_for(Some(&ProcessTerminationReason::RunnerError("boom".into()))),
-            ProcessStatus::Failed
-        );
-        assert_eq!(
-            terminal_status_for(Some(&ProcessTerminationReason::SignalTerm)),
-            ProcessStatus::Killed
-        );
-        assert_eq!(
-            terminal_status_for(Some(&ProcessTerminationReason::SignalInt)),
-            ProcessStatus::Killed
-        );
-        assert_eq!(
-            terminal_status_for(Some(&ProcessTerminationReason::PanicCaught)),
-            ProcessStatus::Failed
-        );
-        // None falls back to Completed/Stopped.
-        assert_eq!(terminal_status_for(None), ProcessStatus::Stopped);
     }
 
     #[tokio::test]
@@ -403,9 +361,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let runtime = build_runtime(&tmp).await;
         let id = runtime.id();
-        let report = runtime
-            .finalize(Some(ProcessTerminationReason::SignalTerm))
-            .await;
+        let report = runtime.finalize(ProcessStatus::Killed).await;
         let t = report.status_write.expect("transition recorded");
         assert_eq!(t.from, ProcessStatus::Initializing);
         assert_eq!(t.to, ProcessStatus::Killed);
@@ -424,21 +380,17 @@ mod tests {
     async fn finalize_writes_failed_from_initializing_for_runner_error() {
         let tmp = TempDir::new().unwrap();
         let runtime = build_runtime(&tmp).await;
-        let report = runtime
-            .finalize(Some(ProcessTerminationReason::RunnerError(
-                "runner broke".into(),
-            )))
-            .await;
+        let report = runtime.finalize(ProcessStatus::Failed).await;
         let t = report.status_write.expect("transition recorded");
         assert_eq!(t.to, ProcessStatus::Failed);
         assert!(report.is_clean());
     }
 
     #[tokio::test]
-    async fn finalize_treats_none_reason_as_stopped() {
+    async fn finalize_writes_stopped_after_running() {
         // Production happy-path: record advanced to Running by
-        // `locked_initial_write`, then finalized with reason=None
-        // (which terminal_status_for maps to Stopped).
+        // `locked_initial_write`, then finalized with the clean-exit
+        // target the operator derived (Stopped).
         let tmp = TempDir::new().unwrap();
         let runtime = build_runtime(&tmp).await;
         runtime
@@ -448,7 +400,7 @@ mod tests {
             .locked_initial_write(fake_identity(), runtime.session().paths().clone())
             .await
             .expect("locked_initial_write");
-        let report = runtime.finalize(None).await;
+        let report = runtime.finalize(ProcessStatus::Stopped).await;
         let t = report.status_write.expect("transition recorded");
         assert_eq!(t.from, ProcessStatus::Running);
         assert_eq!(t.to, ProcessStatus::Stopped);
@@ -460,11 +412,11 @@ mod tests {
         // ran, the record is still Initializing. The transition table
         // forbids Initializing → Stopped, so the runtime demotes the
         // target to Failed ("never started" cannot have "stopped
-        // cleanly"). Cancellation reasons (Killed) and RunnerError
-        // (Failed) already satisfy the table.
+        // cleanly"). Killed and Failed targets already satisfy the
+        // table.
         let tmp = TempDir::new().unwrap();
         let runtime = build_runtime(&tmp).await;
-        let report = runtime.finalize(None).await;
+        let report = runtime.finalize(ProcessStatus::Stopped).await;
         let t = report.status_write.expect("transition recorded");
         assert_eq!(t.from, ProcessStatus::Initializing);
         assert_eq!(t.to, ProcessStatus::Failed);
@@ -490,13 +442,11 @@ mod tests {
         );
         let runtime = ProcessRuntime::new(
             session.clone(),
-            ShutdownController::new(),
+            ShutdownIntent::new(),
             observer,
             ProcessOutput::noop(),
         );
-        let r1 = runtime
-            .finalize(Some(ProcessTerminationReason::SignalInt))
-            .await;
+        let r1 = runtime.finalize(ProcessStatus::Killed).await;
         assert_eq!(r1.status_write.unwrap().to, ProcessStatus::Killed);
 
         // Second finalize on the same record.
@@ -507,13 +457,11 @@ mod tests {
         );
         let runtime2 = ProcessRuntime::new(
             session,
-            ShutdownController::new(),
+            ShutdownIntent::new(),
             observer2,
             ProcessOutput::noop(),
         );
-        let r2 = runtime2
-            .finalize(Some(ProcessTerminationReason::Completed))
-            .await;
+        let r2 = runtime2.finalize(ProcessStatus::Stopped).await;
         assert!(r2.status_write.is_none());
         match r2.status_write_error {
             Some(ProcessError::IllegalTransition {

@@ -6,7 +6,7 @@
 //! (iterfile, `--once` semantics, foreground vs adopted mode, metadata to
 //! record) and drives the runner to completion, finalising the process
 //! registry entry with a derived
-//! [`ProcessTerminationReason`](iter_core::process::ProcessTerminationReason).
+//! [`ProcessTerminationReason`](crate::process_lifecycle::ProcessTerminationReason).
 //!
 //! The Clap layer is responsible for argv parsing, default-name
 //! resolution, telemetry init, and translating its argument struct into
@@ -19,18 +19,21 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use iter_core::process::{AdoptError, ProcessError, ProcessId, ProcessRuntime, ShutdownController};
+use iter_core::process::{
+    AdoptError, ProcessError, ProcessId, ProcessRuntime, install_signal_handlers,
+};
 use iter_core::{BuilderError, RunnerExitError, RunnerSummary};
 use iter_language::{Diagnostic, Iterfile, parse};
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::arg::{ArgError, resolve_args};
 use crate::assembly::{self, AssemblyError};
 use crate::compose::{ComposeError, build_single_service, load_compose};
 use crate::process_lifecycle::{
-    self, AdoptedBootstrapError, LifecycleError, derive_finalize_reason,
-    leaves_record_non_terminal, log_finalize_report,
+    self, AdoptedBootstrapError, LifecycleError, TerminationRecorder, derive_finalize_reason,
+    leaves_record_non_terminal, log_finalize_report, terminal_status_for,
 };
 use crate::queue::QueueBuildError;
 
@@ -196,17 +199,17 @@ pub enum IterfileError {
 /// runner construction fails, or when the runner itself exits with an
 /// error.
 pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
-    let mut runtime: Option<ProcessRuntime> = match &input.mode {
+    let mut runtime: Option<(ProcessRuntime, TerminationRecorder)> = match &input.mode {
         RunMode::Adopted { process_id } => Some(bootstrap_adopted(*process_id).await?),
         RunMode::Foreground { .. } => None,
     };
 
     let run_result = run_inner(&input, &mut runtime).await;
 
-    let finalize_err = if let Some(rt) = runtime {
+    let finalize_err = if let Some((rt, termination)) = runtime {
         let failure_msg = run_result.as_ref().err().map(ToString::to_string);
-        let reason = derive_finalize_reason(failure_msg, rt.shutdown());
-        let report = rt.finalize(Some(reason)).await;
+        let reason = derive_finalize_reason(failure_msg, &termination);
+        let report = rt.finalize(terminal_status_for(&reason)).await;
         log_finalize_report(&report);
         report.status_write_error.filter(leaves_record_non_terminal)
     } else {
@@ -226,7 +229,7 @@ pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
 
 async fn run_inner(
     input: &RunInput,
-    runtime: &mut Option<ProcessRuntime>,
+    runtime: &mut Option<(ProcessRuntime, TerminationRecorder)>,
 ) -> Result<RunnerSummary, IterfileError> {
     let canonical_path =
         input
@@ -257,7 +260,7 @@ async fn run_inner(
                 .await?;
     }
 
-    if let Some(rt) = runtime.as_ref() {
+    if let Some((rt, _)) = runtime.as_ref() {
         builder = assembly::wire_builder_runtime(builder, rt);
         if let Some(sender) = rt.log_sender() {
             iter_core::process::install_global_log_sender(sender);
@@ -271,16 +274,16 @@ async fn run_inner(
         "starting runner"
     );
 
-    let runner_result = if let Some(rt) = runtime.as_ref() {
+    let runner_result = if let Some((rt, _)) = runtime.as_ref() {
         runner.run(rt.shutdown().token()).await
     } else {
         // Record-less foreground still needs SIGINT/SIGTERM to
-        // cancel the runner cleanly.
-        let shutdown = ShutdownController::new();
-        shutdown.install_signal_handlers().map_err(|source| {
+        // cancel the runner cleanly; the token-only interrupt is
+        // enough because there is no record to classify.
+        let cancel = install_signal_handlers(CancellationToken::new()).map_err(|source| {
             IterfileError::Lifecycle(LifecycleError::InstallSignalHandlers(source))
         })?;
-        runner.run(shutdown.token()).await
+        runner.run(cancel).await
     };
 
     match runner_result {
@@ -392,7 +395,9 @@ fn render_diagnostics(path: &Path, source: &str, diags: &[Diagnostic]) -> Iterfi
     }
 }
 
-async fn bootstrap_adopted(process_id: ProcessId) -> Result<ProcessRuntime, IterfileError> {
+async fn bootstrap_adopted(
+    process_id: ProcessId,
+) -> Result<(ProcessRuntime, TerminationRecorder), IterfileError> {
     process_lifecycle::bootstrap_adopted(process_id)
         .await
         .map_err(|err| match err {

@@ -28,7 +28,6 @@ pub(crate) mod adoption;
 pub(crate) mod bootstrap_token;
 pub(crate) mod name_lock;
 pub(crate) mod session;
-pub mod signal;
 pub(crate) mod status_file;
 
 // Public-facing modules. Each one carries a focused responsibility and is
@@ -43,11 +42,11 @@ pub mod metadata;
 pub mod observer;
 pub mod paths;
 pub mod pid_file;
+pub mod posix_signal;
 pub mod proc_info;
 pub mod record;
 pub mod registry;
 pub mod runtime;
-pub mod shutdown;
 pub mod spawner;
 pub mod status;
 
@@ -58,7 +57,9 @@ pub use error::{
 };
 pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
-pub use interrupt::{Interrupt, install_signal_handlers};
+pub use interrupt::{
+    Interrupt, ShutdownIntent, install_signal_handlers, spawn_interrupt_listener,
+};
 pub use log::{
     DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,
     install_global_log_sender, open_output,
@@ -79,8 +80,7 @@ pub use proc_info::{
 pub use record::{ProcessRecord, list_default, list_under};
 pub use registry::{MetadataDraft, ProcessRegistry, RegisterError};
 pub use runtime::{FinalizeReport, ProcessRuntime};
-pub use shutdown::{BoxError as ShutdownBoxError, ProcessTerminationReason, ShutdownController};
-pub use signal::{SignalDelivery, signal_identity, signal_pid_kill, signal_pid_term};
+pub use posix_signal::{PosixSignal, signal_identity, signal_pid_kill, signal_pid_term};
 pub use spawner::{
     DetachedSpec, SpawnError, UnmanagedChild, spawn_detached, spawn_unmanaged_detached,
 };

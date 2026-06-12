@@ -457,7 +457,7 @@ mod tests {
     async fn wire_builder_runtime_installs_observer_and_stdio_sink() {
         use chrono::Utc;
         use iter_core::process::{
-            LifecycleObserver, OutputPolicy, ProcessRegistry, ProcessRuntime, ShutdownController,
+            LifecycleObserver, OutputPolicy, ProcessRegistry, ProcessRuntime, ShutdownIntent,
             open_output,
         };
 
@@ -488,7 +488,7 @@ mod tests {
         let output = open_output(&OutputPolicy::LogOnly { log_dir })
             .await
             .expect("open_output");
-        let runtime = ProcessRuntime::new(session, ShutdownController::new(), observer, output);
+        let runtime = ProcessRuntime::new(session, ShutdownIntent::new(), observer, output);
 
         let builder = assemble_runner_builder(
             None,

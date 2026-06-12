@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use crate::{ProjectMember, build, find_active_orchestrator, list_project_members, load_compose};
 use iter_core::process::{
-    PidFileState, ProcessError, ProcessHandle, ProcessRegistry, SignalDelivery,
+    PidFileState, PosixSignal, ProcessError, ProcessHandle, ProcessRegistry,
     process_is_alive_with_start_time, signal_identity,
 };
 use tokio::time::sleep;
@@ -151,7 +151,7 @@ pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRunti
     } else {
         let orch = find_active_orchestrator(&slug)?;
         if let Some(active) = orch.as_ref() {
-            let signalled = signal_identity(&active.identity, SignalDelivery::Term)?;
+            let signalled = signal_identity(&active.identity, PosixSignal::Term)?;
             if signalled && !args.quiet {
                 cli_eprintln!(
                     "project {slug:?}: SIGTERM orchestrator pid {pid}",
@@ -416,7 +416,7 @@ async fn escalate_to_sigkill(
     }
 
     if let Some(identity) = orchestrator_identity {
-        match signal_identity(identity, SignalDelivery::Kill) {
+        match signal_identity(identity, PosixSignal::Kill) {
             Ok(true) => {
                 let pid = identity.pid.as_raw();
                 if !args.quiet {

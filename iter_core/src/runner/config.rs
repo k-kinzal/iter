@@ -87,8 +87,9 @@ pub struct RunnerPolicy {
 /// Reason the [`Runner`](super::Runner) loop terminated.
 ///
 /// Renamed from the historical `TerminationReason` so it never collides
-/// with the Process-side
-/// [`ProcessTerminationReason`](crate::process::ProcessTerminationReason).
+/// with the Process-side `ProcessTerminationReason` — the run record's
+/// termination classification, owned by its operator (`iter_cli`'s
+/// `process_lifecycle`).
 /// The two live at different layers and need different vocabularies:
 /// `RunnerTerminationReason` describes why the *Runner* loop stopped,
 /// `ProcessTerminationReason` describes why the *Process* (the OS-level

@@ -7,7 +7,7 @@ use std::path::Path;
 use iter_core::RunnerSummary;
 use iter_core::process::{
     DetachedSpec, ProcessHandle, ProcessId, ProcessRegistry, ProcessRuntime, ProcessStatus,
-    ProcessTerminationReason, spawn_detached,
+    spawn_detached,
 };
 use iter_language::TelemetryDef;
 use tokio::task::JoinSet;
@@ -19,8 +19,8 @@ use super::plan::{ComposePlan, ComposeService};
 use super::service::{CompletedTask, ComposeReport, FailurePolicy, OrchestratorContext};
 use super::supervisor;
 use crate::process_lifecycle::{
-    self, RunRecordMetadata, derive_finalize_reason, leaves_record_non_terminal,
-    log_finalize_report,
+    self, ProcessTerminationReason, RunRecordMetadata, TerminationRecorder,
+    derive_finalize_reason, leaves_record_non_terminal, log_finalize_report, terminal_status_for,
 };
 use crate::queue::queue_address;
 use crate::telemetry;
@@ -34,9 +34,8 @@ use crate::telemetry;
 /// `iter run` invocation does.
 ///
 /// Each service receives a cancellation token wired to both the parent
-/// `cancel` and the per-service [`ProcessRuntime`]'s shutdown
-/// controller, so OS signals delivered to either layer cascade
-/// correctly.
+/// `cancel` and the per-service [`ProcessRuntime`]'s shutdown intent,
+/// so OS signals delivered to either layer cascade correctly.
 ///
 /// `policy` controls how the function reacts to a task error:
 ///
@@ -351,10 +350,10 @@ async fn run_one_service(
 
     let run_result = run_one_service_inner(service, &parent_cancel, runtime.as_ref()).await;
 
-    let finalize_err = if let Some(rt) = runtime {
+    let finalize_err = if let Some((rt, termination)) = runtime {
         let failure_msg = run_result.as_ref().err().map(ToString::to_string);
-        let reason = derive_finalize_reason(failure_msg, rt.shutdown());
-        let report = rt.finalize(Some(reason)).await;
+        let reason = derive_finalize_reason(failure_msg, &termination);
+        let report = rt.finalize(terminal_status_for(&reason)).await;
         log_finalize_report(&report);
         report.status_write_error.filter(leaves_record_non_terminal)
     } else {
@@ -371,7 +370,7 @@ async fn run_one_service(
 async fn run_one_service_inner(
     service: ComposeService,
     parent_cancel: &CancellationToken,
-    runtime: Option<&ProcessRuntime>,
+    runtime: Option<&(ProcessRuntime, TerminationRecorder)>,
 ) -> Result<RunnerSummary, ServiceRunError> {
     let ComposeService {
         name,
@@ -380,20 +379,25 @@ async fn run_one_service_inner(
         mut builder,
     } = service;
 
-    if let Some(rt) = runtime {
+    if let Some((rt, _)) = runtime {
         builder = crate::assembly::wire_builder_runtime(builder, rt);
     }
     let runner = builder.build()?;
 
-    let run_token = if let Some(rt) = runtime {
-        let shutdown = rt.shutdown().clone();
-        let shutdown_token = shutdown.token();
+    let run_token = if let Some((rt, termination)) = runtime {
+        let termination = termination.clone();
+        let shutdown_token = rt.shutdown().token();
         let parent = parent_cancel.clone();
         let linker_token = shutdown_token.clone();
         tokio::spawn(async move {
             tokio::select! {
                 () = parent.cancelled() => {
-                    shutdown.cancel(ProcessTerminationReason::SignalTerm);
+                    // Every parent-orchestrated stop — compose `down`,
+                    // AbortAll after a sibling failure, orchestrator
+                    // shutdown — is deliberately classified as SignalTerm:
+                    // the record reads `Killed`, matching what the operator
+                    // observes for any externally initiated stop.
+                    termination.cancel(ProcessTerminationReason::SignalTerm);
                 }
                 () = linker_token.cancelled() => {}
             }
