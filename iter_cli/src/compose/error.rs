@@ -9,8 +9,8 @@ use thiserror::Error;
 use iter_core::process::{ProcessError, ProcessStatus, SpawnError};
 
 use crate::arg::ArgError;
-use crate::assembly::AssemblyError;
 use crate::queue::QueueBuildError;
+use crate::start::StartError;
 
 /// Errors produced while loading or building a `compose.iter` file.
 #[derive(Debug, Error)]
@@ -82,21 +82,21 @@ pub enum ComposeError {
         #[source]
         source: ArgError,
     },
-    /// Runner-builder assembly (agent, prompt, or event handler) for a
+    /// Building the runner builder (agent, prompt, or event handler) for a
     /// service failed.
     #[error("building service `{service}`: {source}")]
-    Assembly {
+    Start {
         /// Service name.
         service: String,
-        /// Underlying assembly error.
+        /// Underlying start error.
         #[source]
-        source: AssemblyError,
+        source: StartError,
     },
     /// A `--service NAME` selector named a service that does not exist
     /// in the compose file.
     #[error("compose file has no service named `{0}`")]
     UnknownService(String),
-    /// `RunnerBuilder::build` rejected the assembled configuration.
+    /// `RunnerBuilder::build` rejected the wired configuration.
     #[error("building service `{service}`: {source}")]
     Builder {
         /// Service name.
@@ -235,7 +235,7 @@ pub enum ServiceRunError {
     /// Foreground process registry bootstrap failed.
     #[error(transparent)]
     Lifecycle(#[from] crate::process_lifecycle::LifecycleError),
-    /// `RunnerBuilder::build` rejected the assembled configuration at
+    /// `RunnerBuilder::build` rejected the wired configuration at
     /// run time (after observer wiring).
     #[error(transparent)]
     Builder(#[from] BuilderError),

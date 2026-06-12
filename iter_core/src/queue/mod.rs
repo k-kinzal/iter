@@ -41,9 +41,11 @@
 //!   only be built from the queue declaration, never connected from a
 //!   [`QueueDescriptor`].
 
-pub mod inner;
+// Defining module named for the concept it defines — the path echo is deliberate.
+#[allow(clippy::module_inception)]
+pub mod queue;
 
-pub use inner::Queue;
+pub use queue::Queue;
 
 pub mod error;
 

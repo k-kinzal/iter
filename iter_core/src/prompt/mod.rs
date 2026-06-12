@@ -17,7 +17,9 @@
 
 pub mod error;
 pub mod guard;
-pub mod inner;
+// Defining module named for the concept it defines — the path echo is deliberate.
+#[allow(clippy::module_inception)]
+pub mod prompt;
 pub mod selector;
 pub mod template;
 
@@ -26,6 +28,6 @@ mod test_helpers;
 
 pub use error::SelectorError;
 pub use guard::{CmpOp, IterationField, PromptGuard};
-pub use inner::Prompt;
+pub use prompt::Prompt;
 pub use selector::PromptSelector;
 pub use template::PromptTemplate;

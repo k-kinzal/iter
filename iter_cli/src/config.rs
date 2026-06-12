@@ -1,4 +1,4 @@
-//! `build_runner_config` — translate the Iterfile's `runner` section and the
+//! `runner_policy_from_def` — translate the Iterfile's `runner` section and the
 //! CLI-supplied `--once` flag into a [`RunnerPolicy`].
 //!
 //! The iter DSL has no termination-condition clause: the Runner's loop is
@@ -29,7 +29,7 @@ use iter_language::{RunnerDef, SignalAcquisition as DslSignalAcquisition};
 /// violation that the semantic layer (`iter_language::semantic::runner`)
 /// catches before lowering. See the inline comment for the rationale.
 #[must_use]
-pub fn build_runner_config(runner: &RunnerDef, once: bool) -> RunnerPolicy {
+pub fn runner_policy_from_def(runner: &RunnerDef, once: bool) -> RunnerPolicy {
     RunnerPolicy {
         once,
         continue_on_error: runner.continue_on_error,
@@ -81,28 +81,28 @@ mod tests {
     #[test]
     fn once_flag_propagates() {
         let decl = test_runner(false, DslSignalAcquisition::Wait, None);
-        let config = build_runner_config(&decl, true);
+        let config = runner_policy_from_def(&decl, true);
         assert!(config.once);
     }
 
     #[test]
     fn continue_on_error_is_plumbed_through_when_false() {
         let decl = test_runner(false, DslSignalAcquisition::Wait, None);
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert!(!config.continue_on_error);
     }
 
     #[test]
     fn continue_on_error_is_plumbed_through_when_true() {
         let decl = test_runner(true, DslSignalAcquisition::Wait, None);
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert!(config.continue_on_error);
     }
 
     #[test]
     fn wait_behavior_lowers_to_wait() {
         let decl = test_runner(false, DslSignalAcquisition::Wait, None);
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert_eq!(config.behavior, SignalAcquisition::Wait);
     }
 
@@ -113,7 +113,7 @@ mod tests {
             DslSignalAcquisition::Synthesize { delay_secs: None },
             None,
         );
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert_eq!(
             config.behavior,
             SignalAcquisition::Synthesize { delay: None }
@@ -129,7 +129,7 @@ mod tests {
             },
             None,
         );
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert_eq!(
             config.behavior,
             SignalAcquisition::Synthesize {
@@ -141,21 +141,21 @@ mod tests {
     #[test]
     fn iteration_timeout_none_lowers_to_none() {
         let decl = test_runner(true, DslSignalAcquisition::Wait, None);
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert_eq!(config.iteration_timeout, None);
     }
 
     #[test]
     fn iteration_timeout_some_lowers_to_duration() {
         let decl = test_runner(true, DslSignalAcquisition::Wait, Some(900));
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert_eq!(config.iteration_timeout, Some(Duration::from_secs(900)));
     }
 
     #[test]
     fn iteration_timeout_large_value_preserved() {
         let decl = test_runner(true, DslSignalAcquisition::Wait, Some(3_600_000));
-        let config = build_runner_config(&decl, false);
+        let config = runner_policy_from_def(&decl, false);
         assert_eq!(
             config.iteration_timeout,
             Some(Duration::from_secs(3_600_000))

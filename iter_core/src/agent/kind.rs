@@ -20,8 +20,8 @@
 /// policy without downcasting.
 ///
 /// This is **not** an `Agent`: it neither runs nor dispatches. It is the
-/// bridge between the run-time trait object and the sandbox layer's
-/// per-kind profile match.
+/// discriminant the sandbox layer matches on to give the run-time trait
+/// object its per-kind profile.
 ///
 /// The set is deliberately **closed** — not `#[non_exhaustive]` — mirroring
 /// the language-layer [`AgentDef`](iter_language::AgentDef). A closed enum is

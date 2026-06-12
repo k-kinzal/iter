@@ -31,10 +31,10 @@ use crate::process::id::ProcessId;
 use crate::process::paths::ProcPaths;
 #[cfg(unix)]
 use crate::process::pid_file::PidFileState;
+use crate::process::posix_signal::{self, PosixSignal};
 use crate::process::proc_info::process_is_alive_with_start_time;
 use crate::process::record::ProcessRecord;
 use crate::process::session::ProcessSession;
-use crate::process::posix_signal::{self, PosixSignal};
 use crate::process::status::{ProcessStatus, TransitionResult};
 use crate::process::status_file::ProcessStatusFile;
 

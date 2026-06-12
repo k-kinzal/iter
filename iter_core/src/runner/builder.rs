@@ -88,11 +88,11 @@ impl RunnerBuilder {
     /// The supply yields a `Box<dyn Workspace>` so the runtime workspace axis
     /// is a trait object (R18); the closed set of workspace kinds lives at the
     /// definition layer, not here.
-    pub fn workspaces<F>(mut self, factory: F) -> Self
+    pub fn workspaces<F>(mut self, supply: F) -> Self
     where
         F: Fn() -> Box<dyn Workspace> + Send + Sync + 'static,
     {
-        self.workspaces = Some(Arc::new(factory));
+        self.workspaces = Some(Arc::new(supply));
         self
     }
 

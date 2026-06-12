@@ -89,8 +89,8 @@ impl ShutdownIntent {
 
     /// Build an intent around a pre-existing [`CancellationToken`].
     ///
-    /// Useful when the caller already owns a token (for example because
-    /// it bridges another subsystem) and wants the intent to share it
+    /// Useful when the caller already owns a token (for example one
+    /// shared with another subsystem) and wants the intent to share it
     /// rather than introducing a second one.
     #[must_use]
     pub fn with_token(cancel: CancellationToken) -> Self {

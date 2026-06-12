@@ -65,11 +65,13 @@
 
 pub mod drivers;
 
+// Defining module named for the concept it defines — the path echo is deliberate.
+#[allow(clippy::module_inception)]
+pub mod agent;
 pub(crate) mod cli_json;
 pub mod command_path;
 pub mod error;
 mod hook_install;
-pub mod inner;
 pub mod kind;
 pub mod mode;
 pub(crate) mod process;
@@ -80,6 +82,7 @@ pub(crate) mod session;
 #[cfg(test)]
 mod testutil;
 
+pub use agent::{Agent, AgentInvocation, run_with_timeout};
 pub use drivers::antigravity::AntigravityAgent;
 pub use drivers::claude::ClaudeAgent;
 pub use drivers::cline::ClineAgent;
@@ -94,7 +97,6 @@ pub use drivers::hermes::HermesAgent;
 pub use drivers::noop::NoopAgent;
 pub use drivers::opencode::OpenCodeAgent;
 pub use error::AgentError;
-pub use inner::{Agent, AgentInvocation, run_with_timeout};
 pub use kind::AgentKind;
 pub use mode::AgentMode;
 pub use router::{AgentRouter, RoutingStrategy};

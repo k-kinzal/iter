@@ -54,7 +54,7 @@ Lines that fail to parse as JSON are logged and skipped; the command is not kill
 
 ## Examples
 
-### Bridge to an external NDJSON line feed
+### Connect to an external NDJSON line feed
 
 ```hcl
 queue shell {

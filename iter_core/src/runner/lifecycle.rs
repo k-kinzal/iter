@@ -18,7 +18,7 @@
 //!   `iter::lifecycle`).
 //!
 //! Neither stream is a projection of the other. Shared fields may be
-//! assembled from the same source values inside the runner, but the two
+//! derived from the same source values inside the runner, but the two
 //! streams are free to evolve independently. Adding a user-only hook
 //! event does not require a placeholder variant in `RunnerLifecycleEvent`,
 //! and adding a system-only bootstrap record does not require a variant

@@ -6,7 +6,7 @@ use iter_language::{InlineService, Iterfile, QueueDef, ServiceSource, parse};
 
 use super::error::ComposeError;
 use super::plan::{ComposeService, lookup_queue};
-use crate::assembly;
+use crate::start;
 use iter_core::Queue;
 
 pub(super) fn build_service(
@@ -91,13 +91,12 @@ fn build_service_from_root(
         });
     }
 
-    let builder =
-        assembly::assemble_from_root(root, &runner.node, Some(queue), once).map_err(|source| {
-            ComposeError::Assembly {
-                service: name.to_owned(),
-                source,
-            }
-        })?;
+    let builder = start::runner_builder_from_root(root, &runner.node, Some(queue), once).map_err(
+        |source| ComposeError::Start {
+            service: name.to_owned(),
+            source,
+        },
+    )?;
 
     Ok(ComposeService {
         name: name.to_string(),
@@ -138,9 +137,9 @@ fn build_service_from_inline(
     // service prompts are always inline literals — the semantic analyzer
     // rejects named prompt references in inline runners — so the named-prompt
     // resolution set is empty here.
-    let prompts = assembly::build_prompt_decls_from_expr_pub(&runner_decl.prompt, &[]);
+    let prompts = start::prompt_defs_from_expr(&runner_decl.prompt, &[]);
 
-    let builder = assembly::assemble_runner_builder(
+    let builder = start::runner_builder_from_plan(
         Some(queue),
         workspace_decl,
         agent_decl,
@@ -149,7 +148,7 @@ fn build_service_from_inline(
         &runner_decl.events,
         once,
     )
-    .map_err(|source| ComposeError::Assembly {
+    .map_err(|source| ComposeError::Start {
         service: name.to_owned(),
         source,
     })?;

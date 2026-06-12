@@ -31,7 +31,6 @@ mod tracing_preferences;
 // its concept name; within the CLI this stays a module boundary.
 mod agent;
 mod arg;
-mod assembly;
 mod compose;
 mod config;
 mod discovery;
@@ -44,10 +43,10 @@ mod prompt;
 mod queue;
 mod secrets;
 mod shell_action;
+mod start;
 mod workspace;
 
 pub use agent::agent_from_def;
-pub use assembly::AssemblyError;
 pub use compose::{
     CompletedTask, ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,
     LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME,
@@ -55,7 +54,7 @@ pub use compose::{
     TriggerRunError, TriggerStatus, build, is_compose_filename, load_compose, read_trigger_status,
     run, spawn_targeted_service, trigger_state_dir, trigger_state_root,
 };
-pub use config::build_runner_config;
+pub use config::runner_policy_from_def;
 pub use discovery::{
     ActiveOrchestrator, DiscoveryError, ProjectMember, find_active_orchestrator,
     list_all_members_by_project, list_project_members, open_default_registry,
@@ -67,10 +66,11 @@ pub use process_lifecycle::{
 };
 pub use project::{ENV_PROJECT_NAME, ProjectSlugError, SlugValidationError, project_slug};
 pub use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
-pub use prompt::{build_prompt_selector, build_prompt_selector_from_prompts};
-pub use queue::{QueueBuildError, build_queue, queue_address};
+pub use prompt::{build_prompt_selector, prompt_selector_from_defs};
+pub use queue::{QueueBuildError, queue_address, queue_from_def};
 pub use secrets::resolve_secret;
-pub use workspace::build_workspace_factory;
+pub use start::StartError;
+pub use workspace::workspaces_from_def;
 
 use std::collections::BTreeMap;
 use std::io;

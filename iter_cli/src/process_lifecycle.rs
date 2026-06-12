@@ -508,7 +508,9 @@ pub fn derive_finalize_reason(
         // external clone of the token was cancelled directly. The runner
         // result still classifies the exit correctly, but surface the
         // unusual path.
-        warn!("shutdown intent fired without a recorded reason; classifying from the runner result");
+        warn!(
+            "shutdown intent fired without a recorded reason; classifying from the runner result"
+        );
     }
     match runner_failure_message {
         None => ProcessTerminationReason::Completed,

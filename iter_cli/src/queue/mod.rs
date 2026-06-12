@@ -1,11 +1,11 @@
-//! The `build_queue` builder — a queue **definition** becomes a runtime
+//! `queue_from_def` — a queue **definition** becomes a runtime
 //! `Arc<dyn Queue>`.
 //!
 //! This is "made from the full definition": every backend (including `shell`
 //! and `sqs`, which carry scripts / structured config a URL cannot) is built
 //! here from its [`QueueDef`]. The address/descriptor-connectable subset has a
-//! second path through [`iter_core::queue::connect`]; [`queue_address`] is the
-//! definition-side bridge onto that vocabulary.
+//! second path through [`iter_core::queue::connect`]; [`queue_address`] maps
+//! the definition into that vocabulary.
 
 mod sqs;
 
@@ -90,7 +90,7 @@ impl QueueBuildError {
 ///
 /// Returns [`QueueBuildError`] when the underlying constructor fails (e.g. an
 /// invalid queue directory or a malformed Redis URL).
-pub fn build_queue(decl: &QueueDef) -> Result<Arc<dyn Queue>, QueueBuildError> {
+pub fn queue_from_def(decl: &QueueDef) -> Result<Arc<dyn Queue>, QueueBuildError> {
     match decl {
         QueueDef::Memory => Ok(Arc::new(InMemoryQueue::new())),
         QueueDef::File { path } => {
@@ -263,9 +263,9 @@ pub(super) fn opt_u32(v: Option<i64>) -> Option<u32> {
 /// Run a single async future to completion on a temporary current-thread
 /// tokio runtime.
 ///
-/// `build_queue` is sync but several queue backends expose async constructors
+/// `queue_from_def` is sync but several queue backends expose async constructors
 /// (Redis `connect`, AWS SDK `from_env`, Pub/Sub channel handshake, ...).
-/// Spinning up a one-shot runtime keeps `build_queue`'s signature simple and
+/// Spinning up a one-shot runtime keeps `queue_from_def`'s signature simple and
 /// matches how the rest of the CLI bootstrap (sync `main` calling into async
 /// init helpers) is structured.
 fn run_async<F: Future>(fut: F) -> F::Output
@@ -284,8 +284,8 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn build_queue_memory_returns_usable_queue() {
-        let q = build_queue(&QueueDef::Memory).expect("memory");
+    async fn queue_from_def_memory_returns_usable_queue() {
+        let q = queue_from_def(&QueueDef::Memory).expect("memory");
         // It is a working in-process queue: enqueue succeeds.
         q.enqueue(
             iter_core::signal::Signal::new(iter_core::signal::Metadata::new()),
@@ -340,8 +340,8 @@ mod tests {
     }
 
     #[test]
-    fn build_queue_redis_invalid_url_errors() {
-        let err = build_queue(&QueueDef::Redis {
+    fn queue_from_def_redis_invalid_url_errors() {
+        let err = queue_from_def(&QueueDef::Redis {
             url: "not-a-real-url".into(),
             key: "iter:test".into(),
         })

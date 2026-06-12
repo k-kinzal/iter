@@ -64,7 +64,7 @@ When `extract` is omitted, iter inspects stdout:
 ### Migration from `extract = jq(...)`
 
 Earlier versions accepted `extract = jq("<query>")` and shelled out to the
-external `jq` binary. iter no longer ships that path — the engine has no
+external `jq` binary. iter no longer ships that path — core has no
 hard dependency on `jq`.
 
 Replace it by moving the JSON shaping into `run` (which is already passed

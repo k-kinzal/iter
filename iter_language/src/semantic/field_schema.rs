@@ -1,4 +1,4 @@
-//! Generic field-bag helpers shared by every per-kind lowerer.
+//! The generic string-map field intake shared by every per-kind lowerer.
 
 use std::collections::BTreeMap;
 

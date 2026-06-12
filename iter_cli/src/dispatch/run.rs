@@ -105,11 +105,11 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         | IterfileError::QueueBuild(_)
         | IterfileError::Runner(_)
         | IterfileError::Lifecycle(_)
-        | IterfileError::Assembly(crate::AssemblyError::QueueBuild(_)) => exit_codes::RUNTIME,
+        | IterfileError::Start(crate::StartError::QueueBuild(_)) => exit_codes::RUNTIME,
         IterfileError::Parse { .. }
         | IterfileError::MissingSection(_)
         | IterfileError::Arg(_)
-        | IterfileError::Assembly(_)
+        | IterfileError::Start(_)
         | IterfileError::Builder(_)
         | IterfileError::Compose(_)
         | IterfileError::UnknownService { .. } => exit_codes::CONFIG,

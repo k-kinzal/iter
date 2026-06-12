@@ -24,7 +24,7 @@ use iter_language::{
     PromptGuard as LangPromptGuard, Spanned,
 };
 
-/// Errors produced while assembling a [`PromptSelector`] from prompt
+/// Errors produced while building a [`PromptSelector`] from prompt
 /// declarations.
 #[derive(Debug, thiserror::Error)]
 pub enum PromptBuildError {
@@ -54,7 +54,7 @@ pub enum PromptBuildError {
 ///
 /// Extracts the prompt expression from the first runner and converts
 /// named prompt references into resolved `PromptDef` entries for the
-/// existing `build_prompt_selector_from_prompts` pipeline.
+/// existing `prompt_selector_from_defs` pipeline.
 ///
 /// # Errors
 ///
@@ -62,9 +62,8 @@ pub enum PromptBuildError {
 /// * The Iterfile declares more than one unguarded prompt.
 pub fn build_prompt_selector(iterfile: &Iterfile) -> Result<PromptSelector, PromptBuildError> {
     let runner = iterfile.runners.first().ok_or(PromptBuildError::Missing)?;
-    let prompts =
-        crate::assembly::build_prompt_decls_from_expr_pub(&runner.node.prompt, &iterfile.prompts);
-    build_prompt_selector_from_prompts(&prompts)
+    let prompts = crate::start::prompt_defs_from_expr(&runner.node.prompt, &iterfile.prompts);
+    prompt_selector_from_defs(&prompts)
 }
 
 /// Build the [`PromptSelector`] for a flat slice of prompt declarations.
@@ -75,7 +74,7 @@ pub fn build_prompt_selector(iterfile: &Iterfile) -> Result<PromptSelector, Prom
 ///
 /// * `prompts` is empty.
 /// * More than one entry is unguarded.
-pub fn build_prompt_selector_from_prompts(
+pub fn prompt_selector_from_defs(
     prompts: &[Spanned<PromptDef>],
 ) -> Result<PromptSelector, PromptBuildError> {
     if prompts.is_empty() {
@@ -199,14 +198,14 @@ mod tests {
     #[test]
     fn missing_prompt_errors() {
         let prompts: Vec<Spanned<PromptDef>> = vec![];
-        let err = build_prompt_selector_from_prompts(&prompts).expect_err("must fail");
+        let err = prompt_selector_from_defs(&prompts).expect_err("must fail");
         assert!(err.to_string().contains("missing a `prompt`"));
     }
 
     #[test]
     fn single_unguarded_prompt_becomes_default() {
         let prompts = vec![prompt("hello {{signal.id}}", None)];
-        let selector = build_prompt_selector_from_prompts(&prompts).expect("build");
+        let selector = prompt_selector_from_defs(&prompts).expect("build");
         let signal = signal_with_kind("anything");
         let rendered = selector.render(&signal, &iter_ctx()).expect("render");
         assert!(rendered.as_str().starts_with("hello "));
@@ -231,7 +230,7 @@ mod tests {
             ),
         ];
 
-        let selector = build_prompt_selector_from_prompts(&prompts).expect("build");
+        let selector = prompt_selector_from_defs(&prompts).expect("build");
         assert_eq!(
             selector
                 .render(&signal_with_kind("issue"), &iter_ctx())
@@ -261,7 +260,7 @@ mod tests {
             prompt("default path", None),
         ];
 
-        let selector = build_prompt_selector_from_prompts(&prompts).expect("build");
+        let selector = prompt_selector_from_defs(&prompts).expect("build");
         assert_eq!(
             selector
                 .render(&signal_with_kind("urgent"), &iter_ctx())
@@ -281,7 +280,7 @@ mod tests {
     #[test]
     fn multiple_unguarded_prompts_error() {
         let prompts = vec![prompt("a", None), prompt("b", None)];
-        let err = build_prompt_selector_from_prompts(&prompts).expect_err("must fail");
+        let err = prompt_selector_from_defs(&prompts).expect_err("must fail");
         let msg = err.to_string();
         assert!(
             msg.contains("more than one unguarded"),
@@ -311,7 +310,7 @@ mod tests {
             )),
         )];
 
-        let selector = build_prompt_selector_from_prompts(&prompts).expect("build");
+        let selector = prompt_selector_from_defs(&prompts).expect("build");
         // kind=issue: And(Eq(issue), Or(Neq(ci_fix)=true, Eq(urgent)=false)) = true
         assert_eq!(
             selector

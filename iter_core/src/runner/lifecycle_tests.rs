@@ -306,13 +306,13 @@ fn make_failing_teardown_provider() -> (
 ) {
     let teardown_calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&teardown_calls);
-    let factory = move || -> Box<dyn Workspace> {
+    let supply = move || -> Box<dyn Workspace> {
         Box::new(FailingTeardownWorkspace {
             path: PathBuf::from("/tmp/iter-runner-test"),
             teardown_calls: Arc::clone(&counter),
         })
     };
-    (factory, teardown_calls)
+    (supply, teardown_calls)
 }
 
 fn make_failing_setup_provider() -> (
@@ -321,13 +321,13 @@ fn make_failing_setup_provider() -> (
 ) {
     let teardown_calls = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&teardown_calls);
-    let factory = move || -> Box<dyn Workspace> {
+    let supply = move || -> Box<dyn Workspace> {
         Box::new(FailingSetupWorkspace {
             path: PathBuf::from("/tmp/iter-runner-test"),
             teardown_calls: Arc::clone(&counter),
         })
     };
-    (factory, teardown_calls)
+    (supply, teardown_calls)
 }
 
 fn count_runner_starting(events: &[HookEvent]) -> usize {

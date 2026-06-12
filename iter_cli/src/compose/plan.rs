@@ -14,7 +14,7 @@ use super::error::ComposeError;
 use super::flatten::{FlattenedPlan, flatten_composes};
 use super::service_build::build_service;
 use super::trigger::{ComposeTrigger, build_trigger};
-use crate::queue::build_queue;
+use crate::queue::queue_from_def;
 use iter_core::Queue;
 
 pub(crate) struct ComposeService {
@@ -164,7 +164,7 @@ pub fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, Compose
     let mut queues: BTreeMap<String, Arc<dyn Queue>> = BTreeMap::new();
     for spanned in &flat.queues {
         let NamedQueue { name, decl } = &spanned.node;
-        let queue = build_queue(decl).map_err(|source| ComposeError::QueueBuild {
+        let queue = queue_from_def(decl).map_err(|source| ComposeError::QueueBuild {
             name: name.clone(),
             source,
         })?;
@@ -277,7 +277,7 @@ pub fn build_single_service(
         .find(|q| q.node.name == queue_name)
         .map(|q| q.node.decl.clone())
         .ok_or_else(|| ComposeError::UnknownQueue(queue_name.clone()))?;
-    let queue_arc = build_queue(&queue_decl).map_err(|source| ComposeError::QueueBuild {
+    let queue_arc = queue_from_def(&queue_decl).map_err(|source| ComposeError::QueueBuild {
         name: queue_name,
         source,
     })?;

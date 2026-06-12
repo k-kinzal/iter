@@ -18,7 +18,7 @@
 //! to kill. SIGKILL because the agent has finished; the TUI is waiting
 //! for human input.
 //!
-//! # Sidecar files
+//! # Stop-hook installation files
 //!
 //! Hook state lives under
 //! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`,
@@ -46,7 +46,7 @@ const HOOK_SCRIPT_REL: &str = "hooks/codex-loop-hook.sh";
 const BUNDLE_DIR: &str = ".iter-bundle";
 const HOOKS_BACKUP_NAME: &str = "hooks.json.bak";
 
-fn hook_script_body(user_hooks_sidecar: Option<&Path>) -> String {
+fn hook_script_body(user_hooks_script: Option<&Path>) -> String {
     use std::fmt::Write;
     let mut script = String::from(
         "#!/usr/bin/env bash\n\
@@ -58,8 +58,8 @@ fn hook_script_body(user_hooks_sidecar: Option<&Path>) -> String {
          set -euo pipefail\n",
     );
 
-    if let Some(sidecar) = user_hooks_sidecar {
-        let quoted = shell_single_quote(&sidecar.display().to_string());
+    if let Some(path) = user_hooks_script {
+        let quoted = shell_single_quote(&path.display().to_string());
         let _ = write!(
             script,
             "\n# Run user's pre-existing Stop Hook commands.\n\
@@ -113,7 +113,7 @@ impl HookBundle {
         hooks_slot.snapshot().await?;
 
         let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
-        let user_hooks_sidecar = extract_user_hooks(&hooks_path, "Stop", &hooks_dir).await?;
+        let user_hooks_script = extract_user_hooks(&hooks_path, "Stop", &hooks_dir).await?;
 
         let hook_cmd = hook_script
             .to_str()
@@ -145,7 +145,7 @@ impl HookBundle {
             .await
             .map_err(map_hook_io("write synthesized codex hooks.json"))?;
 
-        let body = hook_script_body(user_hooks_sidecar.as_deref());
+        let body = hook_script_body(user_hooks_script.as_deref());
         fs::write(&hook_script, body.as_bytes())
             .await
             .map_err(map_hook_io("write codex hook script"))?;

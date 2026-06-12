@@ -6,7 +6,7 @@
 //! that selects a concrete driver from a definition and boxes it; dispatch at
 //! run time is the vtable, not a match.
 //!
-//! The agent's sandbox profile is **not** assembled here: it is built from the
+//! The agent's sandbox profile is **not** built here: it is derived from the
 //! constructed agent by
 //! [`SandboxProfile::for_agent`](iter_core::SandboxProfile::for_agent), keyed
 //! off the agent's own [`AgentKind`](iter_core::agent::AgentKind), so the

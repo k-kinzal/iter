@@ -27,7 +27,7 @@
 //! task — the TUI is simply waiting for the next human input; there is
 //! nothing to gracefully shut down.
 //!
-//! # Sidecar files
+//! # Stop-hook installation files
 //!
 //! All per-isolation-key hook state lives under
 //! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`, never inside the
@@ -59,9 +59,9 @@ const HOOK_SCRIPT_REL: &str = "hooks/iter-stop-hook.sh";
 const BUNDLE_DIR: &str = ".iter-bundle";
 const SETTINGS_BACKUP_NAME: &str = "settings.json.bak";
 
-/// Build the bash hook script body. If `user_hooks_sidecar` is `Some`,
+/// Build the bash hook script body. If `user_hooks_script` is `Some`,
 /// the script sources it before killing the agent.
-fn hook_script_body(user_hooks_sidecar: Option<&Path>) -> String {
+fn hook_script_body(user_hooks_script: Option<&Path>) -> String {
     use std::fmt::Write;
     let mut script = String::from(
         "#!/usr/bin/env bash\n\
@@ -73,8 +73,8 @@ fn hook_script_body(user_hooks_sidecar: Option<&Path>) -> String {
          set -euo pipefail\n",
     );
 
-    if let Some(sidecar) = user_hooks_sidecar {
-        let quoted = shell_single_quote(&sidecar.display().to_string());
+    if let Some(path) = user_hooks_script {
+        let quoted = shell_single_quote(&path.display().to_string());
         let _ = write!(
             script,
             "\n# Run user's pre-existing Stop Hook commands.\n\
@@ -113,7 +113,7 @@ impl HookBundle {
     ///
     /// Creates `${cwd}/.claude/` and its required subdirectories, backs up
     /// any pre-existing `settings.json`, extracts user Stop hooks into a
-    /// sidecar under `~/.iter/projects/`, writes a fresh `settings.json`
+    /// preserved script under `~/.iter/projects/`, writes a fresh `settings.json`
     /// pointing at the iter hook script, and writes the script body with
     /// mode `0o755`.
     ///
@@ -139,9 +139,9 @@ impl HookBundle {
             BackupSlot::new(&bundle_dir, settings_path.clone(), SETTINGS_BACKUP_NAME);
         settings_slot.snapshot().await?;
 
-        // Extract any pre-existing user Stop hooks into a sidecar.
+        // Extract any pre-existing user Stop hooks into a preserved user-hooks script.
         let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
-        let user_hooks_sidecar = extract_user_hooks(&settings_path, "Stop", &hooks_dir).await?;
+        let user_hooks_script = extract_user_hooks(&settings_path, "Stop", &hooks_dir).await?;
 
         let hook_cmd = hook_script
             .to_str()
@@ -170,7 +170,7 @@ impl HookBundle {
             .await
             .map_err(map_hook_io("write synthesized settings.json"))?;
 
-        let body = hook_script_body(user_hooks_sidecar.as_deref());
+        let body = hook_script_body(user_hooks_script.as_deref());
         fs::write(&hook_script, body.as_bytes())
             .await
             .map_err(map_hook_io("write hook script"))?;
@@ -372,7 +372,7 @@ mod tests {
         let body = fs::read_to_string(&script).await.expect("read");
         assert!(
             body.contains("existing-stop-hooks.sh"),
-            "hook script must reference user hooks sidecar"
+            "hook script must reference the preserved user-hooks script"
         );
     }
 }

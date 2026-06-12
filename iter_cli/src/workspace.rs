@@ -1,4 +1,4 @@
-//! The per-iteration workspace supply: `build_workspace_factory` translates a
+//! The per-iteration workspace supply: `workspaces_from_def` translates a
 //! [`WorkspaceDef`] into a closure that mints a fresh `Box<dyn Workspace>` for
 //! every signal.
 //!
@@ -126,7 +126,7 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
 /// contract demanded by [`iter_core::Runner`].
 ///
 /// `profile` is the agent's lower bound (the OS access the agent needs to
-/// function), assembled by
+/// function), derived by
 /// [`SandboxProfile::for_agent`](iter_core::SandboxProfile::for_agent) and
 /// carried into every
 /// [`SandboxWorkspace`](iter_core::workspace::SandboxWorkspace) the supply
@@ -138,7 +138,7 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
 /// to [`Workspace::setup`] on the produced workspace, which is why this
 /// function is infallible.
 #[must_use = "the returned workspace supply closure is not useful unless called"]
-pub fn build_workspace_factory(
+pub fn workspaces_from_def(
     decl: &WorkspaceDef,
     profile: SandboxProfile,
 ) -> impl Fn() -> Box<dyn Workspace> + Send + Sync + use<> {
@@ -206,9 +206,9 @@ mod tests {
         let decl = WorkspaceDef::Local {
             base: "/tmp/iter-cli-test".into(),
         };
-        let factory = build_workspace_factory(&decl, SandboxProfile::default());
-        let a = factory();
-        let b = factory();
+        let supply = workspaces_from_def(&decl, SandboxProfile::default());
+        let a = supply();
+        let b = supply();
         // The supply yields trait objects; each carries the workspace-kind
         // label rather than a concrete type the caller can match on.
         assert_eq!(a.name(), "local");
@@ -233,8 +233,8 @@ mod tests {
             preserve_mtime: true,
             apply_back: sync_apply_back(),
         };
-        let factory = build_workspace_factory(&decl, SandboxProfile::default());
-        let w = factory();
+        let supply = workspaces_from_def(&decl, SandboxProfile::default());
+        let w = supply();
         assert_eq!(w.name(), "clone");
     }
 
@@ -248,8 +248,8 @@ mod tests {
             preserve_mtime: true,
             apply_back: sync_apply_back(),
         };
-        let factory = build_workspace_factory(&decl, SandboxProfile::default());
-        let w = factory();
+        let supply = workspaces_from_def(&decl, SandboxProfile::default());
+        let w = supply();
         assert_eq!(w.name(), "clone");
     }
 
@@ -269,8 +269,8 @@ mod tests {
                 allow_exec: Vec::new(),
             },
         };
-        let factory = build_workspace_factory(&decl, SandboxProfile::default());
-        let w = factory();
+        let supply = workspaces_from_def(&decl, SandboxProfile::default());
+        let w = supply();
         assert_eq!(w.name(), "sandbox");
     }
 }

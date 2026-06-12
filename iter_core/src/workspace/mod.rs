@@ -23,13 +23,15 @@
 pub mod apply_back;
 pub mod clone;
 pub mod error;
-pub mod inner;
 pub mod local;
 pub(crate) mod mirror;
 pub mod sandbox;
+// Defining module named for the concept it defines — the path echo is deliberate.
+#[allow(clippy::module_inception)]
+pub mod workspace;
 
 pub use error::WorkspaceError;
-pub use inner::Workspace;
+pub use workspace::Workspace;
 
 pub use apply_back::ApplyBackMode;
 pub use clone::{CloneSettings, CloneWorkspace, CloneWorkspaceError};

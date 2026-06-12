@@ -14,12 +14,14 @@
 
 pub mod defaults;
 pub mod id;
-pub mod inner;
 pub mod kind;
 pub mod metadata;
+// Defining module named for the concept it defines — the path echo is deliberate.
+#[allow(clippy::module_inception)]
+pub mod signal;
 
 pub use defaults::{MetadataPairError, base_metadata, parse_metadata_pair, parse_metadata_pairs};
 pub use id::SignalId;
-pub use inner::Signal;
 pub use kind::SignalKind;
 pub use metadata::{Metadata, MetadataError, MetadataKey, MetadataValue};
+pub use signal::Signal;

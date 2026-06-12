@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::{ComposeError, build_queue, is_compose_filename, load_compose};
+use crate::{ComposeError, is_compose_filename, load_compose, queue_from_def};
 use iter_core::Queue;
 use iter_core::queue::{Priority, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::{Metadata, MetadataError, MetadataKey, MetadataValue, Signal};
@@ -187,7 +187,7 @@ async fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdE
             return Err(EnqueueCmdError::QueueFlagNotApplicable);
         }
         let decl = load_iterfile_queue(&path)?;
-        Ok(build_queue(&decl).map_err(ComposeError::from)?)
+        Ok(queue_from_def(&decl).map_err(ComposeError::from)?)
     }
 }
 
@@ -249,7 +249,7 @@ fn resolve_from_compose(
         }
     };
 
-    Ok(build_queue(&decl.decl).map_err(ComposeError::from)?)
+    Ok(queue_from_def(&decl.decl).map_err(ComposeError::from)?)
 }
 
 fn find_named_queue<'a>(root: &'a Compose, name: &str) -> Option<&'a NamedQueue> {

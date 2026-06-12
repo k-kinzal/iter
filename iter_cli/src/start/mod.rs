@@ -1,11 +1,12 @@
-//! Shared runner-builder assembly used by both `iter run` (Iterfile)
-//! and `iter compose up` (compose services).
+//! The start phase shared by `iter run` (Iterfile) and `iter compose up`
+//! (compose services): bringing a plan to life.
 //!
 //! Both code paths translate language declarations into a
-//! [`RunnerBuilder`]. This module collects that translation into one
-//! place so the assembly logic — build agent, build workspace factory,
-//! compile prompts, wire event handlers — is expressed once and evolved
-//! in lockstep.
+//! [`RunnerBuilder`] — each of the Runner's collaborators is made from
+//! its definition by the per-noun `*_from_def` fns, and this module
+//! composes them in one place: make the agent, make the workspace
+//! supply, compile prompts, wire event handlers — expressed once and
+//! evolved in lockstep.
 
 use std::sync::Arc;
 
@@ -18,16 +19,16 @@ use iter_language::{
 use thiserror::Error;
 
 use crate::agent::{AgentBuildError, agent_from_def};
-use crate::config::build_runner_config;
+use crate::config::runner_policy_from_def;
 use crate::events::register_event_actions_from_events;
-use crate::prompt::{PromptBuildError, build_prompt_selector_from_prompts};
-use crate::workspace::build_workspace_factory;
+use crate::prompt::{PromptBuildError, prompt_selector_from_defs};
+use crate::workspace::workspaces_from_def;
 use iter_core::Queue;
 use iter_core::SandboxProfile;
 
-/// Errors produced by [`assemble_runner_builder`].
+/// Errors produced by [`runner_builder_from_plan`].
 #[derive(Debug, Error)]
-pub enum AssemblyError {
+pub enum StartError {
     /// Building the agent from its declaration failed.
     #[error(transparent)]
     AgentBuild(#[from] AgentBuildError),
@@ -46,7 +47,8 @@ pub enum AssemblyError {
     QueueBuild(Box<crate::queue::QueueBuildError>),
 }
 
-/// Assemble a [`RunnerBuilder`] from language declarations.
+/// Make a [`RunnerBuilder`] from the plan — the fully decided set of
+/// language declarations plus run-time inputs.
 ///
 /// This is the shared core of both the Iterfile and compose service
 /// build paths. It translates declarations into runtime objects and
@@ -59,9 +61,9 @@ pub enum AssemblyError {
 ///
 /// # Errors
 ///
-/// Returns [`AssemblyError`] when agent construction, prompt
+/// Returns [`StartError`] when agent construction, prompt
 /// compilation, or event-handler template compilation fails.
-pub(crate) fn assemble_runner_builder(
+pub(crate) fn runner_builder_from_plan(
     queue: Option<Arc<dyn Queue>>,
     workspace_decl: &WorkspaceDef,
     agent_decl: &AgentDef,
@@ -69,14 +71,14 @@ pub(crate) fn assemble_runner_builder(
     prompts: &[Spanned<PromptDef>],
     events: &[Spanned<EventHandlerDef>],
     once: bool,
-) -> Result<RunnerBuilder, AssemblyError> {
+) -> Result<RunnerBuilder, StartError> {
     let agent = agent_from_def(agent_decl)?;
-    // The sandbox profile is assembled from the built agent via an exhaustive
+    // The sandbox profile is derived from the built agent via an exhaustive
     // match over its `AgentKind` (see `SandboxProfile::for_agent`). Build it
     // before the agent is moved onto the builder below.
-    let workspaces = build_workspace_factory(workspace_decl, SandboxProfile::for_agent(&*agent));
-    let prompt_selector = build_prompt_selector_from_prompts(prompts)?;
-    let runner_config = build_runner_config(runner_decl, once);
+    let workspaces = workspaces_from_def(workspace_decl, SandboxProfile::for_agent(&*agent));
+    let prompt_selector = prompt_selector_from_defs(prompts)?;
+    let runner_config = runner_policy_from_def(runner_decl, once);
 
     let mut builder = Runner::builder()
         .workspaces(workspaces)
@@ -86,23 +88,23 @@ pub(crate) fn assemble_runner_builder(
     if let Some(queue) = queue {
         builder = builder.queue(queue);
     }
-    builder = register_event_actions_from_events(builder, events)
-        .map_err(AssemblyError::EventTemplate)?;
+    builder =
+        register_event_actions_from_events(builder, events).map_err(StartError::EventTemplate)?;
 
     Ok(builder)
 }
 
-/// Assemble a [`RunnerBuilder`] from the new-style `Iterfile` AST where
+/// Make a [`RunnerBuilder`] from the new-style `Iterfile` AST where
 /// runner declarations carry their own references.
 ///
 /// Resolves agent/workspace/queue names from the `Iterfile`'s definition
-/// vectors and delegates to the existing assembly logic.
-pub(crate) fn assemble_from_root(
+/// vectors and delegates to [`runner_builder_from_plan`].
+pub(crate) fn runner_builder_from_root(
     root: &iter_language::Iterfile,
     runner: &RunnerDef,
     queue_override: Option<Arc<dyn Queue>>,
     once: bool,
-) -> Result<RunnerBuilder, AssemblyError> {
+) -> Result<RunnerBuilder, StartError> {
     let agent_decl = root
         .agents
         .iter()
@@ -118,7 +120,7 @@ pub(crate) fn assemble_from_root(
         .expect("semantic analyzer validated workspace reference");
 
     // Build prompt declarations from the runner's PromptExpr + named prompts.
-    let prompts = build_prompt_decls_from_expr(&runner.prompt, &root.prompts);
+    let prompts = prompt_defs_from_expr(&runner.prompt, &root.prompts);
 
     // Use override queue or build from runner's queue reference.
     let queue = if let Some(q) = queue_override {
@@ -131,14 +133,14 @@ pub(crate) fn assemble_from_root(
             .map(|q| &q.node.decl)
             .expect("semantic analyzer validated queue reference");
         Some(
-            crate::queue::build_queue(queue_decl)
-                .map_err(|e| AssemblyError::QueueBuild(Box::new(e)))?,
+            crate::queue::queue_from_def(queue_decl)
+                .map_err(|e| StartError::QueueBuild(Box::new(e)))?,
         )
     } else {
         None
     };
 
-    assemble_runner_builder(
+    runner_builder_from_plan(
         queue,
         workspace_decl,
         agent_decl,
@@ -149,18 +151,9 @@ pub(crate) fn assemble_from_root(
     )
 }
 
-/// Convert a `PromptExpr` (from the new AST) back into `Vec<Spanned<PromptDef>>`
-/// for compatibility with the existing `build_prompt_selector_from_prompts`.
-///
-/// Public alias for use by `prompt.rs`.
-pub(crate) fn build_prompt_decls_from_expr_pub(
-    expr: &PromptExpr,
-    named_prompts: &[Spanned<NamedPrompt>],
-) -> Vec<Spanned<PromptDef>> {
-    build_prompt_decls_from_expr(expr, named_prompts)
-}
-
-fn build_prompt_decls_from_expr(
+/// Convert a `PromptExpr` (from the new AST) back into the
+/// `Vec<Spanned<PromptDef>>` shape that `prompt_selector_from_defs` consumes.
+pub(crate) fn prompt_defs_from_expr(
     expr: &PromptExpr,
     named_prompts: &[Spanned<NamedPrompt>],
 ) -> Vec<Spanned<PromptDef>> {
@@ -238,7 +231,7 @@ mod tests {
 
     fn minimal_workspace() -> WorkspaceDef {
         WorkspaceDef::Local {
-            base: "/tmp/assembly-test".into(),
+            base: "/tmp/start-test".into(),
         }
     }
 
@@ -277,8 +270,8 @@ mod tests {
     }
 
     #[test]
-    fn assemble_produces_buildable_runner_without_queue() {
-        let builder = assemble_runner_builder(
+    fn from_plan_produces_buildable_runner_without_queue() {
+        let builder = runner_builder_from_plan(
             None,
             &minimal_workspace(),
             &minimal_agent(),
@@ -287,15 +280,15 @@ mod tests {
             &[],
             false,
         )
-        .expect("assembly should succeed");
+        .expect("from_plan should succeed");
         builder.build().expect("builder should produce a runner");
     }
 
     #[test]
-    fn assemble_produces_buildable_runner_with_queue() {
-        let queue =
-            crate::queue::build_queue(&iter_language::QueueDef::Memory).expect("in-memory queue");
-        let builder = assemble_runner_builder(
+    fn from_plan_produces_buildable_runner_with_queue() {
+        let queue = crate::queue::queue_from_def(&iter_language::QueueDef::Memory)
+            .expect("in-memory queue");
+        let builder = runner_builder_from_plan(
             Some(queue),
             &minimal_workspace(),
             &minimal_agent(),
@@ -314,12 +307,12 @@ mod tests {
             &[],
             false,
         )
-        .expect("assembly should succeed");
+        .expect("from_plan should succeed");
         builder.build().expect("builder should produce a runner");
     }
 
     #[test]
-    fn assemble_wires_event_handlers() {
+    fn from_plan_wires_event_handlers() {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
@@ -327,7 +320,7 @@ mod tests {
             },
             0..0,
         )];
-        let builder = assemble_runner_builder(
+        let builder = runner_builder_from_plan(
             None,
             &minimal_workspace(),
             &minimal_agent(),
@@ -336,12 +329,12 @@ mod tests {
             &events,
             false,
         )
-        .expect("assembly should succeed with event handlers");
+        .expect("from_plan should succeed with event handlers");
         builder.build().expect("builder should produce a runner");
     }
 
     #[test]
-    fn assemble_rejects_invalid_event_template() {
+    fn from_plan_rejects_invalid_event_template() {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
@@ -349,7 +342,7 @@ mod tests {
             },
             0..0,
         )];
-        let result = assemble_runner_builder(
+        let result = runner_builder_from_plan(
             None,
             &minimal_workspace(),
             &minimal_agent(),
@@ -359,13 +352,13 @@ mod tests {
             false,
         );
         assert!(
-            matches!(result, Err(AssemblyError::EventTemplate(_))),
+            matches!(result, Err(StartError::EventTemplate(_))),
             "malformed template should fail with EventTemplate"
         );
     }
 
     #[test]
-    fn iterfile_and_compose_service_both_use_shared_assembly() {
+    fn iterfile_and_compose_service_both_use_shared_start_path() {
         let dir = tempfile::tempdir().expect("tmp");
 
         let iterfile_src = "\
@@ -379,10 +372,10 @@ mod tests {
               prompt = \"hello\"\n\
             }\n";
 
-        // Iterfile path: parse + assemble directly
+        // Iterfile path: parse and build the runner builder directly
         let root = iter_language::parse(iterfile_src).expect("parse iterfile");
         let queue =
-            crate::queue::build_queue(&iter_language::QueueDef::Memory).expect("memory queue");
+            crate::queue::queue_from_def(&iter_language::QueueDef::Memory).expect("memory queue");
         let runner = root.runners.first().expect("should have a runner");
         let agent_decl = root
             .agents
@@ -396,8 +389,8 @@ mod tests {
             .find(|w| w.node.name == runner.node.workspace)
             .map(|w| &w.node.decl)
             .expect("workspace");
-        let prompts = build_prompt_decls_from_expr(&runner.node.prompt, &root.prompts);
-        let iterfile_builder = assemble_runner_builder(
+        let prompts = prompt_defs_from_expr(&runner.node.prompt, &root.prompts);
+        let iterfile_builder = runner_builder_from_plan(
             Some(queue),
             workspace_decl,
             agent_decl,
@@ -406,7 +399,7 @@ mod tests {
             &runner.node.events,
             false,
         )
-        .expect("iterfile assembly");
+        .expect("iterfile start path");
         iterfile_builder
             .build()
             .expect("iterfile builder should produce a runner");
@@ -425,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_service_builds_through_shared_assembly() {
+    fn compose_service_builds_through_shared_start_path() {
         let dir = tempfile::tempdir().expect("tmp");
         std::fs::write(
             dir.path().join("Iterfile"),
@@ -490,7 +483,7 @@ mod tests {
             .expect("open_output");
         let runtime = ProcessRuntime::new(session, ShutdownIntent::new(), observer, output);
 
-        let builder = assemble_runner_builder(
+        let builder = runner_builder_from_plan(
             None,
             &minimal_workspace(),
             &minimal_agent(),
@@ -499,7 +492,7 @@ mod tests {
             &[],
             false,
         )
-        .expect("assembly");
+        .expect("from_plan");
 
         assert!(!builder.has_stdio_sink(), "no sink before wiring");
         assert!(!builder.has_observer(), "no observer before wiring");
@@ -511,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn iterfile_path_builds_through_shared_assembly() {
+    fn iterfile_path_builds_through_shared_start_path() {
         let iterfile_content = "\
             workspace local { base = \".\" }\n\
             agent claude { mode = print command = \"claude\" }\n\
@@ -537,9 +530,9 @@ mod tests {
             .find(|a| a.node.name == runner.node.agent)
             .map(|a| &a.node.decl)
             .expect("agent");
-        let prompts = build_prompt_decls_from_expr(&runner.node.prompt, &root.prompts);
+        let prompts = prompt_defs_from_expr(&runner.node.prompt, &root.prompts);
 
-        let builder = assemble_runner_builder(
+        let builder = runner_builder_from_plan(
             None,
             workspace_decl,
             agent_decl,
@@ -548,7 +541,7 @@ mod tests {
             &runner.node.events,
             false,
         )
-        .expect("assembly from parsed Iterfile");
+        .expect("builder from parsed Iterfile");
         builder.build().expect("builder should produce a runner");
     }
 }

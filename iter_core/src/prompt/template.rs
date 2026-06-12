@@ -9,7 +9,7 @@ use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
 use crate::template::{IterationRenderContext, Template, TemplateError};
 
-use super::inner::Prompt;
+use super::prompt::Prompt;
 
 /// A handlebars-style prompt template.
 ///

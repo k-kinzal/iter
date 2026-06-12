@@ -57,9 +57,7 @@ pub use error::{
 };
 pub use handle::{BOOTSTRAP_GRACE_ENV, ProcessHandle, bootstrap_grace};
 pub use id::{BootstrapToken, Pid, ProcessId};
-pub use interrupt::{
-    Interrupt, ShutdownIntent, install_signal_handlers, spawn_interrupt_listener,
-};
+pub use interrupt::{Interrupt, ShutdownIntent, install_signal_handlers, spawn_interrupt_listener};
 pub use log::{
     DEFAULT_LOG_BUFFER, LogSender, OutputPolicy, ProcessLogSink, ProcessOutput, global_log_sender,
     install_global_log_sender, open_output,
@@ -73,6 +71,7 @@ pub use pid_file::{
     CorruptKind, FileTypeName, PidFileState, ProcessIdentity, PublishError, PublishStep,
     SecurityKind,
 };
+pub use posix_signal::{PosixSignal, signal_identity, signal_pid_kill, signal_pid_term};
 pub use proc_info::{
     ProcessStartTime, current_identity, identity_for, pid_in_process_table,
     process_is_alive_with_start_time, process_start_time,
@@ -80,7 +79,6 @@ pub use proc_info::{
 pub use record::{ProcessRecord, list_default, list_under};
 pub use registry::{MetadataDraft, ProcessRegistry, RegisterError};
 pub use runtime::{FinalizeReport, ProcessRuntime};
-pub use posix_signal::{PosixSignal, signal_identity, signal_pid_kill, signal_pid_term};
 pub use spawner::{
     DetachedSpec, SpawnError, UnmanagedChild, spawn_detached, spawn_unmanaged_detached,
 };

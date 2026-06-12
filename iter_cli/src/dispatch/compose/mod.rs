@@ -321,7 +321,7 @@ pub(crate) fn compose_error_exit_code(e: &ComposeError) -> i32 {
         | ComposeError::BuildTargetHasQueue { .. }
         | ComposeError::ServiceMissingSection { .. }
         | ComposeError::ArgResolve { .. }
-        | ComposeError::Assembly { .. }
+        | ComposeError::Start { .. }
         | ComposeError::Builder { .. }
         | ComposeError::NoServices { .. }
         | ComposeError::CircularComposeImport { .. }

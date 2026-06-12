@@ -8,7 +8,7 @@ mod compose_resolve;
 mod compose_service;
 mod compose_trigger;
 mod event;
-mod field_helpers;
+mod field_schema;
 mod guard;
 mod prompt;
 mod queue;

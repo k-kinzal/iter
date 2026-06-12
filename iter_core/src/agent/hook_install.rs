@@ -268,10 +268,10 @@ pub(crate) async fn remove_if_exists(path: &Path, op: &'static str) -> Result<()
 }
 
 /// Read any user-registered hook commands from an agent's config file
-/// and write them to a sidecar script that the installed hook runs
+/// and write them to a preserved user-hooks script that the installed hook runs
 /// first.
 ///
-/// Returns the path of the written sidecar (for embedding in the
+/// Returns the path of the written script (for embedding in the
 /// installed hook script), or `None` if the user had no pre-existing
 /// hooks to preserve.
 ///
@@ -303,18 +303,18 @@ pub(crate) async fn extract_user_hooks(
         .await
         .map_err(map_hook_io("create workspace hook-installation directory"))?;
 
-    let sidecar = hooks_dir.join("existing-stop-hooks.sh");
+    let script_path = hooks_dir.join("existing-stop-hooks.sh");
     let mut script = String::from("#!/usr/bin/env bash\nset -euo pipefail\n");
     for cmd in &commands {
         script.push_str(cmd);
         script.push('\n');
     }
-    fs::write(&sidecar, script.as_bytes())
+    fs::write(&script_path, script.as_bytes())
         .await
-        .map_err(map_hook_io("write existing-stop-hooks.sh sidecar"))?;
-    make_executable(&sidecar).await?;
+        .map_err(map_hook_io("write existing-stop-hooks.sh"))?;
+    make_executable(&script_path).await?;
 
-    Ok(Some(sidecar))
+    Ok(Some(script_path))
 }
 
 /// Walk the config JSON and extract command strings from the hook event.
@@ -468,7 +468,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn extract_user_hooks_writes_sidecar_for_claude_shape() {
+    async fn extract_user_hooks_writes_script_for_claude_shape() {
         let tmp = TempDir::new().expect("tmp");
         let config = tmp.path().join("settings.json");
         let config_json = serde_json::json!({
@@ -492,14 +492,14 @@ mod tests {
             .await
             .expect("extract");
         assert!(result.is_some());
-        let sidecar = result.unwrap();
-        let body = fs::read_to_string(&sidecar).await.expect("read sidecar");
+        let script_path = result.unwrap();
+        let body = fs::read_to_string(&script_path).await.expect("read script");
         assert!(body.contains("echo user hook 1"));
         assert!(body.contains("echo user hook 2"));
     }
 
     #[tokio::test]
-    async fn extract_user_hooks_writes_sidecar_for_copilot_shape() {
+    async fn extract_user_hooks_writes_script_for_copilot_shape() {
         let tmp = TempDir::new().expect("tmp");
         let config = tmp.path().join("copilot-loop.json");
         let config_json = serde_json::json!({
@@ -518,8 +518,8 @@ mod tests {
             .await
             .expect("extract");
         assert!(result.is_some());
-        let sidecar = result.unwrap();
-        let body = fs::read_to_string(&sidecar).await.expect("read sidecar");
+        let script_path = result.unwrap();
+        let body = fs::read_to_string(&script_path).await.expect("read script");
         assert!(body.contains("./my-hook.sh"));
     }
 }

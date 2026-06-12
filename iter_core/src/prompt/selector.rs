@@ -6,7 +6,7 @@ use crate::signal::Signal;
 
 use super::error::SelectorError;
 use super::guard::PromptGuard;
-use super::inner::Prompt;
+use super::prompt::Prompt;
 use super::template::PromptTemplate;
 
 /// Selects and renders the appropriate [`PromptTemplate`] for a given

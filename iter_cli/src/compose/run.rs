@@ -19,8 +19,8 @@ use super::plan::{ComposePlan, ComposeService};
 use super::service::{CompletedTask, ComposeReport, FailurePolicy, OrchestratorContext};
 use super::supervisor;
 use crate::process_lifecycle::{
-    self, ProcessTerminationReason, RunRecordMetadata, TerminationRecorder,
-    derive_finalize_reason, leaves_record_non_terminal, log_finalize_report, terminal_status_for,
+    self, ProcessTerminationReason, RunRecordMetadata, TerminationRecorder, derive_finalize_reason,
+    leaves_record_non_terminal, log_finalize_report, terminal_status_for,
 };
 use crate::queue::queue_address;
 use crate::telemetry;
@@ -380,7 +380,7 @@ async fn run_one_service_inner(
     } = service;
 
     if let Some((rt, _)) = runtime {
-        builder = crate::assembly::wire_builder_runtime(builder, rt);
+        builder = crate::start::wire_builder_runtime(builder, rt);
     }
     let runner = builder.build()?;
 

@@ -193,7 +193,7 @@ impl ProcessStatusFile {
     /// Returns the post-reconcile [`ProcessStatus`]. Environmental I/O errors
     /// (`PermissionDenied`, `SecurityViolation`, transient/fatal `pid_file`
     /// I/O) are surfaced via `tracing::warn!` and leave the on-disk status
-    /// untouched until a richer `Diagnostic` plumbing lands.
+    /// untouched until a fuller `Diagnostic` path lands.
     pub async fn reconcile_under_lock(
         self: Arc<Self>,
         paths: Arc<ProcPaths>,

@@ -29,13 +29,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 use crate::arg::{ArgError, resolve_args};
-use crate::assembly::{self, AssemblyError};
 use crate::compose::{ComposeError, build_single_service, load_compose};
 use crate::process_lifecycle::{
     self, AdoptedBootstrapError, LifecycleError, TerminationRecorder, derive_finalize_reason,
     leaves_record_non_terminal, log_finalize_report, terminal_status_for,
 };
 use crate::queue::QueueBuildError;
+use crate::start::{self, StartError};
 
 pub use crate::process_lifecycle::RunRecordMetadata;
 
@@ -136,10 +136,11 @@ pub enum IterfileError {
     /// Building a queue declaration failed.
     #[error(transparent)]
     QueueBuild(#[from] QueueBuildError),
-    /// Runner-builder assembly failed (agent, prompt, or event handler).
+    /// Building the runner builder from the plan failed (agent, prompt,
+    /// or event handler).
     #[error(transparent)]
-    Assembly(#[from] AssemblyError),
-    /// `RunnerBuilder::build` rejected the assembled configuration.
+    Start(#[from] StartError),
+    /// `RunnerBuilder::build` rejected the wired configuration.
     #[error(transparent)]
     Builder(#[from] BuilderError),
     /// The runner exited with an error.
@@ -261,7 +262,7 @@ async fn run_inner(
     }
 
     if let Some((rt, _)) = runtime.as_ref() {
-        builder = assembly::wire_builder_runtime(builder, rt);
+        builder = start::wire_builder_runtime(builder, rt);
         if let Some(sender) = rt.log_sender() {
             iter_core::process::install_global_log_sender(sender);
         }
@@ -328,7 +329,7 @@ fn build_iterfile_builder(
         return Err(IterfileError::MissingSection("agent"));
     }
 
-    let builder = assembly::assemble_from_root(&iterfile, &runner.node, None, once)?;
+    let builder = start::runner_builder_from_root(&iterfile, &runner.node, None, once)?;
 
     Ok((builder, iterfile_path.to_owned()))
 }
