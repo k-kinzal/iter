@@ -43,8 +43,10 @@ pub struct CloneSettings {
     /// Apply-back-time exclude patterns. Same glob dialect as `excludes`,
     /// matched relative to the workspace root. Empty = no exclusions.
     pub apply_back_excludes: Vec<String>,
-    /// Apply-back-time include patterns. Empty = no overrides. Entries
-    /// here win over matching entries in `apply_back_excludes`.
+    /// Apply-back-time include patterns. Empty = no restriction. When
+    /// non-empty this acts as a whitelist: only matching paths participate
+    /// in the apply-back walk (unlike clone-time `includes`, which only
+    /// rescue otherwise-excluded paths).
     pub apply_back_includes: Vec<String>,
 }
 

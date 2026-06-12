@@ -16,8 +16,11 @@
 //! * Every pattern auto-synthesises `<P>/**` so descendants of a matched
 //!   directory are also matched (avoids the "empty `target/` left behind"
 //!   footgun).
-//! * `includes` is a whitelist: when non-empty only matching paths pass.
 //! * `excludes` supports `!pattern` negation to rescue specific paths.
+//! * `includes` semantics differ per phase. At clone time they only
+//!   *rescue*: an include overrides a matching exclude, and a path matching
+//!   neither list always materialises. At apply-back time a non-empty
+//!   `includes` is a *whitelist*: only matching paths pass.
 
 use std::path::Path;
 
@@ -25,6 +28,10 @@ use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 
 /// Compiled exclude/include glob pair shared by both phase-specific filter
 /// types.
+///
+/// [`is_excluded`](GlobPair::is_excluded) implements the rescue contract
+/// (includes and `!` negations only override excludes); the apply-back
+/// whitelist contract lives in [`ApplyBackFilter`].
 #[derive(Debug, Clone)]
 struct GlobPair {
     excludes: GlobSet,
@@ -61,10 +68,7 @@ impl GlobPair {
     }
 
     fn is_excluded(&self, rel: &Path) -> bool {
-        if self.has_includes {
-            return !self.includes.is_match(rel);
-        }
-        if self.negations.is_match(rel) {
+        if self.negations.is_match(rel) || self.includes.is_match(rel) {
             return false;
         }
         self.excludes.is_match(rel)
@@ -97,8 +101,9 @@ fn make_glob(pattern: &str) -> Result<Glob, globset::Error> {
 /// Filter applied at clone-time when materialising files into the temp tree.
 ///
 /// A path is dropped from the materialisation walk iff [`is_excluded`] returns
-/// `true`. When `includes` is non-empty it acts as a whitelist — only matching
-/// paths pass. Otherwise `excludes` applies, with `!pattern` negation support.
+/// `true`. `excludes` applies with `!pattern` negation support. `includes`
+/// only override `excludes`: a path matching neither list always
+/// materialises — clone-side includes rescue, they never whitelist.
 ///
 /// [`is_excluded`]: CloneFilter::is_excluded
 #[derive(Debug, Clone)]
@@ -186,6 +191,12 @@ impl ApplyBackFilter {
         if self.workspace_excludes.is_match(rel) {
             return true;
         }
+        // The whitelist contract is apply-back-only; clone-side includes
+        // merely rescue (see GlobPair::is_excluded). While the whitelist
+        // is active, `excludes` — including `!` negations — are moot.
+        if self.inner.has_includes {
+            return !self.inner.includes.is_match(rel);
+        }
         self.inner.is_excluded(rel)
     }
 }
@@ -248,8 +259,24 @@ mod tests {
     }
 
     #[test]
-    fn includes_acts_as_whitelist() {
+    fn clone_includes_rescue_excluded_paths() {
+        let f = clone_f(&["hidden", "drop"], &["hidden"]);
+        assert!(!f.is_excluded(Path::new("hidden/value.txt")));
+        assert!(f.is_excluded(Path::new("drop/me.txt")));
+        assert!(!f.is_excluded(Path::new("keep.txt")));
+    }
+
+    #[test]
+    fn clone_includes_never_whitelist() {
         let f = clone_f(&[], &["*.rs"]);
+        assert!(!f.is_excluded(Path::new("main.rs")));
+        assert!(!f.is_excluded(Path::new("README.md")));
+        assert!(!f.is_excluded(Path::new("Cargo.toml")));
+    }
+
+    #[test]
+    fn apply_back_includes_act_as_whitelist() {
+        let f = apply_f(&[], &["*.rs"]);
         assert!(!f.is_excluded(Path::new("main.rs")));
         assert!(!f.is_excluded(Path::new("src/lib.rs")));
         assert!(f.is_excluded(Path::new("README.md")));
@@ -257,10 +284,32 @@ mod tests {
     }
 
     #[test]
-    fn includes_whitelist_ignores_excludes() {
-        let f = clone_f(&["*.rs"], &["*.rs"]);
+    fn apply_back_whitelist_ignores_excludes() {
+        let f = apply_f(&["*.rs"], &["*.rs"]);
         assert!(!f.is_excluded(Path::new("main.rs")));
         assert!(f.is_excluded(Path::new("README.md")));
+    }
+
+    #[test]
+    fn apply_back_whitelist_ignores_negations() {
+        let f = apply_f(&["*.md", "!docs/config/**"], &["*.rs"]);
+        assert!(!f.is_excluded(Path::new("main.rs")));
+        assert!(
+            f.is_excluded(Path::new("docs/config/spec.md")),
+            "a `!` negation cannot punch through an active whitelist",
+        );
+    }
+
+    #[test]
+    fn workspace_excludes_override_whitelist() {
+        let f = ApplyBackFilter::compile_with_workspace_excludes(
+            &[],
+            &["**".to_owned()],
+            &[".git".to_owned()],
+        )
+        .expect("test patterns must compile");
+        assert!(f.is_excluded(Path::new(".git/HEAD")));
+        assert!(!f.is_excluded(Path::new("src/main.rs")));
     }
 
     #[test]

@@ -65,9 +65,12 @@ the workspace; the apply-back filter (inside `apply_back`) decides what
 propagates back to base on teardown. The two phases are independent — list
 a path in both filters to skip it both ways. Patterns are globs matched
 against paths relative to the workspace root; bare patterns match the
-basename at any depth, directory matches auto-cover descendants, and
-`includes` overrides `excludes`. See `docs/config/iterfile/workspace.md`
-for the full glob reference and the asymmetric-filtering use case.
+basename at any depth and directory matches auto-cover descendants.
+`includes` semantics differ per phase: clone-time `includes` rescue
+otherwise-excluded paths (everything not excluded still enters), while a
+non-empty apply-back `includes` is a whitelist (only matching paths sync
+back). See `docs/config/iterfile/workspace.md` for the full glob
+reference and the asymmetric-filtering use case.
 
 ### `workspace sandbox`
 

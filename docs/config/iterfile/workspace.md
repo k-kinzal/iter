@@ -68,7 +68,7 @@ workspace clone {
 | `base` | `string` | Required | — | Source directory used as the clone seed. |
 | `remote` | `string` | Optional | — | Remote URL passed verbatim to the clone backend. iter does not interpret it. |
 | `excludes` | `list(string)` | Required | — | Clone-time exclude patterns. `[]` explicitly means "skip nothing"; omitting the field is not allowed. Supports `!pattern` negation to rescue specific paths. See [Glob patterns](#glob-patterns). |
-| `includes` | `list(string)` | Optional | `[]` | Clone-time whitelist. When non-empty, only matching files enter the workspace; all others are excluded. `[]` means "no whitelist — use `excludes` only". |
+| `includes` | `list(string)` | Optional | `[]` | Clone-time rescue patterns. Entries here win over matching entries in `excludes`; paths matching neither list always enter the workspace. `[]` means "no overrides". |
 | `preserve_mtime` | `bool` | Required | — | Whether to preserve source mtimes during the copy. |
 | `apply_back` | `block` | Required | — | Teardown-time reconciliation block. See [`apply_back` block](#apply_back-block). |
 
@@ -122,7 +122,7 @@ Both filter phases accept glob patterns matched against the **path relative to t
 
 **Directory patterns auto-cover descendants.** A pattern that matches `dir` also implicitly matches `dir/**`, so descendants are excluded too — no "empty `target/` left behind" footgun.
 
-**`includes` is a whitelist.** When `includes` is non-empty, only paths matching an `includes` pattern pass — all others are excluded regardless of `excludes`. Use `includes` when you want to allow a specific set of paths and reject everything else.
+**`includes` semantics differ per phase.** Clone-time `includes` only *rescue*: an include wins over a matching exclude, and a path matching neither list still enters the workspace. Apply-back `includes` are a *whitelist*: when non-empty, only matching paths propagate back — everything else is blocked regardless of the apply-back `excludes`. Use apply-back `includes` to allow a specific set of paths back and reject everything else; use clone-time `includes` to carve exceptions out of clone-time `excludes`.
 
 **`excludes` supports `!pattern` negation.** A pattern prefixed with `!` rescues paths that would otherwise be excluded. `excludes = ["*.md", "!docs/config/**"]` excludes all `.md` files except those under `docs/config/`. This is the canonical way to carve a hole in an exclusion.
 
