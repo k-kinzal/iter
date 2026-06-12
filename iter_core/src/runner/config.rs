@@ -19,12 +19,13 @@ use crate::signal::SignalId;
 /// is, in effect, its own Trigger. The tension is deliberate and named here
 /// at the type rather than hidden — a Runner that synthesises its own work has
 /// no outside widening it from within (see the crate's exploration model).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SignalAcquisition {
     /// Park on the queue until a signal arrives or cancellation fires.
     ///
     /// Requires a queue; combining `Wait` with no queue is rejected at
     /// builder time because there is nothing to wait on.
+    #[default]
     Wait,
     /// Synthesise a signal whenever the queue is empty (or there is no
     /// queue at all) and continue iterating.
@@ -40,12 +41,6 @@ pub enum SignalAcquisition {
         /// starved).
         delay: Option<Duration>,
     },
-}
-
-impl Default for SignalAcquisition {
-    fn default() -> Self {
-        Self::Wait
-    }
 }
 
 /// Behaviour switches for the [`Runner`](super::Runner) loop.

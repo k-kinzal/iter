@@ -85,9 +85,7 @@ fn mutate(base: &str, bytes: &[u8]) -> String {
     }
     String::from_utf8(buf).unwrap_or_else(|e| {
         // Replace invalid bytes with `?` so we always return a legal &str.
-        String::from_utf8_lossy(&e.into_bytes())
-            .replace(char::REPLACEMENT_CHARACTER, "?")
-            .to_string()
+        String::from_utf8_lossy(&e.into_bytes()).replace(char::REPLACEMENT_CHARACTER, "?")
     })
 }
 

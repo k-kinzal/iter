@@ -51,13 +51,9 @@ impl GlobPair {
             .iter()
             .map(|p| p.strip_prefix('!').unwrap().to_string())
             .collect();
+        let pos_patterns: Vec<String> = positive.into_iter().cloned().collect();
         Ok(Self {
-            excludes: compile_patterns(
-                &positive
-                    .iter()
-                    .map(|s| (*s).to_string())
-                    .collect::<Vec<_>>(),
-            )?,
+            excludes: compile_patterns(&pos_patterns)?,
             negations: compile_patterns(&neg_patterns)?,
             includes: compile_patterns(includes)?,
             has_includes: !includes.is_empty(),

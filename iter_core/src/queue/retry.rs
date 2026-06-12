@@ -9,10 +9,11 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// How a backoff schedule is computed across retries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetryMode {
     /// SDK-default schedule. The exact behaviour is per-SDK.
+    #[default]
     Standard,
     /// AWS-specific adaptive throttling that adjusts to client-side
     /// throttling signals.
@@ -22,12 +23,6 @@ pub enum RetryMode {
     /// Exponential backoff starting from `initial_backoff`, capped at
     /// `max_backoff`.
     Exponential,
-}
-
-impl Default for RetryMode {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 /// Cross-backend retry policy.

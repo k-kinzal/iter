@@ -11,18 +11,13 @@ use super::supervisor::TriggerLifecycleState;
 use super::trigger::TriggerRunError;
 
 /// How [`super::run`] reacts to the first failing service.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FailurePolicy {
     /// Cancel every other task on the first error.
+    #[default]
     AbortAll,
     /// Log the failure and let the surviving tasks run to completion.
     Continue,
-}
-
-impl Default for FailurePolicy {
-    fn default() -> Self {
-        Self::AbortAll
-    }
 }
 
 /// Result of a single spawned service task.

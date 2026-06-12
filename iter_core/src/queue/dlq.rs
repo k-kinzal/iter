@@ -38,10 +38,11 @@ pub enum DlqTarget {
 }
 
 /// Cross-backend DLQ policy.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum DlqPolicy {
     /// No DLQ behaviour. Poison records are dropped on the floor after the
     /// configured retry policy gives up.
+    #[default]
     None,
     /// The backend has a native DLQ already configured on the entity (SQS
     /// redrive policy, Service Bus dead-letter sub-queue, Pub/Sub
@@ -62,12 +63,6 @@ pub enum DlqPolicy {
         /// republished record. Examples: `{{error.kind}} - {{error.message}}`.
         reason_template: Option<String>,
     },
-}
-
-impl Default for DlqPolicy {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Top-level discriminator for `dlq.kind = "..."` declaration fields.
