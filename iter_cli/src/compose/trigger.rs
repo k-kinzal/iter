@@ -487,7 +487,7 @@ async fn dispatch_webhook(
         .transpose()
         .map_err(|e| TriggerRunError::Build(Box::new(e)))?;
     let default_priority = convert_priority(priority);
-    let webhook_routes: Vec<SubscriptionConfig> = routes
+    let subscriptions: Vec<SubscriptionConfig> = routes
         .into_iter()
         .map(|r| {
             let route_priority = r
@@ -507,7 +507,7 @@ async fn dispatch_webhook(
         bind: bind_addr,
         path,
         secret: resolved_secret,
-        routes: webhook_routes,
+        subscriptions,
     };
     let trigger = WebhookTrigger::new(queue, config)
         .map_err(|e| TriggerRunError::Build(Box::new(e)))?

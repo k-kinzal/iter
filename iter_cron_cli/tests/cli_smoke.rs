@@ -129,6 +129,30 @@ fn invalid_schedule_exits_user_input() {
     );
 }
 
+/// Negative path: an unsupported `--queue-url` scheme maps to
+/// `RUNTIME (2)` — trigger binaries classify a bad queue URL as a
+/// runtime failure, unlike `iter enqueue`, which treats it as user
+/// input (1).
+#[test]
+fn invalid_queue_url_scheme_exits_runtime() {
+    let out = run(&["--queue-url", "ftp://nope", "--schedule", "0 0 1 1 *"]);
+    assert!(
+        !out.status.success(),
+        "should fail on unsupported queue url scheme"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "RUNTIME (2) expected; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Error: "),
+        "stderr must carry an 'Error: ' headline; got:\n{stderr}"
+    );
+}
+
 /// `--help` renders without erroring and includes the documented
 /// `EXAMPLES` section (P11).
 #[test]

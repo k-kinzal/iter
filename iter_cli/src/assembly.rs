@@ -19,11 +19,11 @@ use thiserror::Error;
 
 use crate::agent::{AgentBuildError, agent_from_def};
 use crate::config::build_runner_config;
-use iter_core::SandboxProfile;
 use crate::events::register_event_actions_from_events;
 use crate::prompt::{PromptBuildError, build_prompt_selector_from_prompts};
 use crate::workspace::build_workspace_factory;
 use iter_core::Queue;
+use iter_core::SandboxProfile;
 
 /// Errors produced by [`assemble_runner_builder`].
 #[derive(Debug, Error)]

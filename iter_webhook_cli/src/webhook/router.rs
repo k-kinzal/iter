@@ -12,13 +12,13 @@ use tracing::Instrument;
 
 use crate::trigger_util::hmac::verify_github_signature;
 
-use super::config::CompiledRoute;
+use super::config::CompiledSubscription;
 use super::guard::{evaluate_guard, event_pattern_matches, render_metadata};
 
 pub(super) struct WebhookState<Q: Queue + ?Sized> {
     pub(super) queue: Arc<Q>,
     pub(super) secret: Option<String>,
-    pub(super) routes: Vec<CompiledRoute>,
+    pub(super) subscriptions: Vec<CompiledSubscription>,
     pub(super) trigger_name: Option<String>,
 }
 
@@ -64,16 +64,16 @@ pub(super) async fn handle_webhook<Q: Queue + ?Sized + 'static>(
         };
 
         let mut matches = 0u32;
-        for route in &state.routes {
-            if !event_pattern_matches(&route.event_pattern, &combined) {
+        for subscription in &state.subscriptions {
+            if !event_pattern_matches(&subscription.event_pattern, &combined) {
                 continue;
             }
-            if let Some(guard) = route.when.as_deref()
+            if let Some(guard) = subscription.when.as_deref()
                 && !evaluate_guard(guard, &value)
             {
                 continue;
             }
-            let metadata = match render_metadata(route, &value) {
+            let metadata = match render_metadata(subscription, &value) {
                 Ok(m) => m,
                 Err(e) => {
                     return (
@@ -83,10 +83,9 @@ pub(super) async fn handle_webhook<Q: Queue + ?Sized + 'static>(
                         .into_response();
                 }
             };
-            let signal = iter_core::telemetry::inject_current_context_into_signal(Signal::new(
-                metadata,
-            ));
-            if let Err(e) = state.queue.enqueue(signal, route.priority).await {
+            let signal =
+                iter_core::telemetry::inject_current_context_into_signal(Signal::new(metadata));
+            if let Err(e) = state.queue.enqueue(signal, subscription.priority).await {
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("queue error: {e}"),

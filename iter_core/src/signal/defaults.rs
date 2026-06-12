@@ -78,8 +78,8 @@ mod tests {
 
     #[test]
     fn parses_pairs_in_order() {
-        let pairs = parse_metadata_pairs(&["source=manual".into(), "tag=alpha".into()])
-            .expect("pairs");
+        let pairs =
+            parse_metadata_pairs(&["source=manual".into(), "tag=alpha".into()]).expect("pairs");
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs[0].0.as_str(), "source");
         assert_eq!(pairs[0].1, "manual");
@@ -113,6 +113,9 @@ mod tests {
     fn base_metadata_builds_a_map() {
         let meta = base_metadata(&["source=manual".into()]).expect("metadata");
         let key = MetadataKey::new("source").expect("key");
-        assert_eq!(meta.get(&key), Some(&MetadataValue::String("manual".into())));
+        assert_eq!(
+            meta.get(&key),
+            Some(&MetadataValue::String("manual".into()))
+        );
     }
 }

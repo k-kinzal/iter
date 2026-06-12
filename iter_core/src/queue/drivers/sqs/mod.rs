@@ -35,15 +35,15 @@ use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
 use crate::queue::dlq::DlqPolicy;
-use crate::queue::{MetadataSource, MissingMetadata, Priority, Queue, QueueError};
-use async_trait::async_trait;
 use crate::queue::drivers::aws::credentials::{
     AwsCredentials, CredentialsBuildError, build_credentials,
 };
 use crate::queue::drivers::aws::http::{AwsHttpClientConfig, build_http_client};
 use crate::queue::envelope::{EnvelopeError, decode_signal, encode_signal};
 use crate::queue::retry::{RetryMode, RetryPolicy};
+use crate::queue::{MetadataSource, MissingMetadata, Priority, Queue, QueueError};
 use crate::signal::Signal;
+use async_trait::async_trait;
 
 /// Identity for the SQS queue. Either a fully-qualified URL or a
 /// `(queue_name, account_id)` pair from which the URL is derived using
@@ -539,7 +539,6 @@ impl SqsQueue {
             }
         }
     }
-
 }
 
 #[async_trait]
@@ -701,6 +700,9 @@ mod tests {
             .resolve(&signal)
             .expect_err("missing key");
         let mapped: SqsQueueError = missing.into();
-        assert!(matches!(mapped, SqsQueueError::MissingTemplateMetadata { .. }));
+        assert!(matches!(
+            mapped,
+            SqsQueueError::MissingTemplateMetadata { .. }
+        ));
     }
 }

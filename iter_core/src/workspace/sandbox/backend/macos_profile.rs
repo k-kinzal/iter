@@ -122,11 +122,7 @@ pub fn render_profile(descriptor: &SandboxDescriptor<'_>) -> String {
     }
 
     // --- Network -------------------------------------------------------
-    render_network(
-        &mut buf,
-        &descriptor.policy.network,
-        descriptor.profile,
-    );
+    render_network(&mut buf, &descriptor.policy.network, descriptor.profile);
     buf.push('\n');
 
     // --- Mach services -------------------------------------------------

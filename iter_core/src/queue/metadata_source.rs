@@ -82,7 +82,9 @@ mod tests {
     #[test]
     fn from_metadata_missing_key_errors() {
         let s = MetadataSource::FromMetadata("missing".into());
-        let err = s.resolve(&signal_with("present", "v")).expect_err("missing");
+        let err = s
+            .resolve(&signal_with("present", "v"))
+            .expect_err("missing");
         assert_eq!(err.key, "missing");
     }
 }

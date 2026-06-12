@@ -98,7 +98,8 @@ async fn connect_sqs(
 
     let identity = if let Some(url) = &descriptor.queue_url {
         SqsIdentity::Url(url.clone())
-    } else if let (Some(name), Some(account_id)) = (&descriptor.queue_name, &descriptor.account_id) {
+    } else if let (Some(name), Some(account_id)) = (&descriptor.queue_name, &descriptor.account_id)
+    {
         SqsIdentity::NameWithAccount {
             name: name.clone(),
             account_id: account_id.clone(),
@@ -116,10 +117,13 @@ async fn connect_sqs(
             session_token: c.session_token.clone(),
         });
 
-    let producer = descriptor.message_group_id.as_ref().map(|m| SqsProducerConfig {
-        message_group_id: Some(m.clone()),
-        ..SqsProducerConfig::default()
-    });
+    let producer = descriptor
+        .message_group_id
+        .as_ref()
+        .map(|m| SqsProducerConfig {
+            message_group_id: Some(m.clone()),
+            ..SqsProducerConfig::default()
+        });
 
     let config = SqsQueueConfig {
         identity,

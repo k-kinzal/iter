@@ -64,10 +64,7 @@ impl Queue for BudgetedQueue {
         Ok(())
     }
 
-    async fn dequeue(
-        &self,
-        cancel: CancellationToken,
-    ) -> Result<Option<Signal>, QueueError> {
+    async fn dequeue(&self, cancel: CancellationToken) -> Result<Option<Signal>, QueueError> {
         self.inner.dequeue(cancel).await
     }
 

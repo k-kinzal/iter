@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use iter_core::RunnerSummary;
 use iter_core::process::{
     DetachedSpec, ProcessHandle, ProcessId, ProcessRegistry, ProcessRuntime, ProcessStatus,
     ProcessTerminationReason, spawn_detached,
 };
-use iter_core::RunnerSummary;
 use iter_language::TelemetryDef;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -22,8 +22,8 @@ use crate::process_lifecycle::{
     self, RunRecordMetadata, derive_finalize_reason, leaves_record_non_terminal,
     log_finalize_report,
 };
+use crate::queue::queue_address;
 use crate::telemetry;
-use crate::trigger_argv::queue_to_url;
 
 /// Run every service in `plan` concurrently.
 ///
@@ -222,7 +222,7 @@ async fn try_spawn_service_subprocess(
     orchestrator: &OrchestratorContext,
     telemetry_decl: Option<&TelemetryDef>,
 ) -> Result<ServiceSubprocessSpec, ServiceSpawnDecision> {
-    if queue_to_url(&service.queue_decl).is_none() {
+    if !queue_address(&service.queue_decl).is_some_and(|a| a.is_addressable()) {
         return Err(ServiceSpawnDecision::Fallback(
             "queue not URL-addressable".to_string(),
         ));
@@ -450,7 +450,7 @@ pub async fn spawn_targeted_service(
         .find(|s| s.name == service_name)
         .ok_or_else(|| TargetedSpawnError::UnknownService(service_name.to_owned()))?;
 
-    if queue_to_url(&service.queue_decl).is_none() {
+    if !queue_address(&service.queue_decl).is_some_and(|a| a.is_addressable()) {
         return Err(TargetedSpawnError::NonAddressable {
             service: service_name.to_owned(),
         });

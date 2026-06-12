@@ -16,9 +16,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::iterfile::{
-    self, IterfileError, RunInput, RunMode, RunRecordMetadata, RunSource,
-};
+use crate::iterfile::{self, IterfileError, RunInput, RunMode, RunRecordMetadata, RunSource};
 use iter_core::process::ProcessId;
 use thiserror::Error;
 
@@ -204,8 +202,7 @@ fn init_run_telemetry(
     let Ok(root) = crate::load_compose(iterfile_path) else {
         return telemetry::init(args.debug, prefs);
     };
-    let project =
-        crate::project_slug(iterfile_path, None).unwrap_or_else(|_| "iter".to_string());
+    let project = crate::project_slug(iterfile_path, None).unwrap_or_else(|_| "iter".to_string());
     telemetry::init_for_compose(
         args.debug,
         prefs,

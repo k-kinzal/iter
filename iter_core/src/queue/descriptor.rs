@@ -94,7 +94,10 @@ impl fmt::Debug for ResolvedQueueCredentials {
         f.debug_struct("ResolvedQueueCredentials")
             .field("access_key_id", &"<redacted>")
             .field("secret_access_key", &"<redacted>")
-            .field("session_token", &self.session_token.as_ref().map(|_| "<redacted>"))
+            .field(
+                "session_token",
+                &self.session_token.as_ref().map(|_| "<redacted>"),
+            )
             .finish()
     }
 }
@@ -130,14 +133,22 @@ mod tests {
 
     #[test]
     fn from_url_maps_addressable_backends() {
-        assert_eq!(QueueDescriptor::from_url("memory://").unwrap(), QueueDescriptor::Memory);
+        assert_eq!(
+            QueueDescriptor::from_url("memory://").unwrap(),
+            QueueDescriptor::Memory
+        );
         assert_eq!(
             QueueDescriptor::from_url("file:///tmp/q").unwrap(),
-            QueueDescriptor::File { path: "/tmp/q".into() }
+            QueueDescriptor::File {
+                path: "/tmp/q".into()
+            }
         );
         assert_eq!(
             QueueDescriptor::from_url("redis://h?key=k").unwrap(),
-            QueueDescriptor::Redis { url: "redis://h".into(), key: "k".into() }
+            QueueDescriptor::Redis {
+                url: "redis://h".into(),
+                key: "k".into()
+            }
         );
     }
 
@@ -187,9 +198,15 @@ mod tests {
             }),
         });
         let debug = format!("{descriptor:?}");
-        assert!(!debug.contains("SUPERSECRETVALUE"), "secret leaked: {debug}");
+        assert!(
+            !debug.contains("SUPERSECRETVALUE"),
+            "secret leaked: {debug}"
+        );
         assert!(!debug.contains("AKIAEXAMPLE"), "access key leaked: {debug}");
-        assert!(!debug.contains("TOKENVALUE"), "session token leaked: {debug}");
+        assert!(
+            !debug.contains("TOKENVALUE"),
+            "session token leaked: {debug}"
+        );
         assert!(debug.contains("<redacted>"));
     }
 }

@@ -78,7 +78,10 @@ impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     ///
     /// `expression` may be a 5-field cron string (e.g. `"* * * * *"`) or a
     /// 6/7-field one as accepted by the `cron` crate.
-    pub fn new(queue: Arc<Q>, expression: &str) -> Result<Self, CronTriggerError<iter_core::queue::QueueError>> {
+    pub fn new(
+        queue: Arc<Q>,
+        expression: &str,
+    ) -> Result<Self, CronTriggerError<iter_core::queue::QueueError>> {
         let normalized = normalize_expression(expression);
         let schedule = Schedule::from_str(&normalized)
             .map_err(|e| CronTriggerError::InvalidExpression(e.to_string()))?;
@@ -189,7 +192,10 @@ impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     /// # Errors
     ///
     /// Returns `CronTriggerError` if metadata construction or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), CronTriggerError<iter_core::queue::QueueError>> {
+    pub async fn run(
+        self,
+        cancel: CancellationToken,
+    ) -> Result<(), CronTriggerError<iter_core::queue::QueueError>> {
         let scheduled_key = MetadataKey::new("scheduled_at")?;
         let startup_key = MetadataKey::new("startup")?;
         let catch_up_key = MetadataKey::new("catch_up")?;

@@ -164,7 +164,12 @@ async fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdE
         if args.queue.is_some() {
             return Err(EnqueueCmdError::QueueFlagNotApplicable);
         }
-        return queue_from_url(url).await;
+        // `memory://` builds a fresh in-process queue for this single
+        // enqueue; `file://` / `redis://` dial the addressable backend.
+        let descriptor = QueueDescriptor::from_url(url)?;
+        return connect(&descriptor)
+            .await
+            .map_err(|e| EnqueueCmdError::Queue(e.to_string()));
     }
 
     let path = match args.file.as_deref() {
@@ -184,18 +189,6 @@ async fn resolve_queue(args: &EnqueueArgs) -> Result<Arc<dyn Queue>, EnqueueCmdE
         let decl = load_iterfile_queue(&path)?;
         Ok(build_queue(&decl).map_err(ComposeError::from)?)
     }
-}
-
-/// Connect to the queue named by a `--queue-url` through the core
-/// [`connect`] boundary — the one place queue URLs are resolved.
-///
-/// `memory://` builds a fresh in-process queue for this single enqueue;
-/// `file://` / `redis://` connect to the addressable backend.
-async fn queue_from_url(url: &str) -> Result<Arc<dyn Queue>, EnqueueCmdError> {
-    let descriptor = QueueDescriptor::from_url(url)?;
-    connect(&descriptor)
-        .await
-        .map_err(|e| EnqueueCmdError::Queue(e.to_string()))
 }
 
 fn load_iterfile_queue(path: &Path) -> Result<QueueDef, EnqueueCmdError> {
@@ -346,21 +339,38 @@ mod tests {
         assert_eq!(Priority::from_keyword("bogus"), None);
     }
 
+    fn url_args(url: &str) -> EnqueueArgs {
+        EnqueueArgs {
+            queue_url: Some(url.to_owned()),
+            file: None,
+            queue: None,
+            metadata: vec![],
+            priority: EnqueuePriority::Normal,
+        }
+    }
+
     #[tokio::test]
-    async fn queue_from_url_memory_colon_alias() {
-        let q = queue_from_url("memory:").await.expect("memory: alias");
+    async fn queue_url_memory_colon_alias() {
+        let q = resolve_queue(&url_args("memory:"))
+            .await
+            .expect("memory: alias");
         drop(q);
     }
 
     #[tokio::test]
-    async fn queue_from_url_memory_scheme() {
-        let q = queue_from_url("memory://").await.expect("memory://");
+    async fn queue_url_memory_scheme() {
+        let q = resolve_queue(&url_args("memory://"))
+            .await
+            .expect("memory://");
         drop(q);
     }
 
     #[tokio::test]
-    async fn queue_from_url_file_requires_path() {
-        let err = queue_from_url("file://").await.err().expect("must fail");
+    async fn queue_url_file_requires_path() {
+        let err = resolve_queue(&url_args("file://"))
+            .await
+            .err()
+            .expect("must fail");
         assert!(matches!(
             err,
             EnqueueCmdError::QueueUrl(QueueAddressError::FileUrlMissingPath)
@@ -368,24 +378,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn queue_from_url_file_absolute() {
+    async fn queue_url_file_absolute() {
         let tmp = tempfile::tempdir().expect("tmp");
         let path = tmp.path().join("queue");
         let url = format!("file://{}", path.display());
-        let q = queue_from_url(&url).await.expect("file queue");
+        let q = resolve_queue(&url_args(&url)).await.expect("file queue");
         drop(q);
     }
 
     #[tokio::test]
-    async fn queue_from_url_unknown_scheme_errors() {
-        let err = queue_from_url("amqp://x").await.err().expect("must fail");
+    async fn queue_url_unknown_scheme_errors() {
+        let err = resolve_queue(&url_args("amqp://x"))
+            .await
+            .err()
+            .expect("must fail");
         assert!(matches!(
             err,
             EnqueueCmdError::QueueUrl(QueueAddressError::UnsupportedScheme(_))
         ));
     }
 
-    // The redis `?key=` parsing / percent-decoding that `split_redis_url`
-    // used to do here now lives in `iter_core::queue::QueueAddress` and is
-    // tested there — `queue_from_url` is the thin connector over it.
+    // The redis `?key=` parsing / percent-decoding lives in
+    // `iter_core::queue::QueueAddress` and is tested there — `--queue-url`
+    // resolution is the thin connector over it.
 }

@@ -1,5 +1,5 @@
 //! [`WebhookTrigger`] — receives HTTP webhooks (e.g., GitHub) and emits
-//! signals matching configured routes.
+//! signals matching configured subscriptions.
 
 mod config;
 mod guard;
@@ -14,7 +14,7 @@ use axum::routing::post;
 use iter_core::Queue;
 use tokio_util::sync::CancellationToken;
 
-use config::CompiledRoute;
+use config::CompiledSubscription;
 use router::{WebhookState, handle_webhook};
 
 /// HTTP webhook trigger.
@@ -27,8 +27,9 @@ use router::{WebhookState, handle_webhook};
 /// 2. Parses the body as JSON.
 /// 3. Combines `X-GitHub-Event` and the body's `action` field into a
 ///    `<event>.<action>` key.
-/// 4. For each matching route, evaluates the optional guard, renders the
-///    metadata templates against the body, and enqueues a [`Signal`](iter_core::Signal).
+/// 4. For each matching subscription, evaluates the optional guard, renders
+///    the metadata templates against the body, and enqueues a
+///    [`Signal`](iter_core::Signal).
 ///
 /// The server runs in the calling task; cancellation triggers a graceful
 /// shutdown via [`axum::serve::Serve::with_graceful_shutdown`].
@@ -37,7 +38,7 @@ pub struct WebhookTrigger<Q: Queue + ?Sized> {
     bind: std::net::SocketAddr,
     path: String,
     secret: Option<String>,
-    routes: Vec<CompiledRoute>,
+    subscriptions: Vec<CompiledSubscription>,
     trigger_name: Option<String>,
 }
 
@@ -46,7 +47,7 @@ impl<Q: Queue + ?Sized> std::fmt::Debug for WebhookTrigger<Q> {
         f.debug_struct("WebhookTrigger")
             .field("bind", &self.bind)
             .field("path", &self.path)
-            .field("routes", &self.routes.len())
+            .field("subscriptions", &self.subscriptions.len())
             .field("trigger_name", &self.trigger_name)
             .finish_non_exhaustive()
     }
@@ -55,30 +56,30 @@ impl<Q: Queue + ?Sized> std::fmt::Debug for WebhookTrigger<Q> {
 impl<Q: Queue + ?Sized + 'static> WebhookTrigger<Q> {
     /// Build a webhook trigger publishing to `queue`.
     ///
-    /// All route metadata templates are compiled up-front. Template
+    /// All subscription metadata templates are compiled up-front. Template
     /// compilation errors surface here rather than on the first matching
     /// request.
     ///
     /// # Errors
     ///
-    /// * [`WebhookTriggerError::Metadata`] — a route's metadata key is
-    ///   not a valid [`MetadataKey`](iter_core::MetadataKey).
-    /// * [`WebhookTriggerError::Template`] — a route's metadata value is
-    ///   not a valid Handlebars template.
+    /// * [`WebhookTriggerError::Metadata`] — a subscription's metadata key
+    ///   is not a valid [`MetadataKey`](iter_core::MetadataKey).
+    /// * [`WebhookTriggerError::Template`] — a subscription's metadata value
+    ///   is not a valid Handlebars template.
     pub fn new(
         queue: Arc<Q>,
         config: WebhookConfig,
     ) -> Result<Self, WebhookTriggerError<iter_core::queue::QueueError>> {
-        let mut routes = Vec::with_capacity(config.routes.len());
-        for route in &config.routes {
-            routes.push(CompiledRoute::from_route(route)?);
+        let mut subscriptions = Vec::with_capacity(config.subscriptions.len());
+        for subscription in &config.subscriptions {
+            subscriptions.push(CompiledSubscription::from_subscription(subscription)?);
         }
         Ok(Self {
             queue,
             bind: config.bind,
             path: config.path,
             secret: config.secret,
-            routes,
+            subscriptions,
             trigger_name: None,
         })
     }
@@ -96,7 +97,7 @@ impl<Q: Queue + ?Sized + 'static> WebhookTrigger<Q> {
         let state = Arc::new(WebhookState {
             queue: self.queue.clone(),
             secret: self.secret.clone(),
-            routes: self.routes.clone(),
+            subscriptions: self.subscriptions.clone(),
             trigger_name: self.trigger_name.clone(),
         });
         Router::new()
@@ -109,7 +110,10 @@ impl<Q: Queue + ?Sized + 'static> WebhookTrigger<Q> {
     /// # Errors
     ///
     /// Returns `WebhookTriggerError` if binding or serving fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), WebhookTriggerError<iter_core::queue::QueueError>> {
+    pub async fn run(
+        self,
+        cancel: CancellationToken,
+    ) -> Result<(), WebhookTriggerError<iter_core::queue::QueueError>> {
         let bind = self.bind;
         let router = self.router();
 
@@ -134,26 +138,27 @@ mod tests {
     use std::net::SocketAddr;
     use tower::ServiceExt;
 
-    fn test_config(routes: Vec<Subscription>) -> WebhookConfig {
+    fn test_config(subscriptions: Vec<Subscription>) -> WebhookConfig {
         WebhookConfig {
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             path: "/hook".into(),
             secret: None,
-            routes,
+            subscriptions,
         }
     }
 
     #[test]
     fn invalid_metadata_template_fails_at_new() {
         let queue = Arc::new(InMemoryQueue::new());
-        let route = Subscription {
+        let subscription = Subscription {
             event_pattern: "push".into(),
             when: None,
             priority: Priority::NORMAL,
             // Empty-expression `{{}}` fails to compile under handlebars.
             metadata: vec![("key".into(), "hello {{}}".into())],
         };
-        let err = WebhookTrigger::new(queue, test_config(vec![route])).expect_err("must fail");
+        let err =
+            WebhookTrigger::new(queue, test_config(vec![subscription])).expect_err("must fail");
         assert!(
             matches!(err, WebhookTriggerError::Template(_)),
             "unexpected error variant: {err:?}"
@@ -166,13 +171,13 @@ mod tests {
         // payload does not carry it. The router should surface that as a
         // 500 response rather than silently rendering empty.
         let queue = Arc::new(InMemoryQueue::new());
-        let route = Subscription {
+        let subscription = Subscription {
             event_pattern: "push".into(),
             when: None,
             priority: Priority::NORMAL,
             metadata: vec![("repo".into(), "{{event.repository.full_name}}".into())],
         };
-        let trigger = WebhookTrigger::new(queue, test_config(vec![route])).expect("build");
+        let trigger = WebhookTrigger::new(queue, test_config(vec![subscription])).expect("build");
         let app = trigger.router();
 
         let request = Request::builder()
@@ -201,13 +206,14 @@ mod tests {
     #[tokio::test]
     async fn matching_route_enqueues_signal() {
         let queue = Arc::new(InMemoryQueue::new());
-        let route = Subscription {
+        let subscription = Subscription {
             event_pattern: "push".into(),
             when: None,
             priority: Priority::NORMAL,
             metadata: vec![("repo".into(), "{{event.repository.full_name}}".into())],
         };
-        let trigger = WebhookTrigger::new(queue.clone(), test_config(vec![route])).expect("build");
+        let trigger =
+            WebhookTrigger::new(queue.clone(), test_config(vec![subscription])).expect("build");
         let app = trigger.router();
 
         let request = Request::builder()

@@ -44,7 +44,6 @@ mod prompt;
 mod queue;
 mod secrets;
 mod shell_action;
-mod trigger_argv;
 mod workspace;
 
 pub use agent::agent_from_def;
@@ -69,9 +68,8 @@ pub use process_lifecycle::{
 pub use project::{ENV_PROJECT_NAME, ProjectSlugError, SlugValidationError, project_slug};
 pub use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
 pub use prompt::{build_prompt_selector, build_prompt_selector_from_prompts};
-pub use queue::{QueueBuildError, build_queue};
+pub use queue::{QueueBuildError, build_queue, queue_address};
 pub use secrets::resolve_secret;
-pub use trigger_argv::queue_to_url;
 pub use workspace::build_workspace_factory;
 
 use std::collections::BTreeMap;

@@ -15,12 +15,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use iter_core::Agent;
 use iter_core::agent::{
     AgentMode as ImplAgentMode, AntigravityAgent, ClaudeAgent, ClineAgent, CodexAgent,
     CopilotAgent, CursorAgent, FakeAgent, GeminiAgent, GenericAgent, GrokAgent, HermesAgent,
     NoopAgent, OpenCodeAgent,
 };
-use iter_core::Agent;
 use iter_language::{AgentDef, AgentMode as AstAgentMode};
 use thiserror::Error;
 

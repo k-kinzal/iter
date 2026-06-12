@@ -134,7 +134,10 @@ impl<Q: Queue + ?Sized + 'static> WatchTrigger<Q> {
     /// # Errors
     ///
     /// Returns `WatchTriggerError` if filesystem watching or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
+    pub async fn run(
+        self,
+        cancel: CancellationToken,
+    ) -> Result<(), WatchTriggerError<iter_core::queue::QueueError>> {
         let path_key = MetadataKey::new("path")?;
         let kind_key = MetadataKey::new("kind")?;
         let timestamp_key = MetadataKey::new("timestamp")?;

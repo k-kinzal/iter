@@ -122,7 +122,10 @@ impl<Q: Queue + ?Sized + 'static> FilesTrigger<Q> {
     /// # Errors
     ///
     /// Returns `FilesTriggerError` if reading input or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), FilesTriggerError<iter_core::queue::QueueError>> {
+    pub async fn run(
+        self,
+        cancel: CancellationToken,
+    ) -> Result<(), FilesTriggerError<iter_core::queue::QueueError>> {
         let file_key = MetadataKey::new("file")?;
         let saved_offset = self.load_cursor();
 

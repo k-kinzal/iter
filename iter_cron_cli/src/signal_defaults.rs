@@ -95,7 +95,10 @@ mod tests {
         ]);
         let meta = probe.args.base_metadata().expect("metadata");
         let key = MetadataKey::new("source").expect("key");
-        assert_eq!(meta.get(&key), Some(&MetadataValue::String("manual".into())));
+        assert_eq!(
+            meta.get(&key),
+            Some(&MetadataValue::String("manual".into()))
+        );
     }
 
     #[test]

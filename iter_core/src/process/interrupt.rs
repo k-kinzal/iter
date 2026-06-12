@@ -183,6 +183,9 @@ mod tests {
         let original = CancellationToken::new();
         let returned = install_signal_handlers(original.clone()).expect("install");
         returned.cancel();
-        assert!(original.is_cancelled(), "returned token shares the original");
+        assert!(
+            original.is_cancelled(),
+            "returned token shares the original"
+        );
     }
 }

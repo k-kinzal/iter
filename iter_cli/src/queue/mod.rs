@@ -4,7 +4,8 @@
 //! This is "made from the full definition": every backend (including `shell`
 //! and `sqs`, which carry scripts / structured config a URL cannot) is built
 //! here from its [`QueueDef`]. The address/descriptor-connectable subset has a
-//! second path through [`iter_core::queue::connect`].
+//! second path through [`iter_core::queue::connect`]; [`queue_address`] is the
+//! definition-side bridge onto that vocabulary.
 
 mod sqs;
 
@@ -12,14 +13,14 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use iter_core::queue::InMemoryQueue;
 use iter_core::queue::dlq::{DlqPolicy, DlqTarget};
 use iter_core::queue::retry::{RetryMode, RetryPolicy};
 use iter_core::queue::sqs::{SqsQueue, SqsQueueError};
 use iter_core::queue::{
-    FileQueue, FileQueueError, MetadataSource as CoreMetadataSource, Queue, RedisQueue,
-    RedisQueueError, ShellQueue, ShellQueueConfig, ShellQueueError,
+    FileQueue, FileQueueError, MetadataSource as CoreMetadataSource, Queue, QueueAddress,
+    RedisQueue, RedisQueueError, ShellQueue, ShellQueueConfig, ShellQueueError,
 };
-use iter_core::queue::InMemoryQueue;
 use iter_language::{DlqPolicyDef, DlqTargetDef, MetadataSource, QueueDef, RetryPolicyDef};
 use thiserror::Error;
 
@@ -136,6 +137,26 @@ pub fn build_queue(decl: &QueueDef) -> Result<Arc<dyn Queue>, QueueBuildError> {
             let q = run_async(SqsQueue::new(core_cfg))?;
             Ok(Arc::new(q))
         }
+    }
+}
+
+/// Translate a queue **definition** into its [`QueueAddress`] — the URL-form
+/// name another process would dial.
+///
+/// `Shell` and `Sqs` carry scripts / structured config no URL can spell, so
+/// they have no address. `Memory` *has* an address (`memory://`) but is not
+/// dialable from another process; ask [`QueueAddress::is_addressable`] when
+/// the question is reachability rather than spelling.
+#[must_use]
+pub fn queue_address(decl: &QueueDef) -> Option<QueueAddress> {
+    match decl {
+        QueueDef::Memory => Some(QueueAddress::Memory),
+        QueueDef::File { path } => Some(QueueAddress::File { path: path.clone() }),
+        QueueDef::Redis { url, key } => Some(QueueAddress::Redis {
+            url: url.clone(),
+            key: key.clone(),
+        }),
+        QueueDef::Shell { .. } | QueueDef::Sqs(_) => None,
     }
 }
 
@@ -272,6 +293,50 @@ mod tests {
         )
         .await
         .expect("enqueue");
+    }
+
+    #[test]
+    fn queue_address_maps_url_form_backends() {
+        assert_eq!(queue_address(&QueueDef::Memory), Some(QueueAddress::Memory));
+        assert_eq!(
+            queue_address(&QueueDef::File {
+                path: "/tmp/q".into()
+            }),
+            Some(QueueAddress::File {
+                path: "/tmp/q".into()
+            })
+        );
+        assert_eq!(
+            queue_address(&QueueDef::Redis {
+                url: "redis://h:6379".into(),
+                key: "main".into()
+            }),
+            Some(QueueAddress::Redis {
+                url: "redis://h:6379".into(),
+                key: "main".into()
+            })
+        );
+    }
+
+    #[test]
+    fn queue_address_none_for_structural_backends() {
+        assert!(
+            queue_address(&QueueDef::Shell {
+                enqueue: "true".into(),
+                dequeue: "true".into(),
+                close: None,
+                interpreter: None,
+                enqueue_timeout_secs: None,
+            })
+            .is_none()
+        );
+        assert!(queue_address(&QueueDef::Sqs(Box::default())).is_none());
+    }
+
+    #[test]
+    fn queue_address_memory_has_an_address_but_is_not_addressable() {
+        let addr = queue_address(&QueueDef::Memory).expect("memory has an address");
+        assert!(!addr.is_addressable());
     }
 
     #[test]

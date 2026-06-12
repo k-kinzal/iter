@@ -137,7 +137,10 @@ impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
     /// # Errors
     ///
     /// Returns `CommandTriggerError` if command execution or queue enqueue fails.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), CommandTriggerError<iter_core::queue::QueueError>> {
+    pub async fn run(
+        self,
+        cancel: CancellationToken,
+    ) -> Result<(), CommandTriggerError<iter_core::queue::QueueError>> {
         let mut seen: HashSet<String> = HashSet::new();
         let regex = if let ExtractMode::Regex(pat) = &self.extract {
             Some(regex::Regex::new(pat).map_err(|e| CommandTriggerError::Regex(e.to_string()))?)
@@ -257,7 +260,10 @@ impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
         )))
     }
 
-    fn build_metadata(&self, record: &Value) -> Result<Metadata, CommandTriggerError<iter_core::queue::QueueError>> {
+    fn build_metadata(
+        &self,
+        record: &Value,
+    ) -> Result<Metadata, CommandTriggerError<iter_core::queue::QueueError>> {
         let mut metadata = self.base_metadata.clone();
         match record {
             Value::Object(map) => {

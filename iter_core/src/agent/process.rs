@@ -976,8 +976,7 @@ mod tests {
                     let wrapped = apply_sandbox_prefix(Command::new("/bin/echo"), &prefix);
                     let std_cmd = wrapped.as_std();
                     let program = std_cmd.get_program().to_os_string();
-                    let args: Vec<OsString> =
-                        std_cmd.get_args().map(OsStr::to_os_string).collect();
+                    let args: Vec<OsString> = std_cmd.get_args().map(OsStr::to_os_string).collect();
                     (i, program, args)
                 })
             })

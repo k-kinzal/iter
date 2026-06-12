@@ -14,7 +14,6 @@ mod banner;
 mod error;
 mod files_trigger;
 mod logging;
-mod queue_source;
 mod signal_defaults;
 mod stream;
 mod termination;
@@ -25,7 +24,7 @@ use std::sync::Arc;
 use crate::files_trigger::{FilesSource, FilesTrigger, FilesTriggerError};
 use clap::Parser;
 use iter_core::process::interrupt::install_signal_handlers;
-use iter_core::queue::BudgetedQueue;
+use iter_core::queue::{BudgetedQueue, ConnectError, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::defaults::MetadataPairError;
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -34,7 +33,6 @@ use tracing::error;
 use crate::banner::BannerArgs;
 use crate::error::{IntoExitCode, exit_codes, run_main};
 use crate::logging::LoggingArgs;
-use crate::queue_source::{QueueSourceArgs, QueueSourceError};
 use crate::signal_defaults::SignalDefaultsArgs;
 use crate::stream::cli_eprintln;
 use crate::termination::TerminationArgs;
@@ -46,7 +44,9 @@ enum FilesCliError {
     #[error("building tokio runtime: {0}")]
     Runtime(#[source] std::io::Error),
     #[error(transparent)]
-    QueueSource(#[from] QueueSourceError),
+    QueueAddress(#[from] QueueAddressError),
+    #[error(transparent)]
+    QueueConnect(#[from] ConnectError),
     #[error(transparent)]
     Metadata(#[from] MetadataPairError),
     #[error("installing interrupt handler: {0}")]
@@ -63,8 +63,14 @@ impl IntoExitCode for FilesCliError {
     fn exit_code(&self) -> i32 {
         match self {
             Self::Files(FilesTriggerError::Metadata(_)) => exit_codes::INTERNAL,
-            Self::Runtime(_) | Self::Shutdown(_) | Self::Files(_) => exit_codes::RUNTIME,
-            Self::QueueSource(e) => e.exit_code(),
+            // A bad `--queue-url` is classified RUNTIME on a trigger binary;
+            // the `iter enqueue` surface keeps its own USER_INPUT mapping for
+            // a malformed `--queue-url`.
+            Self::Runtime(_)
+            | Self::Shutdown(_)
+            | Self::Files(_)
+            | Self::QueueAddress(_)
+            | Self::QueueConnect(_) => exit_codes::RUNTIME,
             Self::Metadata(e) => e.exit_code(),
             Self::SourceMissingPath | Self::SourceUnknownForm(_) => exit_codes::USER_INPUT,
         }
@@ -98,8 +104,10 @@ struct Args {
     #[arg(long = "no-exit-on-eof", default_value_t = false)]
     no_exit_on_eof: bool,
 
-    #[command(flatten)]
-    queue_source: QueueSourceArgs,
+    /// Queue connection URL (e.g. `memory://`, `file:///abs/path`,
+    /// `redis://host:port`).
+    #[arg(long = "queue-url", value_name = "URL")]
+    queue_url: String,
 
     #[command(flatten)]
     logging: LoggingArgs,
@@ -131,7 +139,7 @@ async fn run() -> Result<(), FilesCliError> {
     let _telemetry_guard = args.logging.init();
 
     let sources = parse_sources(&args.from)?;
-    let inner_queue = args.queue_source.resolve().await?;
+    let inner_queue = connect(&QueueDescriptor::from_url(&args.queue_url)?).await?;
     let cancel =
         install_signal_handlers(CancellationToken::new()).map_err(FilesCliError::Shutdown)?;
     let queue = Arc::new(BudgetedQueue::new(

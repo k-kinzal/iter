@@ -158,3 +158,31 @@ fn help_includes_examples_section() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("EXAMPLES:"), "got:\n{stdout}");
 }
+
+/// Negative path: an unsupported `--queue-url` scheme maps to
+/// `RUNTIME (2)` — trigger binaries classify a bad queue URL as a
+/// runtime failure, unlike `iter enqueue`, which treats it as user
+/// input (1).
+#[test]
+fn invalid_queue_url_scheme_exits_runtime() {
+    let out = Command::new(iter_files_bin())
+        .args(["--queue-url", "ftp://nope"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("spawn iter-files");
+    assert!(
+        !out.status.success(),
+        "should fail on unsupported queue url scheme"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "RUNTIME (2) expected; stderr=\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Error: "),
+        "stderr must carry an 'Error: ' headline; got:\n{stderr}"
+    );
+}

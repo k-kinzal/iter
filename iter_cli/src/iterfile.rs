@@ -309,13 +309,7 @@ fn build_iterfile_builder(
     iterfile_path: &Path,
     once: bool,
     arg_overrides: &BTreeMap<String, String>,
-) -> Result<
-    (
-        iter_core::RunnerBuilder,
-        PathBuf,
-    ),
-    IterfileError,
-> {
+) -> Result<(iter_core::RunnerBuilder, PathBuf), IterfileError> {
     let mut iterfile = load_and_parse(iterfile_path)?;
     resolve_args(&mut iterfile, arg_overrides)?;
 
@@ -354,13 +348,7 @@ fn build_compose_service_builder(
     compose_path: &Path,
     service_name: &str,
     once: bool,
-) -> Result<
-    (
-        iter_core::RunnerBuilder,
-        PathBuf,
-    ),
-    IterfileError,
-> {
+) -> Result<(iter_core::RunnerBuilder, PathBuf), IterfileError> {
     let root = load_compose(compose_path).map_err(|e| IterfileError::Compose(Box::new(e)))?;
     let built =
         build_single_service(&root, compose_path, service_name, once).map_err(|e| match e {

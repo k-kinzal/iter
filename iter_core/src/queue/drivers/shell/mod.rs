@@ -679,7 +679,10 @@ mod tests {
         // The reader spawned the dequeue child at construction; wait for the
         // backgrounded grandchild's pid to land.
         let grandchild = read_recorded_pid(&pidfile).await;
-        assert!(pid_alive(grandchild), "grandchild should be alive pre-close");
+        assert!(
+            pid_alive(grandchild),
+            "grandchild should be alive pre-close"
+        );
 
         // `close` cancels the reader, which reaps the dequeue child's group.
         q.close().await.expect("close");

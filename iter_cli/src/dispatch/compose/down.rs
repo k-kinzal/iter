@@ -1,8 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{
-    ProjectMember, build, find_active_orchestrator, list_project_members, load_compose,
-};
+use crate::{ProjectMember, build, find_active_orchestrator, list_project_members, load_compose};
 use iter_core::process::{
     PidFileState, ProcessError, ProcessHandle, ProcessRegistry, SignalDelivery,
     process_is_alive_with_start_time, signal_identity,

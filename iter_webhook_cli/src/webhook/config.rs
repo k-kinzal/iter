@@ -16,8 +16,8 @@ pub struct WebhookConfig {
     /// Optional HMAC secret. When set, requests must include a valid
     /// `X-Hub-Signature-256` header computed over the raw body.
     pub secret: Option<String>,
-    /// Routes evaluated against each incoming event.
-    pub routes: Vec<Subscription>,
+    /// Subscriptions evaluated against each incoming event.
+    pub subscriptions: Vec<Subscription>,
 }
 
 /// One routing rule attached to a [`WebhookConfig`].
@@ -25,7 +25,7 @@ pub struct WebhookConfig {
 /// The `metadata` entries are raw template source strings as they appeared
 /// in the config. [`WebhookTrigger::new`](super::WebhookTrigger::new)
 /// compiles them once into [`Template`] instances held in the internal
-/// [`CompiledRoute`].
+/// [`CompiledSubscription`].
 #[derive(Debug, Clone)]
 pub struct Subscription {
     /// Pattern matched against `<event>.<action>` (e.g. `"issues.opened"`).
@@ -47,34 +47,36 @@ pub struct Subscription {
 /// Built once by [`WebhookTrigger::new`](super::WebhookTrigger::new) and
 /// shared read-only via the axum [`WebhookState`](super::router::WebhookState).
 #[derive(Debug, Clone)]
-pub(super) struct CompiledRoute {
+pub(super) struct CompiledSubscription {
     pub(super) event_pattern: String,
     pub(super) when: Option<String>,
     pub(super) priority: Priority,
     pub(super) metadata: Vec<(MetadataKey, Template)>,
 }
 
-impl CompiledRoute {
-    pub(super) fn from_route(route: &Subscription) -> Result<Self, CompileRouteError> {
-        let mut metadata = Vec::with_capacity(route.metadata.len());
-        for (key, template_source) in &route.metadata {
+impl CompiledSubscription {
+    pub(super) fn from_subscription(
+        subscription: &Subscription,
+    ) -> Result<Self, CompileSubscriptionError> {
+        let mut metadata = Vec::with_capacity(subscription.metadata.len());
+        for (key, template_source) in &subscription.metadata {
             let key = MetadataKey::new(key.as_str())?;
             let template = Template::compile(template_source.clone())?;
             metadata.push((key, template));
         }
         Ok(Self {
-            event_pattern: route.event_pattern.clone(),
-            when: route.when.clone(),
-            priority: route.priority,
+            event_pattern: subscription.event_pattern.clone(),
+            when: subscription.when.clone(),
+            priority: subscription.priority,
             metadata,
         })
     }
 }
 
 /// Errors produced while compiling a [`Subscription`] into a
-/// [`CompiledRoute`].
+/// [`CompiledSubscription`].
 #[derive(Debug, Error)]
-pub(super) enum CompileRouteError {
+pub(super) enum CompileSubscriptionError {
     #[error(transparent)]
     Metadata(#[from] MetadataError),
     #[error(transparent)]
@@ -97,7 +99,7 @@ pub enum WebhookTriggerError<E: std::error::Error + Send + Sync + 'static> {
     #[error("metadata error: {0}")]
     Metadata(#[from] MetadataError),
 
-    /// A route metadata template failed to compile.
+    /// A subscription metadata template failed to compile.
     #[error("template error: {0}")]
     Template(#[from] TemplateError),
 
@@ -106,13 +108,13 @@ pub enum WebhookTriggerError<E: std::error::Error + Send + Sync + 'static> {
     Server(String),
 }
 
-impl<E: std::error::Error + Send + Sync + 'static> From<CompileRouteError>
+impl<E: std::error::Error + Send + Sync + 'static> From<CompileSubscriptionError>
     for WebhookTriggerError<E>
 {
-    fn from(err: CompileRouteError) -> Self {
+    fn from(err: CompileSubscriptionError) -> Self {
         match err {
-            CompileRouteError::Metadata(e) => Self::Metadata(e),
-            CompileRouteError::Template(e) => Self::Template(e),
+            CompileSubscriptionError::Metadata(e) => Self::Metadata(e),
+            CompileSubscriptionError::Template(e) => Self::Template(e),
         }
     }
 }

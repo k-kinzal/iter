@@ -278,7 +278,6 @@ mod tests {
     use iter_core::queue::InMemoryQueue;
     use iter_language::TriggerDef;
 
-
     fn make_trigger(name: &str, decl: TriggerDef) -> ComposeTrigger {
         let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
         ComposeTrigger {

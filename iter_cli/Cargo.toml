@@ -38,7 +38,6 @@ tracing-subscriber.workspace = true
 chrono = { workspace = true }
 async-trait.workspace = true
 globset.workspace = true
-percent-encoding.workspace = true
 libc.workspace = true
 
 [dev-dependencies]

@@ -7,21 +7,21 @@ use serde_json::json;
 use iter_core::template::TemplateError;
 use iter_core::{Metadata, MetadataValue};
 
-use super::config::CompiledRoute;
+use super::config::CompiledSubscription;
 
-/// Render the compiled metadata templates of `route` against the webhook
-/// `event` body.
+/// Render the compiled metadata templates of `subscription` against the
+/// webhook `event` body.
 ///
 /// Each template is rendered with the context `{"event": event}` so source
 /// templates written as `{{event.x.y}}` resolve the same dotted paths as
 /// under the previous ad-hoc implementation.
 pub(super) fn render_metadata(
-    route: &CompiledRoute,
+    subscription: &CompiledSubscription,
     event: &Value,
 ) -> Result<Metadata, TemplateError> {
     let mut metadata = Metadata::new();
     let ctx = json!({ "event": event });
-    for (key, template) in &route.metadata {
+    for (key, template) in &subscription.metadata {
         let rendered = template.render(&ctx)?;
         metadata.insert(key.clone(), MetadataValue::String(rendered));
     }

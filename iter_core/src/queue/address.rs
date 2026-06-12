@@ -50,14 +50,18 @@ pub enum QueueAddress {
 #[non_exhaustive]
 pub enum QueueAddressError {
     /// The URL scheme is not one of `memory`/`file`/`redis`/`rediss`.
-    #[error("unsupported queue url `{0}`; expected one of memory://, file:///path, redis://..., rediss://...")]
+    #[error(
+        "unsupported queue url `{0}`; expected one of memory://, file:///path, redis://..., rediss://..."
+    )]
     UnsupportedScheme(String),
     /// `file://` URL with an empty path component.
     #[error("file:// queue url is missing a path")]
     FileUrlMissingPath,
     /// `redis://…?key=` with an empty value — the namespace would be empty.
     /// Omit `?key=` to take the default (`iter`), or supply a non-empty key.
-    #[error("redis queue url has an empty `?key=`; omit it for the default `iter`, or supply a key")]
+    #[error(
+        "redis queue url has an empty `?key=`; omit it for the default `iter`, or supply a key"
+    )]
     EmptyRedisKey,
 }
 
@@ -140,8 +144,14 @@ mod tests {
 
     #[test]
     fn parse_memory() {
-        assert_eq!(QueueAddress::parse("memory://").unwrap(), QueueAddress::Memory);
-        assert_eq!(QueueAddress::parse("memory:").unwrap(), QueueAddress::Memory);
+        assert_eq!(
+            QueueAddress::parse("memory://").unwrap(),
+            QueueAddress::Memory
+        );
+        assert_eq!(
+            QueueAddress::parse("memory:").unwrap(),
+            QueueAddress::Memory
+        );
     }
 
     #[test]
@@ -194,11 +204,7 @@ mod tests {
 
     #[test]
     fn to_url_round_trips() {
-        for url in [
-            "memory://",
-            "file:///tmp/q",
-            "redis://host:6379/0",
-        ] {
+        for url in ["memory://", "file:///tmp/q", "redis://host:6379/0"] {
             let addr = QueueAddress::parse(url).unwrap();
             assert_eq!(addr.to_url(), url, "round-trip for {url}");
         }
