@@ -137,6 +137,10 @@ impl Agent for HermesAgent {
         "hermes"
     }
 
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Hermes
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,

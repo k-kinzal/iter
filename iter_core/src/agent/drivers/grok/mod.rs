@@ -33,8 +33,9 @@
 //! # Authentication
 //!
 //! Headless `grok` authenticates with `XAI_API_KEY` (or a prior local
-//! login). The sandbox profile passes `XAI_*` / `GROK_*` through; see
-//! [`crate::workspace::sandbox::agent_requirements::grok`].
+//! login). The sandbox profile passes `XAI_*` / `GROK_*` through; the
+//! per-kind policy lives in the `Grok` arm of
+//! [`SandboxProfile::for_agent`](crate::workspace::sandbox::SandboxProfile::for_agent).
 //!
 //! # Construction
 //!
@@ -113,17 +114,6 @@ fn home_subpath(leaf: &str) -> Option<PathBuf> {
 }
 
 impl GrokAgent {
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    ///
-    /// The returned handle exposes both the resolved path and its canonical
-    /// target for sandbox-layer consumers that need to grant read access to
-    /// a symlink shim (volta, nvm, asdf, homebrew cask).
-    #[must_use]
-    pub fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
-    }
-
     /// `${HOME}/.grok` — persistent configuration root and headless session
     /// state sink (sessions under `sessions/`). `None` when `HOME` is unset.
     #[must_use]
@@ -152,6 +142,20 @@ impl GrokAgent {
 impl Agent for GrokAgent {
     fn name(&self) -> &'static str {
         "grok"
+    }
+
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Grok
+    }
+
+    /// Resolved on-disk location of the configured binary, or `None` when
+    /// nothing on `$PATH` or the supplied path matches an existing file.
+    ///
+    /// The returned handle exposes both the resolved path and its canonical
+    /// target so the sandbox layer can grant read access to a symlink shim
+    /// (volta, nvm, asdf, homebrew cask).
+    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
+        crate::agent::command_path::CommandPath::resolve(&self.command)
     }
 
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {

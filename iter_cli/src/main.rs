@@ -47,7 +47,7 @@ mod shell_action;
 mod trigger_argv;
 mod workspace;
 
-pub use agent::{agent_from_def, sandbox_requirements_for};
+pub use agent::agent_from_def;
 pub use assembly::AssemblyError;
 pub use compose::{
     CompletedTask, ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,

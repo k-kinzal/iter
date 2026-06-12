@@ -21,6 +21,10 @@ impl Agent for NoopAgent {
         "noop"
     }
 
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Noop
+    }
+
     async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         Ok(AgentRun::empty())
     }

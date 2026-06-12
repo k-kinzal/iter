@@ -22,13 +22,13 @@ use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 
-use crate::SandboxRequirements;
 use crate::agent::command_path::CommandPath;
 use thiserror::Error;
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use super::error::SandboxWorkspaceError;
 use super::policy::SandboxPolicy;
+use super::profile::SandboxProfile;
 
 /// Merged view passed to a backend when preparing a sandbox.
 #[derive(Debug)]
@@ -38,8 +38,11 @@ pub struct SandboxDescriptor<'a> {
     pub workspace_path: &'a Path,
     /// Workspace-level upper-bound rules.
     pub policy: &'a SandboxPolicy,
-    /// Agent-declared minimum needs.
-    pub requirements: &'a SandboxRequirements,
+    /// The agent's lower-bound OS-access profile. In the production path it
+    /// is assembled by
+    /// [`SandboxProfile::for_agent`](super::profile::SandboxProfile::for_agent);
+    /// the backend treats it opaquely and renders whatever it is handed.
+    pub profile: &'a SandboxProfile,
 }
 
 /// Errors produced by a [`SandboxBackend`].

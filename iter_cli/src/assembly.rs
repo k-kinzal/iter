@@ -17,8 +17,9 @@ use iter_language::{
 };
 use thiserror::Error;
 
-use crate::agent::{AgentBuildError, agent_from_def, sandbox_requirements_for};
+use crate::agent::{AgentBuildError, agent_from_def};
 use crate::config::build_runner_config;
+use iter_core::SandboxProfile;
 use crate::events::register_event_actions_from_events;
 use crate::prompt::{PromptBuildError, build_prompt_selector_from_prompts};
 use crate::workspace::build_workspace_factory;
@@ -70,7 +71,10 @@ pub(crate) fn assemble_runner_builder(
     once: bool,
 ) -> Result<RunnerBuilder, AssemblyError> {
     let agent = agent_from_def(agent_decl)?;
-    let workspaces = build_workspace_factory(workspace_decl, sandbox_requirements_for(agent_decl));
+    // The sandbox profile is assembled from the built agent via an exhaustive
+    // match over its `AgentKind` (see `SandboxProfile::for_agent`). Build it
+    // before the agent is moved onto the builder below.
+    let workspaces = build_workspace_factory(workspace_decl, SandboxProfile::for_agent(&*agent));
     let prompt_selector = build_prompt_selector_from_prompts(prompts)?;
     let runner_config = build_runner_config(runner_decl, once);
 

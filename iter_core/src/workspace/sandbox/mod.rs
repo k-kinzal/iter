@@ -19,15 +19,21 @@
 //!
 //! # The two sides of the sandbox contract
 //!
-//! Every [`SandboxWorkspace`] is constructed with both a
-//! [`SandboxPolicy`] (from the declaration) and a
-//! [`SandboxRequirements`](crate::SandboxRequirements) (from the agent's
-//! [`Agent::sandbox_requirements`](crate::Agent::sandbox_requirements)).
-//! The policy is the project's **upper bound** — "this is what I'm
-//! willing to let anything reach". The requirements are the agent's
-//! **lower bound** — "this is what my process needs to work at all".
-//! The backend merges the two and the workspace fails closed at
-//! construction if the agent's floor exceeds the project's ceiling.
+//! Every [`SandboxWorkspace`] is constructed with both a [`SandboxPolicy`]
+//! (from the declaration) and a [`SandboxProfile`] (assembled by the sandbox
+//! layer from the agent). The agent itself holds no aggregating sandbox type:
+//! it reports only object-safe *facts* — its [`kind`](crate::Agent::kind),
+//! [`command_path`](crate::Agent::command_path), and
+//! [`sub_agents`](crate::Agent::sub_agents) — and
+//! [`SandboxProfile::for_agent`] matches **exhaustively** over the closed
+//! [`AgentKind`](crate::agent::AgentKind) to build the profile, so adding an
+//! agent kind without a sandbox arm is a compile error.
+//!
+//! The policy is the project's **upper bound** — "this is what I'm willing to
+//! let anything reach". The profile is the agent's **lower bound** — "this is
+//! what my process needs to work at all". The backend merges the two and the
+//! workspace fails closed at construction if the agent's floor exceeds the
+//! project's ceiling.
 //!
 //! The clone layer keeps modification-time and copy-back semantics
 //! identical to [`CloneWorkspace`](crate::workspace::CloneWorkspace), so
@@ -52,15 +58,14 @@
 //! fails fast. Callers that want graceful skipping (e.g. CI) should check
 //! [`SandboxWorkspace::detect_backend_available`] up front.
 
-pub mod agent_requirements;
 pub mod backend;
 pub mod error;
 pub mod policy;
-pub mod requirements;
+pub mod profile;
 pub mod workspace;
 
 pub use backend::{BackendError, SandboxBackend, SandboxDescriptor};
 pub use error::SandboxWorkspaceError;
 pub use policy::{NetworkAccess, SandboxPolicy};
-pub use requirements::{SandboxRequirements, match_env_pattern};
+pub use profile::{SandboxProfile, match_env_pattern};
 pub use workspace::SandboxWorkspace;

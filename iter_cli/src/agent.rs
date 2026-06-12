@@ -1,11 +1,16 @@
-//! Definition → agent translation (`agent_from_def`) plus the per-agent
-//! sandbox-requirements selection.
+//! Definition → agent translation (`agent_from_def`).
 //!
 //! There is no `Any*` agent wrapper: the closed set of agent kinds lives in
 //! the [`AgentDef`] definition enum, and the runtime drives a single
 //! `Box<dyn Agent>` trait object (R18). [`agent_from_def`] is the one place
 //! that selects a concrete driver from a definition and boxes it; dispatch at
 //! run time is the vtable, not a match.
+//!
+//! The agent's sandbox profile is **not** assembled here: it is built from the
+//! constructed agent by
+//! [`SandboxProfile::for_agent`](iter_core::SandboxProfile::for_agent), keyed
+//! off the agent's own [`AgentKind`](iter_core::agent::AgentKind), so the
+//! per-agent OS-access policy lives sandbox-side rather than at this boundary.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -15,8 +20,7 @@ use iter_core::agent::{
     CopilotAgent, CursorAgent, FakeAgent, GeminiAgent, GenericAgent, GrokAgent, HermesAgent,
     NoopAgent, OpenCodeAgent,
 };
-use iter_core::workspace::sandbox::agent_requirements;
-use iter_core::{Agent, SandboxRequirements};
+use iter_core::Agent;
 use iter_language::{AgentDef, AgentMode as AstAgentMode};
 use thiserror::Error;
 
@@ -55,9 +59,9 @@ fn convert_mode(mode: AstAgentMode) -> ImplAgentMode {
 
 /// Build the concrete [`ClaudeAgent`] for a `AgentDef::Claude` definition.
 ///
-/// Shared by [`agent_from_def`] (which boxes it) and
-/// [`sandbox_requirements_for`] (which reads its command to assemble the
-/// sandbox profile), so the field bind is expressed exactly once.
+/// Extracted so the field bind (declaration → driver) is expressed exactly
+/// once, isolating the `String` → `PathBuf` session-path conversion that the
+/// [`agent_from_def`] `Claude` arm boxes.
 fn build_claude(
     mode: AstAgentMode,
     command: &str,
@@ -76,8 +80,7 @@ fn build_claude(
 
 /// Build the concrete [`GrokAgent`] for a `AgentDef::Grok` definition.
 ///
-/// Shared by [`agent_from_def`] and [`sandbox_requirements_for`] for the same
-/// reason as [`build_claude`].
+/// Extracted for the same reason as [`build_claude`].
 fn build_grok(
     command: &str,
     args: &[String],
@@ -251,64 +254,6 @@ fn build_router(
         built.push((name.clone(), sub_agent));
     }
     Ok(AgentRouter::new(built, routing_strategy))
-}
-
-/// Assemble the sandbox access profile an [`AgentDef`] requires.
-///
-/// Sandbox policy is a Workspace-side concern (see
-/// [`iter_core::workspace::sandbox::agent_requirements`]); the selection of
-/// *which* policy applies is dispatched here, at the compose layer, keyed on
-/// the agent definition's variant. Only `claude` and `grok` carry a
-/// non-default profile today; a router merges the profiles of its sub-agents.
-#[must_use]
-pub fn sandbox_requirements_for(def: &AgentDef) -> SandboxRequirements {
-    match def {
-        AgentDef::Claude {
-            mode,
-            command,
-            args,
-            session_id_file,
-            env,
-        } => agent_requirements::claude(&build_claude(
-            *mode,
-            command,
-            args,
-            session_id_file.as_ref(),
-            env,
-        )),
-        AgentDef::Grok {
-            command,
-            args,
-            session_id_file,
-            env,
-        } => agent_requirements::grok(&build_grok(command, args, session_id_file.as_ref(), env)),
-        AgentDef::Router { agents, .. } => merge_sandbox_requirements(agents),
-        _ => SandboxRequirements::default(),
-    }
-}
-
-fn merge_sandbox_requirements(agents: &[(String, Box<AgentDef>)]) -> SandboxRequirements {
-    let mut merged = SandboxRequirements::default();
-    for (_name, sub_def) in agents {
-        let reqs = sandbox_requirements_for(sub_def);
-        merged.network_hosts.extend(reqs.network_hosts);
-        merged.file_reads.extend(reqs.file_reads);
-        merged.file_writes.extend(reqs.file_writes);
-        merged.file_write_regexes.extend(reqs.file_write_regexes);
-        merged.env_pass.extend(reqs.env_pass);
-        merged.allow_signal = merged.allow_signal || reqs.allow_signal;
-    }
-    merged.network_hosts.sort();
-    merged.network_hosts.dedup();
-    merged.file_reads.sort();
-    merged.file_reads.dedup();
-    merged.file_writes.sort();
-    merged.file_writes.dedup();
-    merged.file_write_regexes.sort();
-    merged.file_write_regexes.dedup();
-    merged.env_pass.sort();
-    merged.env_pass.dedup();
-    merged
 }
 
 /// Resolve declared env values with `ITER_` prefix overrides.
@@ -595,58 +540,6 @@ mod tests {
             panic!("empty router must fail to build");
         };
         assert!(err.to_string().contains("at least one"));
-    }
-
-    /// A `claude` definition carries the non-default sandbox profile (network
-    /// hosts, env passthrough) through the def-keyed selector; an agent with
-    /// no special requirements (`noop`) yields the default profile.
-    #[test]
-    fn sandbox_requirements_are_selected_per_variant() {
-        let claude = sandbox_requirements_for(&claude_def(AstAgentMode::Headless));
-        assert!(
-            claude
-                .network_hosts
-                .iter()
-                .any(|h| h.starts_with("api.anthropic.com")),
-            "claude must request the inference host, got {:?}",
-            claude.network_hosts,
-        );
-
-        let noop = sandbox_requirements_for(&AgentDef::Noop);
-        assert_eq!(noop, SandboxRequirements::default());
-    }
-
-    /// A router's sandbox profile merges the profiles of its sub-agents, so a
-    /// router over `[claude, grok]` requests both backends' hosts.
-    #[test]
-    fn router_merges_sub_agent_sandbox_requirements() {
-        use iter_language::RouterStrategy;
-        let def = AgentDef::Router {
-            agents: vec![
-                ("c".into(), Box::new(claude_def(AstAgentMode::Headless))),
-                (
-                    "g".into(),
-                    Box::new(AgentDef::Grok {
-                        command: "grok".into(),
-                        args: Vec::new(),
-                        session_id_file: None,
-                        env: empty_env(),
-                    }),
-                ),
-            ],
-            strategy: RouterStrategy::Fallback,
-        };
-        let reqs = sandbox_requirements_for(&def);
-        assert!(
-            reqs.network_hosts
-                .iter()
-                .any(|h| h.starts_with("api.anthropic.com")),
-            "merged profile must include claude's host",
-        );
-        assert!(
-            reqs.network_hosts.iter().any(|h| h.starts_with("api.x.ai")),
-            "merged profile must include grok's host",
-        );
     }
 
     #[test]

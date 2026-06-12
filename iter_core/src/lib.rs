@@ -55,4 +55,4 @@ pub use signal::{
 pub use template::{
     IterationRenderContext, RunnerRenderContext, SignalContext, Template, TemplateError,
 };
-pub use workspace::{SandboxRequirements, Workspace, match_env_pattern};
+pub use workspace::{SandboxProfile, Workspace, match_env_pattern};

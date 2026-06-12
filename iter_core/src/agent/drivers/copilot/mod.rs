@@ -197,6 +197,10 @@ impl Agent for CopilotAgent {
         "copilot"
     }
 
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Copilot
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,

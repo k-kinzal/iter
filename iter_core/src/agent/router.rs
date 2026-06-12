@@ -40,18 +40,6 @@ pub struct AgentRouter {
 }
 
 impl AgentRouter {
-    /// The named sub-agents this router dispatches to.
-    ///
-    /// Exposed as an object-safe `&[(String, Box<dyn Agent>)]`. The named-pair
-    /// enumeration backs routing and is deliberately kept un-flattened so each
-    /// sub-agent stays individually addressable by name. The accessor is
-    /// preserved for callers that introspect a built router — for example, to
-    /// assemble a merged sandbox profile from its sub-agents.
-    #[must_use]
-    pub fn agents(&self) -> &[(String, Box<dyn Agent>)] {
-        &self.agents
-    }
-
     /// Construct a router over the given named agents with the specified strategy.
     ///
     /// # Panics
@@ -117,6 +105,20 @@ impl AgentRouter {
 impl Agent for AgentRouter {
     fn name(&self) -> &'static str {
         "router"
+    }
+
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Router
+    }
+
+    /// The router's named sub-agents, in declaration order.
+    ///
+    /// Backs routing and — via the sandbox layer's `Router` match arm — the
+    /// union of the sub-agents' sandbox profiles. The named-pair enumeration
+    /// is deliberately kept un-flattened so each sub-agent stays individually
+    /// addressable by name.
+    fn sub_agents(&self) -> &[(String, Box<dyn Agent>)] {
+        &self.agents
     }
 
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {

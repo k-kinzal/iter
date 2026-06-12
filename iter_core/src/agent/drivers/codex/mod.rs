@@ -153,6 +153,10 @@ impl Agent for CodexAgent {
         "codex"
     }
 
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Codex
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,

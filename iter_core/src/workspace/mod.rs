@@ -35,6 +35,6 @@ pub use apply_back::ApplyBackMode;
 pub use clone::{CloneSettings, CloneWorkspace, CloneWorkspaceError};
 pub use local::{LocalWorkspace, LocalWorkspaceError};
 pub use sandbox::{
-    BackendError, NetworkAccess, SandboxBackend, SandboxDescriptor, SandboxPolicy,
-    SandboxRequirements, SandboxWorkspace, SandboxWorkspaceError, match_env_pattern,
+    BackendError, NetworkAccess, SandboxBackend, SandboxDescriptor, SandboxPolicy, SandboxProfile,
+    SandboxWorkspace, SandboxWorkspaceError, match_env_pattern,
 };

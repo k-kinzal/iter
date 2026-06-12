@@ -126,17 +126,6 @@ fn home_subpath(leaf: &str) -> Option<PathBuf> {
 }
 
 impl ClaudeAgent {
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    ///
-    /// The returned handle exposes both the resolved path and its
-    /// canonical target for sandbox-layer consumers that need to grant
-    /// read access to a symlink shim (volta, nvm, asdf, homebrew cask).
-    #[must_use]
-    pub fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
-    }
-
     /// `${HOME}/.claude` — persistent configuration root and per-session
     /// state sink (transcripts under `projects/`, todos, statsig, shell
     /// snapshots). `None` when `HOME` is unset.
@@ -216,6 +205,20 @@ impl ClaudeAgent {
 impl Agent for ClaudeAgent {
     fn name(&self) -> &'static str {
         "claude"
+    }
+
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Claude
+    }
+
+    /// Resolved on-disk location of the configured binary, or `None` when
+    /// nothing on `$PATH` or the supplied path matches an existing file.
+    ///
+    /// The returned handle exposes both the resolved path and its canonical
+    /// target so the sandbox layer can grant read access to a symlink shim
+    /// (volta, nvm, asdf, homebrew cask).
+    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
+        crate::agent::command_path::CommandPath::resolve(&self.command)
     }
 
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {

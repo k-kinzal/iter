@@ -70,19 +70,14 @@ pub struct CursorAgent {
     pub env: Vec<(String, String)>,
 }
 
-impl CursorAgent {
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    #[must_use]
-    pub fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
-    }
-}
-
 #[async_trait]
 impl Agent for CursorAgent {
     fn name(&self) -> &'static str {
         "cursor"
+    }
+
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Cursor
     }
 
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {

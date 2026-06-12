@@ -156,6 +156,10 @@ struct StubAgent;
 
 #[async_trait]
 impl Agent for StubAgent {
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Fake
+    }
+
     async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Ok(AgentRun::empty())
     }
@@ -169,6 +173,10 @@ struct FailingAgent;
 
 #[async_trait]
 impl Agent for FailingAgent {
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Fake
+    }
+
     async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         Err(crate::agent::AgentError::Cancelled)
     }
@@ -210,6 +218,10 @@ struct SluggishCleanupAgent {
 
 #[async_trait]
 impl Agent for SluggishCleanupAgent {
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Fake
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         ctx.cancel.cancelled().await;
         // Stay alive much longer than DRAIN_GRACE so that any test
@@ -222,6 +234,10 @@ impl Agent for SluggishCleanupAgent {
 
 #[async_trait]
 impl Agent for SleepyAgent {
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Fake
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
         tokio::select! {
             () = tokio::time::sleep(self.delay) => Ok(AgentRun::empty()),

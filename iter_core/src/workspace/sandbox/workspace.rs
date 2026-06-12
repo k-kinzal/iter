@@ -8,8 +8,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+use crate::Workspace;
 use crate::workspace::WorkspaceError;
-use crate::{SandboxRequirements, Workspace};
 use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
@@ -21,6 +21,7 @@ use crate::workspace::mirror::{CloneFilter, Mirror};
 use super::backend::{SandboxBackend, SandboxDescriptor, build_backend, detect_backend_available};
 use super::error::SandboxWorkspaceError;
 use super::policy::SandboxPolicy;
+use super::profile::SandboxProfile;
 
 /// Workspace that clones the base directory into a tmpdir and wraps
 /// agent commands in a kernel-level sandbox.
@@ -29,11 +30,19 @@ use super::policy::SandboxPolicy;
 ///
 /// ```no_run
 /// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
-/// use iter_core::{SandboxRequirements, Workspace};
+/// use iter_core::{SandboxProfile, Workspace};
 /// use iter_core::workspace::{
 ///     ApplyBackMode, CloneSettings, NetworkAccess, SandboxPolicy, SandboxWorkspace,
 /// };
 /// use tokio_util::sync::CancellationToken;
+///
+/// // In production the profile is assembled from the agent via
+/// // `SandboxProfile::for_agent(&agent)`; here we build one by hand with
+/// // the public builder API.
+/// let mut profile = SandboxProfile::new();
+/// profile
+///     .allow_network_host("api.anthropic.com:443")
+///     .pass_env("CLAUDE_*");
 ///
 /// let mut ws = SandboxWorkspace::new(
 ///     "/Users/me/my-project",
@@ -52,11 +61,7 @@ use super::policy::SandboxPolicy;
 ///         extra_deny_paths: Vec::new(),
 ///         allow_exec: Vec::new(),
 ///     },
-///     SandboxRequirements {
-///         network_hosts: vec!["api.anthropic.com".into()],
-///         env_pass: vec!["CLAUDE_*".into()],
-///         ..Default::default()
-///     },
+///     profile,
 /// );
 /// ws.setup(CancellationToken::new()).await?;
 /// // ... run the agent ...
@@ -68,7 +73,7 @@ pub struct SandboxWorkspace {
     base: PathBuf,
     settings: CloneSettings,
     policy: SandboxPolicy,
-    requirements: SandboxRequirements,
+    profile: SandboxProfile,
 
     mirror: Option<Mirror>,
     backend: Option<Box<dyn SandboxBackend>>,
@@ -81,20 +86,21 @@ impl SandboxWorkspace {
     ///
     /// Every knob is supplied by the caller. `settings` controls the
     /// clone-layer behaviour (mirrors [`CloneSettings`]). `policy` is the
-    /// project's upper-bound rule set from the declaration. `requirements`
-    /// is the agent's lower-bound declaration shipped by iter.
+    /// project's upper-bound rule set from the declaration. `profile` is the
+    /// agent's lower-bound OS-access profile, assembled by
+    /// [`SandboxProfile::for_agent`](super::profile::SandboxProfile::for_agent).
     #[must_use]
     pub fn new(
         base: impl Into<PathBuf>,
         settings: CloneSettings,
         policy: SandboxPolicy,
-        requirements: SandboxRequirements,
+        profile: SandboxProfile,
     ) -> Self {
         Self {
             base: base.into(),
             settings,
             policy,
-            requirements,
+            profile,
             mirror: None,
             backend: None,
             command_prefix: Vec::new(),
@@ -170,7 +176,7 @@ impl SandboxWorkspace {
         let descriptor = SandboxDescriptor {
             workspace_path: &temp_path,
             policy: &self.policy,
-            requirements: &self.requirements,
+            profile: &self.profile,
         };
         let prefix = backend.prepare(&descriptor)?;
 
@@ -313,7 +319,7 @@ mod tests {
             base.path(),
             clone_settings(),
             default_deny_policy(),
-            SandboxRequirements::default(),
+            SandboxProfile::default(),
         );
         assert_eq!(ws.path(), base.path());
     }
@@ -325,7 +331,7 @@ mod tests {
             base.path(),
             clone_settings(),
             default_deny_policy(),
-            SandboxRequirements::default(),
+            SandboxProfile::default(),
         );
         ws.teardown(CancellationToken::new())
             .await
@@ -338,7 +344,7 @@ mod tests {
             "/definitely/not/a/path/sandbox",
             clone_settings(),
             default_deny_policy(),
-            SandboxRequirements::default(),
+            SandboxProfile::default(),
         );
         let err = ws
             .setup(CancellationToken::new())
@@ -361,7 +367,7 @@ mod tests {
             base.path(),
             clone_settings(),
             default_deny_policy(),
-            SandboxRequirements::default(),
+            SandboxProfile::default(),
         );
         ws.setup(CancellationToken::new()).await.expect("setup");
         let temp = ws.path().to_path_buf();
@@ -417,7 +423,7 @@ mod tests {
             base: base.path().to_path_buf(),
             settings: clone_settings(),
             policy: default_deny_policy(),
-            requirements: SandboxRequirements::default(),
+            profile: SandboxProfile::default(),
             mirror: Some(mirror),
             backend: Some(Box::new(FailingBackend)),
             command_prefix: Vec::new(),
@@ -444,7 +450,7 @@ mod tests {
             base.path(),
             clone_settings(),
             default_deny_policy(),
-            SandboxRequirements::default(),
+            SandboxProfile::default(),
         );
         assert!(Workspace::sandbox_command_prefix(&ws).is_empty());
     }
@@ -464,7 +470,7 @@ mod tests {
             base: base.path().to_path_buf(),
             settings: clone_settings(),
             policy: default_deny_policy(),
-            requirements: SandboxRequirements::default(),
+            profile: SandboxProfile::default(),
             mirror: None,
             backend: None,
             command_prefix: prefix.clone(),

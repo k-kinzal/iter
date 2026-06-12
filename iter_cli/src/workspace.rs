@@ -13,7 +13,7 @@ use std::sync::Arc;
 use iter_core::workspace::{
     ApplyBackMode, CloneSettings, CloneWorkspace, LocalWorkspace, SandboxPolicy, SandboxWorkspace,
 };
-use iter_core::{SandboxRequirements, Workspace};
+use iter_core::{SandboxProfile, Workspace};
 use iter_language::{ApplyBackDef, CloneApplyBackMode, WorkspaceDef};
 
 /// Frozen workspace configuration extracted from an [`Iterfile`](iter_language::Iterfile).
@@ -35,7 +35,7 @@ struct SandboxSpec {
     apply_back_excludes: Vec<String>,
     apply_back_includes: Vec<String>,
     policy: SandboxPolicy,
-    requirements: SandboxRequirements,
+    profile: SandboxProfile,
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +89,7 @@ impl WorkspaceSpec {
                     apply_back_includes: spec.apply_back_includes.clone(),
                 },
                 spec.policy.clone(),
-                spec.requirements.clone(),
+                spec.profile.clone(),
             )),
         }
     }
@@ -125,11 +125,13 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
 /// signal sees a fresh, not-yet-set-up `Box<dyn Workspace>` — exactly the
 /// contract demanded by [`iter_core::Runner`].
 ///
-/// `agent_requirements` is the agent's declared lower bound (what the agent
-/// needs to function) and is merged into every
+/// `profile` is the agent's lower bound (the OS access the agent needs to
+/// function), assembled by
+/// [`SandboxProfile::for_agent`](iter_core::SandboxProfile::for_agent) and
+/// carried into every
 /// [`SandboxWorkspace`](iter_core::workspace::SandboxWorkspace) the supply
 /// yields. The workspace policy (the project's upper bound) comes from the
-/// DSL; the requirements come from the agent. For non-sandbox workspaces the
+/// DSL; the profile comes from the agent. For non-sandbox workspaces the
 /// parameter is unused.
 ///
 /// The closure is constructed eagerly here; setup-time validation is deferred
@@ -138,7 +140,7 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
 #[must_use = "the returned workspace supply closure is not useful unless called"]
 pub fn build_workspace_factory(
     decl: &WorkspaceDef,
-    agent_requirements: SandboxRequirements,
+    profile: SandboxProfile,
 ) -> impl Fn() -> Box<dyn Workspace> + Send + Sync + use<> {
     let spec = match decl {
         WorkspaceDef::Local { base } => WorkspaceSpec::Local {
@@ -186,7 +188,7 @@ pub fn build_workspace_factory(
             apply_back_excludes: ab_excludes.clone(),
             apply_back_includes: ab_includes.clone(),
             policy: map_sandbox_policy(policy),
-            requirements: agent_requirements,
+            profile,
         })),
     };
 
@@ -204,7 +206,7 @@ mod tests {
         let decl = WorkspaceDef::Local {
             base: "/tmp/iter-cli-test".into(),
         };
-        let factory = build_workspace_factory(&decl, SandboxRequirements::default());
+        let factory = build_workspace_factory(&decl, SandboxProfile::default());
         let a = factory();
         let b = factory();
         // The supply yields trait objects; each carries the workspace-kind
@@ -231,7 +233,7 @@ mod tests {
             preserve_mtime: true,
             apply_back: sync_apply_back(),
         };
-        let factory = build_workspace_factory(&decl, SandboxRequirements::default());
+        let factory = build_workspace_factory(&decl, SandboxProfile::default());
         let w = factory();
         assert_eq!(w.name(), "clone");
     }
@@ -246,7 +248,7 @@ mod tests {
             preserve_mtime: true,
             apply_back: sync_apply_back(),
         };
-        let factory = build_workspace_factory(&decl, SandboxRequirements::default());
+        let factory = build_workspace_factory(&decl, SandboxProfile::default());
         let w = factory();
         assert_eq!(w.name(), "clone");
     }
@@ -267,7 +269,7 @@ mod tests {
                 allow_exec: Vec::new(),
             },
         };
-        let factory = build_workspace_factory(&decl, SandboxRequirements::default());
+        let factory = build_workspace_factory(&decl, SandboxProfile::default());
         let w = factory();
         assert_eq!(w.name(), "sandbox");
     }

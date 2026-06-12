@@ -18,7 +18,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::{AgentError, AgentRun};
+use crate::agent::command_path::CommandPath;
+use crate::agent::{AgentError, AgentKind, AgentRun};
 use crate::log::{NoopSink, OutputSink};
 use crate::prompt::Prompt;
 use crate::signal::{SignalId, SignalKind};
@@ -209,6 +210,39 @@ pub trait Agent: Send + Sync {
     /// so the placeholder never reaches production telemetry.
     fn name(&self) -> &'static str {
         "agent"
+    }
+
+    /// The closed, object-safe discriminant of this agent.
+    ///
+    /// Distinct in role from [`name`](Agent::name): `name` is a telemetry
+    /// *label*, whereas `kind` is the *discriminant* the sandbox layer keys
+    /// per-agent OS-access policy off of. The sandbox layer matches
+    /// **exhaustively** over [`AgentKind`] (see
+    /// [`SandboxProfile::for_agent`](crate::workspace::sandbox::SandboxProfile::for_agent)),
+    /// so every driver must report a kind — there is deliberately no default.
+    fn kind(&self) -> AgentKind;
+
+    /// Resolved on-disk location of this agent's configured binary, or
+    /// `None` when the agent runs no external binary (or nothing on `$PATH`
+    /// matches).
+    ///
+    /// Object-safe so the sandbox layer can grant read access to the
+    /// executable image (and its canonical target behind a volta/nvm/asdf
+    /// shim) through `&dyn Agent` without downcasting. The default returns
+    /// `None` — only CLI-backed drivers whose binary must be mapped into a
+    /// sandboxed child override it.
+    fn command_path(&self) -> Option<CommandPath> {
+        None
+    }
+
+    /// The named sub-agents this agent composes, in declaration order.
+    ///
+    /// Object-safe accessor backing the sandbox layer's `Router` match arm:
+    /// a composite agent (the [`AgentRouter`](crate::agent::AgentRouter))
+    /// returns its sub-agents so their profiles can be unioned. The default
+    /// returns an empty slice — a leaf agent composes nothing.
+    fn sub_agents(&self) -> &[(String, Box<dyn Agent>)] {
+        &[]
     }
 }
 

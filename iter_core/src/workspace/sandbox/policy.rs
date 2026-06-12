@@ -11,12 +11,13 @@
 //!    reach*. A policy with [`NetworkAccess::Off`] disables network
 //!    regardless of what the agent asks for.
 //!
-//! 2. **[`SandboxRequirements`](crate::SandboxRequirements) — the agent's
-//!    lower bound.** Each supported agent declares, via
-//!    [`Agent::sandbox_requirements`](crate::Agent::sandbox_requirements),
-//!    the set of paths, hosts, and env vars its process needs to function
-//!    at all. iter ships this knowledge so declaration authors never have to
-//!    enumerate it themselves.
+//! 2. **[`SandboxProfile`](super::profile::SandboxProfile) — the agent's
+//!    lower bound.** The sandbox layer assembles this from the agent's
+//!    [`kind`](crate::Agent::kind) via
+//!    [`SandboxProfile::for_agent`](super::profile::SandboxProfile::for_agent):
+//!    the set of paths, hosts, and env vars the agent's process needs to
+//!    function at all. iter ships this knowledge so declaration authors never
+//!    have to enumerate it themselves.
 //!
 //! The workspace merges both at setup. The merge is *intersection* on the
 //! network axis and *union* on the allow-list axes, but always clipped by
@@ -43,14 +44,12 @@ use std::path::PathBuf;
 /// given project can function without network access.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetworkAccess {
-    /// No outbound network. Overrides any
-    /// [`network_hosts`](crate::SandboxRequirements::network_hosts)
-    /// the agent declares.
+    /// No outbound network. Overrides any network hosts the agent's
+    /// profile declares.
     Off,
     /// Network allowed only to the hosts listed here and to the subset
-    /// of the agent's declared
-    /// [`network_hosts`](crate::SandboxRequirements::network_hosts)
-    /// that also appear here. If the list is empty, only the intersection
+    /// of the agent profile's declared network hosts that also appear
+    /// here. If the list is empty, only the intersection
     /// with the agent's declarations is allowed — effectively
     /// "whatever the agent declared, nothing else".
     Hosts(Vec<String>),
@@ -71,17 +70,14 @@ pub struct SandboxPolicy {
     /// Absolute paths outside the workspace tmpdir the agent may **read**.
     ///
     /// Entries are passed to the backend verbatim; subdirectories are
-    /// included recursively. The agent's declared
-    /// [`file_reads`](crate::SandboxRequirements::file_reads) are
+    /// included recursively. The agent profile's declared file reads are
     /// union'd in on top.
     pub allow_read_outside: Vec<PathBuf>,
 
     /// Absolute paths outside the workspace tmpdir the agent may **write**.
     ///
     /// Keep this tight — every entry is a hole in the sandbox. The
-    /// agent's declared
-    /// [`file_writes`](crate::SandboxRequirements::file_writes) are
-    /// union'd in on top.
+    /// agent profile's declared file writes are union'd in on top.
     pub allow_write_outside: Vec<PathBuf>,
 
     /// Absolute paths explicitly denied even if something else (policy

@@ -5,7 +5,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use crate::SandboxRequirements;
+use crate::SandboxProfile;
 
 use super::super::policy::NetworkAccess;
 use super::SandboxDescriptor;
@@ -28,13 +28,13 @@ pub fn render_profile(descriptor: &SandboxDescriptor<'_>) -> String {
     // signals itself (pthread_kill, abort handlers). Agents that spawn
     // and manage subprocess trees (shell tools, `timeout`, `kill`) must
     // opt into the broader `(allow signal)` rule via
-    // [`SandboxRequirements::allow_signal`]; rendered a few lines below
+    // [`SandboxProfile::allow_signal`]; rendered a few lines below
     // so a `true` value overrides the baseline. The kernel's UID check
     // still bounds the expanded allow to same-UID processes.
     buf.push_str("; Process management — exec/fork + self-signal.\n");
     render_process_exec(&mut buf, &descriptor.policy.allow_exec);
     buf.push_str("(allow process-fork)\n");
-    if descriptor.requirements.allow_signal {
+    if descriptor.profile.allow_signal {
         buf.push_str("(allow signal)\n");
     } else {
         buf.push_str("(allow signal (target self))\n");
@@ -92,7 +92,7 @@ pub fn render_profile(descriptor: &SandboxDescriptor<'_>) -> String {
     for p in &descriptor.policy.allow_write_outside {
         writes.push(canonical_or_self(p));
     }
-    for p in &descriptor.requirements.file_writes {
+    for p in &descriptor.profile.file_writes {
         writes.push(canonical_or_self(p));
     }
     writes.sort();
@@ -113,9 +113,9 @@ pub fn render_profile(descriptor: &SandboxDescriptor<'_>) -> String {
     // a literal subpath. Agents declare them as sandbox-exec SBPL
     // regexes via `requirements.file_write_regexes`; we emit each as a
     // standalone `(allow file-write* (regex #"..."))` rule.
-    if !descriptor.requirements.file_write_regexes.is_empty() {
+    if !descriptor.profile.file_write_regexes.is_empty() {
         buf.push_str("; Agent-declared write-regex allowances.\n");
-        for re in &descriptor.requirements.file_write_regexes {
+        for re in &descriptor.profile.file_write_regexes {
             writeln!(buf, "(allow file-write* (regex #{}))", sb_string(re)).ok();
         }
         buf.push('\n');
@@ -125,7 +125,7 @@ pub fn render_profile(descriptor: &SandboxDescriptor<'_>) -> String {
     render_network(
         &mut buf,
         &descriptor.policy.network,
-        descriptor.requirements,
+        descriptor.profile,
     );
     buf.push('\n');
 
@@ -236,7 +236,7 @@ fn render_read_data(buf: &mut String, descriptor: &SandboxDescriptor<'_>) {
     paths.push(canonical_or_self(descriptor.workspace_path));
 
     // Agent-declared reads (credentials, keychain, binary paths, …).
-    for p in &descriptor.requirements.file_reads {
+    for p in &descriptor.profile.file_reads {
         paths.push(canonical_or_self(p));
     }
 
@@ -302,7 +302,7 @@ fn render_read_data(buf: &mut String, descriptor: &SandboxDescriptor<'_>) {
     buf.push_str(")\n\n");
 }
 
-fn render_network(buf: &mut String, access: &NetworkAccess, reqs: &SandboxRequirements) {
+fn render_network(buf: &mut String, access: &NetworkAccess, reqs: &SandboxProfile) {
     buf.push_str("; Network policy.\n");
     match access {
         NetworkAccess::Off => {
@@ -364,7 +364,7 @@ mod tests {
     use super::super::super::policy::{NetworkAccess, SandboxPolicy};
     use super::super::SandboxDescriptor;
     use super::*;
-    use crate::SandboxRequirements;
+    use crate::SandboxProfile;
 
     /// Default-deny test policy: every field empty, network off. Tests
     /// construct this explicitly because the production code has no
@@ -383,12 +383,12 @@ mod tests {
     fn desc<'a>(
         ws: &'a Path,
         policy: &'a SandboxPolicy,
-        reqs: &'a SandboxRequirements,
+        reqs: &'a SandboxProfile,
     ) -> SandboxDescriptor<'a> {
         SandboxDescriptor {
             workspace_path: ws,
             policy,
-            requirements: reqs,
+            profile: reqs,
         }
     }
 
@@ -396,7 +396,7 @@ mod tests {
     fn profile_denies_by_default_and_opens_workspace_write() {
         let ws = Path::new("/tmp/iter-ws-123");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
 
         assert!(profile.contains("(deny default)"));
@@ -412,7 +412,7 @@ mod tests {
     fn profile_defaults_signal_to_self_target() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("(allow signal (target self))"),
@@ -428,10 +428,8 @@ mod tests {
     fn profile_broadens_signal_when_agent_opts_in() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements {
-            allow_signal: true,
-            ..SandboxRequirements::default()
-        };
+        let mut reqs = SandboxProfile::new();
+        reqs.allow_signal();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("(allow signal)\n"),
@@ -447,7 +445,7 @@ mod tests {
     fn profile_uses_enumerated_reads_not_blanket() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
 
         // Blanket content reads must NOT appear.
@@ -477,10 +475,8 @@ mod tests {
     fn profile_includes_agent_declared_reads() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements {
-            file_reads: vec![PathBuf::from("/Users/me/.claude/.credentials.json")],
-            ..SandboxRequirements::default()
-        };
+        let mut reqs = SandboxProfile::new();
+        reqs.allow_read("/Users/me/.claude/.credentials.json");
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains(".credentials.json"),
@@ -495,7 +491,7 @@ mod tests {
             allow_read_outside: vec![PathBuf::from("/Users/me/data")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("/Users/me/data"),
@@ -507,7 +503,7 @@ mod tests {
     fn profile_restricts_mach_lookup_to_named_services() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
 
         assert!(profile.contains("(global-name \"com.apple.SecurityServer\")"));
@@ -526,10 +522,8 @@ mod tests {
             allow_write_outside: vec![PathBuf::from("/var/my-policy-out")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements {
-            file_writes: vec![PathBuf::from("/Users/me/.claude/projects")],
-            ..SandboxRequirements::default()
-        };
+        let mut reqs = SandboxProfile::new();
+        reqs.allow_write("/Users/me/.claude/projects");
         let profile = render_profile(&desc(ws, &policy, &reqs));
 
         assert!(profile.contains("/Users/me/.claude/projects"));
@@ -543,10 +537,8 @@ mod tests {
     fn profile_emits_agent_write_regexes_as_regex_allows() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements {
-            file_write_regexes: vec![r"^/private/tmp/claude-[0-9a-f]+-cwd$".into()],
-            ..SandboxRequirements::default()
-        };
+        let mut reqs = SandboxProfile::new();
+        reqs.allow_write_regex(r"^/private/tmp/claude-[0-9a-f]+-cwd$");
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile
@@ -562,7 +554,7 @@ mod tests {
             extra_deny_paths: vec![PathBuf::from("/Users/me/.ssh")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(profile.contains("/Users/me/.ssh"));
         let deny_idx = profile
@@ -581,7 +573,7 @@ mod tests {
     fn profile_escapes_quotes_in_paths() {
         let ws = Path::new("/tmp/with\"quote");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(profile.contains("/tmp/with\\\"quote"));
     }
@@ -593,7 +585,7 @@ mod tests {
             network: NetworkAccess::All,
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(profile.contains("(allow network-outbound)"));
         assert!(
@@ -609,7 +601,7 @@ mod tests {
             network: NetworkAccess::Hosts(vec!["api.anthropic.com".into()]),
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("denying all network"),
@@ -624,10 +616,8 @@ mod tests {
             network: NetworkAccess::Hosts(vec!["api.anthropic.com".into()]),
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements {
-            network_hosts: vec!["api.anthropic.com:443".into()],
-            ..SandboxRequirements::default()
-        };
+        let mut reqs = SandboxProfile::new();
+        reqs.allow_network_host("api.anthropic.com:443");
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(profile.contains("(allow network-outbound)"));
         assert!(
@@ -640,7 +630,7 @@ mod tests {
     fn profile_blanket_exec_when_allow_exec_empty() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("(allow process-exec)\n"),
@@ -658,7 +648,7 @@ mod tests {
             ],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             !profile.contains("(allow process-exec)\n"),
@@ -685,7 +675,7 @@ mod tests {
             allow_exec: vec![PathBuf::from("/usr/bin/git")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("(allow process-exec-interpreter\n"),
@@ -701,7 +691,7 @@ mod tests {
     fn profile_no_interpreter_block_when_allow_exec_empty() {
         let ws = Path::new("/tmp/ws");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             !profile.contains("process-exec-interpreter"),
@@ -716,7 +706,7 @@ mod tests {
             allow_exec: vec![PathBuf::from("/usr/bin/git")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("(allow process-exec\n    (literal \"/usr/bin/git\")"),
@@ -731,7 +721,7 @@ mod tests {
             allow_exec: vec![PathBuf::from("/nonexistent/path/to/binary")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("(literal \"/nonexistent/path/to/binary\")"),
@@ -746,7 +736,7 @@ mod tests {
             allow_exec: vec![PathBuf::from("/usr/bin/with\"quote")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains("/usr/bin/with\\\"quote"),
@@ -762,7 +752,7 @@ mod tests {
             allow_exec: vec![exec_path.clone()],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         let read_block_start = profile
             .find("file-read-data file-read-xattr")
@@ -788,7 +778,7 @@ mod tests {
             allow_exec: vec![PathBuf::from("/usr/bin/git")],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         let read_block_start = profile
             .find("file-read-data file-read-xattr")
@@ -813,7 +803,7 @@ mod tests {
             ],
             ..deny_all_policy()
         };
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         assert!(
             profile.contains(
@@ -831,7 +821,7 @@ mod tests {
     fn workspace_path_is_canonicalized_when_possible() {
         let ws = Path::new("/tmp");
         let policy = deny_all_policy();
-        let reqs = SandboxRequirements::default();
+        let reqs = SandboxProfile::default();
         let profile = render_profile(&desc(ws, &policy, &reqs));
         let has_canonical = profile.contains("(allow file-write* (subpath \"/private/tmp\"))");
         let has_raw = profile.contains("(allow file-write* (subpath \"/tmp\"))");

@@ -34,7 +34,7 @@
 //!    reveals file existence and size but never content.
 //! 2. **Enumerated data+xattr** — `file-read-data` and `file-read-xattr`
 //!    are allowed only on platform system paths, the workspace tmpdir,
-//!    agent-declared reads ([`SandboxRequirements::file_reads`]),
+//!    the agent profile's file reads ([`SandboxProfile`](super::super::profile::SandboxProfile)),
 //!    resolved `$TMPDIR`, and policy-declared reads
 //!    ([`SandboxPolicy::allow_read_outside`]).
 //! 3. **Deny overrides** — [`SandboxPolicy::extra_deny_paths`] is

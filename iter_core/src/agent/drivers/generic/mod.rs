@@ -108,6 +108,10 @@ impl Agent for GenericAgent {
         "generic"
     }
 
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Generic
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let command = self.build_command(ctx.workspace_path, ctx.prompt)?;
         let delivery = if self.stdin_prompt {

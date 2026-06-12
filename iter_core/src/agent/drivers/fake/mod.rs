@@ -39,6 +39,10 @@ impl Agent for FakeAgent {
         "fake"
     }
 
+    fn kind(&self) -> crate::agent::AgentKind {
+        crate::agent::AgentKind::Fake
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         if ctx.cancel.is_cancelled() {
             return Err(AgentError::Cancelled);

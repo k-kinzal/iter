@@ -34,7 +34,7 @@ pub fn render_argv(descriptor: &SandboxDescriptor<'_>) -> Vec<OsString> {
             // bwrap cannot filter by hostname; if the agent declared any
             // hosts, open the shared net namespace and document that the
             // caller is responsible for external firewalling.
-            if !descriptor.requirements.network_hosts.is_empty() {
+            if !descriptor.profile.network_hosts.is_empty() {
                 argv.push("--share-net".into());
             }
             // Otherwise leave net namespace unshared (default-deny).
@@ -75,7 +75,7 @@ pub fn render_argv(descriptor: &SandboxDescriptor<'_>) -> Vec<OsString> {
         .policy
         .allow_read_outside
         .iter()
-        .chain(descriptor.requirements.file_reads.iter())
+        .chain(descriptor.profile.file_reads.iter())
     {
         if readonly_paths.insert(path.clone()) {
             argv.push("--ro-bind-try".into());
@@ -90,7 +90,7 @@ pub fn render_argv(descriptor: &SandboxDescriptor<'_>) -> Vec<OsString> {
         .policy
         .allow_write_outside
         .iter()
-        .chain(descriptor.requirements.file_writes.iter())
+        .chain(descriptor.profile.file_writes.iter())
     {
         if writable_paths.insert(path.clone()) {
             argv.push("--bind-try".into());
@@ -109,7 +109,7 @@ pub fn render_argv(descriptor: &SandboxDescriptor<'_>) -> Vec<OsString> {
     // Environment — bwrap inherits nothing when we --clearenv, so
     // re-populate only the variables the agent requires.
     argv.push("--clearenv".into());
-    let env_vars = expand_env_pass(&descriptor.requirements.env_pass);
+    let env_vars = expand_env_pass(&descriptor.profile.env_pass);
     for (k, v) in env_vars {
         argv.push("--setenv".into());
         argv.push(OsString::from(k));
@@ -149,7 +149,7 @@ mod tests {
     use super::super::super::policy::{NetworkAccess, SandboxPolicy};
     use super::super::SandboxDescriptor;
     use super::*;
-    use crate::SandboxRequirements;
+    use crate::SandboxProfile;
 
     /// Default-deny test policy: every field empty, network off. The
     /// production codepath has no `deny_all_policy()` because the
@@ -168,12 +168,12 @@ mod tests {
     fn desc<'a>(
         ws: &'a Path,
         policy: &'a SandboxPolicy,
-        reqs: &'a SandboxRequirements,
+        reqs: &'a SandboxProfile,
     ) -> SandboxDescriptor<'a> {
         SandboxDescriptor {
             workspace_path: ws,
             policy,
-            requirements: reqs,
+            profile: reqs,
         }
     }
 
@@ -189,7 +189,7 @@ mod tests {
     fn argv_starts_with_bwrap_and_unshare() {
         let ws = Path::new("/tmp/iter-ws");
         let p = deny_all_policy();
-        let r = SandboxRequirements::default();
+        let r = SandboxProfile::default();
         let argv = render_argv(&desc(ws, &p, &r));
         assert_eq!(argv[0], "bwrap");
         assert!(argv.iter().any(|a| a == "--unshare-all"));
@@ -200,7 +200,7 @@ mod tests {
     fn argv_binds_workspace_rw() {
         let ws = Path::new("/tmp/iter-ws");
         let p = deny_all_policy();
-        let r = SandboxRequirements::default();
+        let r = SandboxProfile::default();
         let argv = render_argv(&desc(ws, &p, &r));
         assert!(argv_contains_triple(
             &argv,
@@ -213,7 +213,7 @@ mod tests {
     #[test]
     fn argv_opens_network_only_when_policy_allows() {
         let ws = Path::new("/tmp/ws");
-        let r = SandboxRequirements::default();
+        let r = SandboxProfile::default();
         let p_off = SandboxPolicy {
             network: NetworkAccess::Off,
             ..deny_all_policy()
@@ -236,11 +236,9 @@ mod tests {
             network: NetworkAccess::Hosts(vec!["api.anthropic.com".into()]),
             ..deny_all_policy()
         };
-        let empty = SandboxRequirements::default();
-        let declared = SandboxRequirements {
-            network_hosts: vec!["api.anthropic.com".into()],
-            ..Default::default()
-        };
+        let empty = SandboxProfile::default();
+        let mut declared = SandboxProfile::new();
+        declared.allow_network_host("api.anthropic.com");
         assert!(
             !render_argv(&desc(ws, &p, &empty))
                 .iter()
@@ -257,10 +255,8 @@ mod tests {
     fn argv_mounts_read_paths_readonly() {
         let ws = Path::new("/tmp/ws");
         let p = deny_all_policy();
-        let r = SandboxRequirements {
-            file_reads: vec![PathBuf::from("/home/me/.claude/settings.json")],
-            ..Default::default()
-        };
+        let mut r = SandboxProfile::new();
+        r.allow_read("/home/me/.claude/settings.json");
         let argv = render_argv(&desc(ws, &p, &r));
         assert!(argv_contains_triple(
             &argv,
@@ -274,10 +270,8 @@ mod tests {
     fn argv_mounts_write_paths_readwrite() {
         let ws = Path::new("/tmp/ws");
         let p = deny_all_policy();
-        let r = SandboxRequirements {
-            file_writes: vec![PathBuf::from("/home/me/.claude/projects")],
-            ..Default::default()
-        };
+        let mut r = SandboxProfile::new();
+        r.allow_write("/home/me/.claude/projects");
         let argv = render_argv(&desc(ws, &p, &r));
         assert!(argv_contains_triple(
             &argv,
@@ -294,7 +288,7 @@ mod tests {
             extra_deny_paths: vec![PathBuf::from("/home/me/.ssh")],
             ..deny_all_policy()
         };
-        let r = SandboxRequirements::default();
+        let r = SandboxProfile::default();
         let argv = render_argv(&desc(ws, &p, &r));
         assert!(argv_contains_pair(&argv, "--tmpfs", "/home/me/.ssh"));
     }
@@ -308,10 +302,8 @@ mod tests {
         unsafe {
             std::env::set_var("ITER_TEST_SANDBOX_ENV_FOO", "bar");
         }
-        let r = SandboxRequirements {
-            env_pass: vec!["ITER_TEST_SANDBOX_ENV_*".into()],
-            ..Default::default()
-        };
+        let mut r = SandboxProfile::new();
+        r.pass_env("ITER_TEST_SANDBOX_ENV_*");
         let argv = render_argv(&desc(ws, &p, &r));
         unsafe {
             std::env::remove_var("ITER_TEST_SANDBOX_ENV_FOO");
@@ -329,7 +321,7 @@ mod tests {
     fn argv_ends_with_double_dash_sentinel() {
         let ws = Path::new("/tmp/ws");
         let p = deny_all_policy();
-        let r = SandboxRequirements::default();
+        let r = SandboxProfile::default();
         let argv = render_argv(&desc(ws, &p, &r));
         assert_eq!(argv.last().unwrap(), "--");
     }

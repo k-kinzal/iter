@@ -16,13 +16,15 @@
 //! # The two kinds of knowledge iter holds
 //!
 //! 1. **Agent operational knowledge** — "what does Claude Code need to
-//!    function?" is shipped inside iter as each agent's own requirements.
+//!    function?" is shipped inside iter and assembled sandbox-side from each
+//!    agent's kind (`SandboxProfile::for_agent`), not declared by the agent.
 //!    Users do not enumerate per-agent paths or hosts in source files.
 //! 2. **Project-shaped decisions** — expressed in the source file. Every field in this module.
 //!
 //! The two are merged at workspace setup: the project's `SandboxPolicyDef`
-//! is the upper bound and the agent's requirements are the lower bound. This
-//! module describes only the project-shaped half — the declaration.
+//! is the upper bound and the agent's assembled OS-access profile is the
+//! lower bound. This module describes only the project-shaped half — the
+//! declaration.
 //!
 //! Every type in this module is part of the v1 stability contract. Refer to
 //! `docs/dsl-reference.md` for the corresponding surface syntax and the
