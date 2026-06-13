@@ -143,6 +143,10 @@ impl Agent for GeminiAgent {
         crate::agent::AgentKind::Gemini
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -153,6 +157,7 @@ impl Agent for GeminiAgent {
             signal_kind,
             hook_isolation_key,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
         match self.mode {
@@ -163,7 +168,7 @@ impl Agent for GeminiAgent {
                     args: &self.args,
                 }
                 .build(workspace_path);
-                apply_user_env(&mut command, &self.env);
+                apply_user_env(&mut command, declared_env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
                     signal_id,
@@ -198,6 +203,7 @@ impl Agent for GeminiAgent {
                     signal_kind,
                     &hook_isolation_key,
                     sandbox_command_prefix,
+                    declared_env,
                 )
                 .await
             }
@@ -225,11 +231,12 @@ impl GeminiAgent {
         signal_kind: crate::signal::SignalKind,
         hook_isolation_key: &str,
         sandbox_prefix: &[OsString],
+        declared_env: &[(String, String)],
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
         let mut command = self.build_interactive_command(path, prompt);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "gemini");
         command
             .stdin(Stdio::inherit())
@@ -302,6 +309,7 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -367,6 +375,7 @@ exit 1"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }

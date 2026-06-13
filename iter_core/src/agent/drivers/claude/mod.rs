@@ -221,6 +221,10 @@ impl Agent for ClaudeAgent {
         crate::agent::command_path::CommandPath::resolve(&self.command)
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -231,6 +235,7 @@ impl Agent for ClaudeAgent {
             signal_kind,
             hook_isolation_key,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
         // Resolve the session id *before* spawning so a filesystem failure
@@ -254,7 +259,7 @@ impl Agent for ClaudeAgent {
                     session_id: session_id.as_deref(),
                 }
                 .build(workspace_path);
-                apply_user_env(&mut command, &self.env);
+                apply_user_env(&mut command, declared_env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
                     signal_id,
@@ -290,6 +295,7 @@ impl Agent for ClaudeAgent {
                     signal_kind,
                     &hook_isolation_key,
                     sandbox_command_prefix,
+                    declared_env,
                 )
                 .await
             }
@@ -317,11 +323,12 @@ impl ClaudeAgent {
         signal_kind: crate::signal::SignalKind,
         hook_isolation_key: &str,
         sandbox_prefix: &[OsString],
+        declared_env: &[(String, String)],
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
         let mut command = self.build_interactive_command(path, prompt, session_id);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "claude");
         command
             .stdin(Stdio::inherit())
@@ -385,6 +392,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = claude_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -403,6 +411,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }
@@ -415,6 +424,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -536,6 +546,7 @@ exit 0
         let agent = claude_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(
             !sink.stderr().await.lines().any(|l| l == "--session-id"),
@@ -564,6 +575,7 @@ exit 0
 
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
 
         let emitted_uuid =
@@ -597,6 +609,7 @@ exit 0
             s.command = bin.to_string_lossy().into_owned();
             let agent = s.clone();
             let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+            let ctx = ctx.with_declared_env(agent.declared_env());
             agent.run(ctx).await.expect("run ok");
             assert_eq!(
                 session_id_from_argv(&sink.stderr().await).as_deref(),

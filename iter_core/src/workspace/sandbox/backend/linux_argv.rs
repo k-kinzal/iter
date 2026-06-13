@@ -106,11 +106,16 @@ pub fn render_argv(descriptor: &SandboxDescriptor<'_>) -> Vec<OsString> {
         argv.push(path.as_os_str().to_owned());
     }
 
-    // Environment — bwrap inherits nothing when we --clearenv, so
-    // re-populate only the variables the agent requires.
+    // Environment — bwrap inherits nothing when we --clearenv, so restore
+    // both host passthrough matches and explicit operator-declared child env.
     argv.push("--clearenv".into());
     let env_vars = expand_env_pass(&descriptor.profile.env_pass);
     for (k, v) in env_vars {
+        argv.push("--setenv".into());
+        argv.push(OsString::from(k));
+        argv.push(OsString::from(v));
+    }
+    for (k, v) in &descriptor.profile.declared_env {
         argv.push("--setenv".into());
         argv.push(OsString::from(k));
         argv.push(OsString::from(v));
@@ -314,6 +319,25 @@ mod tests {
             "--setenv",
             "ITER_TEST_SANDBOX_ENV_FOO",
             "bar"
+        ));
+    }
+
+    #[test]
+    fn argv_sets_declared_env_without_env_pass() {
+        let ws = Path::new("/tmp/ws");
+        let p = deny_all_policy();
+        let mut r = SandboxProfile::new();
+        r.declared_env
+            .push(("ITER_DECLARED_ONLY".into(), "declared-value".into()));
+
+        let argv = render_argv(&desc(ws, &p, &r));
+
+        assert!(argv.iter().any(|a| a == "--clearenv"));
+        assert!(argv_contains_triple(
+            &argv,
+            "--setenv",
+            "ITER_DECLARED_ONLY",
+            "declared-value"
         ));
     }
 

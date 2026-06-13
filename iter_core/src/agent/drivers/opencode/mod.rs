@@ -71,6 +71,10 @@ impl Agent for OpenCodeAgent {
         crate::agent::AgentKind::OpenCode
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -80,6 +84,7 @@ impl Agent for OpenCodeAgent {
             signal_id,
             signal_kind,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
 
@@ -89,7 +94,7 @@ impl Agent for OpenCodeAgent {
             prompt: prompt.as_str(),
         }
         .build(workspace_path);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         inject_agent_otel_resource_attrs(
             &mut command,
             signal_id,
@@ -162,6 +167,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
         let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -177,6 +183,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -193,6 +200,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }
@@ -206,6 +214,7 @@ printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
         let agent = opencode_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         assert!(echoed.contains("iter.signal.id="), "got {echoed:?}");

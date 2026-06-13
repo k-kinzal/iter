@@ -87,6 +87,15 @@ pub struct SandboxProfile {
     /// sandbox-build time against `std::env::vars()`.
     pub(crate) env_pass: Vec<String>,
 
+    /// Operator-declared child environment variables.
+    ///
+    /// These values are explicit configuration on the agent command, not
+    /// host-inherited passthrough. Backends that clear the environment must
+    /// restore them independently from [`env_pass`](Self::env_pass), so an
+    /// operator does not have to duplicate every declared key into advisory
+    /// passthrough patterns.
+    pub(crate) declared_env: Vec<(String, String)>,
+
     /// Whether the agent needs to send signals to processes other than
     /// itself — e.g. `kill`/`killpg` to shut down child commands it spawned.
     ///
@@ -134,6 +143,8 @@ impl SandboxProfile {
     /// so the union for a [`Router`](AgentKind::Router) can accumulate into
     /// one profile before a final [`normalize`](Self::normalize).
     fn apply_agent(&mut self, agent: &dyn Agent) {
+        self.declared_env
+            .extend(agent.declared_env().iter().cloned());
         match agent.kind() {
             AgentKind::Claude => self.apply_claude(agent),
             AgentKind::Grok => self.apply_grok(agent),
@@ -459,6 +470,20 @@ mod tests {
         assert!(p.env_matches("CLAUDE_CODE_OAUTH_TOKEN"));
         assert!(p.env_matches("CLAUDE_"));
         assert!(!p.env_matches("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn profile_captures_declared_env_separately_from_env_pass() {
+        let mut agent = claude_agent("claude");
+        agent.env = vec![("ITER_DECLARED_ONLY".into(), "declared-value".into())];
+
+        let p = SandboxProfile::for_agent(&agent);
+
+        assert_eq!(
+            p.declared_env,
+            vec![("ITER_DECLARED_ONLY".into(), "declared-value".into())],
+        );
+        assert!(!p.env_matches("ITER_DECLARED_ONLY"));
     }
 
     // ----- Claude profile (behavior preserved across the refactor) --------

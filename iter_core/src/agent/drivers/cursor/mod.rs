@@ -80,6 +80,10 @@ impl Agent for CursorAgent {
         crate::agent::AgentKind::Cursor
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -87,6 +91,7 @@ impl Agent for CursorAgent {
             cancel,
             stdio_sink,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
 
@@ -95,7 +100,7 @@ impl Agent for CursorAgent {
             args: &self.args,
         }
         .build(workspace_path);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         // OTel trace-context / resource-attribute injection is deliberately
         // omitted: cursor-agent's consumption of `TRACEPARENT` /
         // `OTEL_RESOURCE_ATTRIBUTES` is unverified, so — like the other
@@ -161,6 +166,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = cursor_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -176,6 +182,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -193,6 +200,7 @@ printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok"
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }

@@ -131,6 +131,10 @@ impl Agent for AntigravityAgent {
         crate::agent::AgentKind::Antigravity
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -138,6 +142,7 @@ impl Agent for AntigravityAgent {
             cancel,
             stdio_sink,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
         match self.mode {
@@ -149,7 +154,7 @@ impl Agent for AntigravityAgent {
                     args: &self.args,
                 }
                 .build(workspace_path);
-                apply_user_env(&mut command, &self.env);
+                apply_user_env(&mut command, declared_env);
                 // Prompt is embedded inline as the value of `-p`; no stdin.
                 let output = spawn_capture(
                     command,
@@ -167,8 +172,14 @@ impl Agent for AntigravityAgent {
                 })
             }
             AgentMode::Interactive => {
-                self.run_interactive(workspace_path, prompt, cancel, sandbox_command_prefix)
-                    .await
+                self.run_interactive(
+                    workspace_path,
+                    prompt,
+                    cancel,
+                    sandbox_command_prefix,
+                    declared_env,
+                )
+                .await
             }
         }
     }
@@ -188,9 +199,10 @@ impl AntigravityAgent {
         prompt: &Prompt,
         cancel: CancellationToken,
         sandbox_prefix: &[OsString],
+        declared_env: &[(String, String)],
     ) -> Result<AgentRun, AgentError> {
         let mut command = self.build_interactive_command(path, prompt);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -252,6 +264,7 @@ printf 'final answer'"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert_eq!(sink.stdout().await, "env-value");
     }
@@ -264,6 +277,7 @@ printf 'final answer'"#;
         let agent = s;
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         assert!(echoed.contains("--conversation"), "got {echoed:?}");
@@ -276,6 +290,7 @@ printf 'final answer'"#;
         let agent = antigravity_agent(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(
             !sink.stderr().await.contains("--conversation"),
@@ -292,6 +307,7 @@ printf 'final answer'"#;
         let agent = s;
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let conv_pos = echoed.find("--conversation").expect("--conversation");

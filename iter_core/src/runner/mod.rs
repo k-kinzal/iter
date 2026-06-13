@@ -558,7 +558,8 @@ async fn drive_workspace(
             .with_signal_kind(signal.kind())
             .with_stdio_sink(stdio_sink.clone())
             .with_iteration_timeout(config.iteration_timeout)
-            .with_sandbox_command_prefix(&sandbox_command_prefix);
+            .with_sandbox_command_prefix(&sandbox_command_prefix)
+            .with_declared_env(agent.declared_env());
     let agent_span = tracing::info_span!(
         "iter.agent.run",
         iter.signal.id = %signal_id,

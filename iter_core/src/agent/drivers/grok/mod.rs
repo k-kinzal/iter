@@ -148,6 +148,10 @@ impl Agent for GrokAgent {
         crate::agent::AgentKind::Grok
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     /// Resolved on-disk location of the configured binary, or `None` when
     /// nothing on `$PATH` or the supplied path matches an existing file.
     ///
@@ -165,6 +169,7 @@ impl Agent for GrokAgent {
             cancel,
             stdio_sink,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
         // Resolve the session id *before* spawning so a filesystem failure
@@ -187,7 +192,7 @@ impl Agent for GrokAgent {
             session_id: session_id.as_deref(),
         }
         .build(workspace_path);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         // OTel trace-context / resource-attribute injection is deliberately
         // omitted — a *verified negative* for `grok 0.2.45`, not an unknown:
         //
@@ -285,6 +290,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
         let agent = grok_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -304,6 +310,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -322,6 +329,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }
@@ -337,6 +345,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
         let agent = grok_agent(bin.to_string_lossy());
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(
             !sink.stderr().await.lines().any(|l| l == "-s"),
@@ -365,6 +374,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
 
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
 
         let emitted_uuid =
@@ -398,6 +408,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
             s.command = bin.to_string_lossy().into_owned();
             let agent = s.clone();
             let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+            let ctx = ctx.with_declared_env(agent.declared_env());
             agent.run(ctx).await.expect("run ok");
             assert_eq!(
                 session_id_from_argv(&sink.stderr().await).as_deref(),

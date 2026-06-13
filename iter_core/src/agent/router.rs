@@ -65,16 +65,7 @@ impl AgentRouter {
     async fn run_fallback(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let mut last_err = None;
         for (i, (name, agent)) in self.agents.iter().enumerate() {
-            let attempt_ctx = AgentInvocation::new(
-                ctx.workspace_path,
-                ctx.prompt,
-                ctx.cancel.clone(),
-                ctx.signal_id,
-            )
-            .with_signal_kind(ctx.signal_kind)
-            .with_stdio_sink(ctx.stdio_sink.clone())
-            .with_iteration_timeout(ctx.iteration_timeout)
-            .with_hook_isolation_key(ctx.hook_isolation_key.clone());
+            let attempt_ctx = Self::subagent_ctx(&ctx, agent.as_ref());
 
             match agent.run(attempt_ctx).await {
                 Ok(run) => return Ok(run),
@@ -97,7 +88,23 @@ impl AgentRouter {
     async fn run_rotate(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let index = self.state.fetch_add(1, Ordering::Relaxed) % self.agents.len();
         let (_name, agent) = &self.agents[index];
-        agent.run(ctx).await
+        let attempt_ctx = Self::subagent_ctx(&ctx, agent.as_ref());
+        agent.run(attempt_ctx).await
+    }
+
+    fn subagent_ctx<'a>(ctx: &AgentInvocation<'a>, agent: &'a dyn Agent) -> AgentInvocation<'a> {
+        AgentInvocation::new(
+            ctx.workspace_path,
+            ctx.prompt,
+            ctx.cancel.clone(),
+            ctx.signal_id,
+        )
+        .with_signal_kind(ctx.signal_kind)
+        .with_stdio_sink(ctx.stdio_sink.clone())
+        .with_iteration_timeout(ctx.iteration_timeout)
+        .with_hook_isolation_key(ctx.hook_isolation_key.clone())
+        .with_sandbox_command_prefix(ctx.sandbox_command_prefix)
+        .with_declared_env(agent.declared_env())
     }
 }
 

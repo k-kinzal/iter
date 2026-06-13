@@ -141,6 +141,10 @@ impl Agent for HermesAgent {
         crate::agent::AgentKind::Hermes
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -148,6 +152,7 @@ impl Agent for HermesAgent {
             cancel,
             stdio_sink,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
         match self.mode {
@@ -158,7 +163,7 @@ impl Agent for HermesAgent {
                     args: &self.args,
                 }
                 .build(workspace_path);
-                apply_user_env(&mut command, &self.env);
+                apply_user_env(&mut command, declared_env);
                 // OTel trace-context / resource-attribute injection is
                 // deliberately omitted: Hermes' consumption of `TRACEPARENT` /
                 // `OTEL_RESOURCE_ATTRIBUTES` is unverified, so iter does not
@@ -183,8 +188,14 @@ impl Agent for HermesAgent {
                 })
             }
             AgentMode::Interactive => {
-                self.run_interactive(workspace_path, prompt, cancel, sandbox_command_prefix)
-                    .await
+                self.run_interactive(
+                    workspace_path,
+                    prompt,
+                    cancel,
+                    sandbox_command_prefix,
+                    declared_env,
+                )
+                .await
             }
         }
     }
@@ -202,9 +213,10 @@ impl HermesAgent {
         prompt: &Prompt,
         cancel: CancellationToken,
         sandbox_prefix: &[OsString],
+        declared_env: &[(String, String)],
     ) -> Result<AgentRun, AgentError> {
         let mut command = self.build_interactive_command(path, prompt);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
@@ -266,6 +278,7 @@ printf 'final response\n'"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }
@@ -278,6 +291,7 @@ printf 'final response\n'"#;
         let agent = s;
         let prompt = Prompt::from("go");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();

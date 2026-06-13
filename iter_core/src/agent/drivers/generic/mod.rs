@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tokio::process::Command;
 
 use crate::agent::AgentError;
-use crate::agent::process::{PromptDelivery, detect_token_limit, spawn_capture};
+use crate::agent::process::{PromptDelivery, apply_user_env, detect_token_limit, spawn_capture};
 
 /// Runs any configured CLI command as an [`Agent`].
 ///
@@ -95,9 +95,6 @@ impl GenericAgent {
         if !self.stdin_prompt {
             cmd.arg(prompt.as_str());
         }
-        for (k, v) in &self.env {
-            cmd.env(k, v);
-        }
         Ok(cmd)
     }
 }
@@ -112,8 +109,14 @@ impl Agent for GenericAgent {
         crate::agent::AgentKind::Generic
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
-        let command = self.build_command(ctx.workspace_path, ctx.prompt)?;
+        let declared_env = ctx.declared_env;
+        let mut command = self.build_command(ctx.workspace_path, ctx.prompt)?;
+        apply_user_env(&mut command, declared_env);
         let delivery = if self.stdin_prompt {
             PromptDelivery::Stdin(ctx.prompt.as_str())
         } else {
@@ -152,6 +155,7 @@ mod tests {
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "echo hello".into()]);
         let prompt = Prompt::from("ignored");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stdout().await.contains("hello"));
     }
@@ -176,6 +180,7 @@ mod tests {
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "cat".into()]);
         let prompt = Prompt::from("from-stdin");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stdout().await.contains("from-stdin"));
     }
@@ -193,6 +198,7 @@ mod tests {
         .with_stdin_prompt(false);
         let prompt = Prompt::from("appended-arg");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert_eq!(sink.stdout().await, "appended-arg");
     }
@@ -207,6 +213,7 @@ mod tests {
         .with_env("ITER_TEST_VAR", "env-value");
         let prompt = Prompt::from("ignored");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert_eq!(sink.stdout().await, "env-value");
     }
@@ -235,6 +242,7 @@ mod tests {
         ];
         let prompt = Prompt::from("ignored");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert_eq!(sink.stdout().await, "alpha beta");
     }
@@ -262,6 +270,7 @@ mod tests {
         let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), "pwd".into()]);
         let prompt = Prompt::from("ignored");
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let out = sink.stdout().await;
         // Resolve the canonical path to avoid symlink mismatches on macOS.

@@ -201,6 +201,10 @@ impl Agent for CopilotAgent {
         crate::agent::AgentKind::Copilot
     }
 
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
     async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
         let AgentInvocation {
             workspace_path,
@@ -211,6 +215,7 @@ impl Agent for CopilotAgent {
             signal_kind,
             hook_isolation_key,
             sandbox_command_prefix,
+            declared_env,
             ..
         } = ctx;
         match self.mode {
@@ -221,7 +226,7 @@ impl Agent for CopilotAgent {
                     prompt: prompt.as_str(),
                 }
                 .build(workspace_path);
-                apply_user_env(&mut command, &self.env);
+                apply_user_env(&mut command, declared_env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
                     signal_id,
@@ -255,6 +260,7 @@ impl Agent for CopilotAgent {
                     signal_kind,
                     &hook_isolation_key,
                     sandbox_command_prefix,
+                    declared_env,
                 )
                 .await
             }
@@ -282,11 +288,12 @@ impl CopilotAgent {
         signal_kind: crate::signal::SignalKind,
         hook_isolation_key: &str,
         sandbox_prefix: &[OsString],
+        declared_env: &[(String, String)],
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
         let mut command = self.build_command(path, prompt);
-        apply_user_env(&mut command, &self.env);
+        apply_user_env(&mut command, declared_env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "copilot");
         inject_copilot_trace_parent_env(&mut command);
         command
@@ -357,6 +364,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
@@ -419,6 +427,7 @@ exit 1"#;
         let prompt = Prompt::from("x");
 
         let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         let out = sink.stderr().await;
 
@@ -443,6 +452,7 @@ exit 1"#;
         let agent = s;
         let prompt = Prompt::from("x");
         let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
+        let ctx = ctx.with_declared_env(agent.declared_env());
         agent.run(ctx).await.expect("run ok");
         assert!(sink.stderr().await.contains("ENV=env-value"));
     }

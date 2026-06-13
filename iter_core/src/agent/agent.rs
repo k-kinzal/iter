@@ -78,6 +78,14 @@ pub struct AgentInvocation<'a> {
     /// front of the agent's own program/args. Empty for `local`/`clone`
     /// (non-sandbox) workspaces, in which case the command runs verbatim.
     pub sandbox_command_prefix: &'a [OsString],
+    /// Operator-declared environment variables for the agent child.
+    ///
+    /// This is the same declared-env set the sandbox profile consumes while
+    /// building confinement. Drivers apply it directly to the child command;
+    /// sandbox backends also use it to carry those explicit values across
+    /// clear-env boundaries. Host-inherited passthrough patterns remain
+    /// separate on `SandboxProfile::env_pass`.
+    pub declared_env: &'a [(String, String)],
 }
 
 impl std::fmt::Debug for AgentInvocation<'_> {
@@ -92,6 +100,14 @@ impl std::fmt::Debug for AgentInvocation<'_> {
             .field("iteration_timeout", &self.iteration_timeout)
             .field("hook_isolation_key", &self.hook_isolation_key)
             .field("sandbox_command_prefix", &self.sandbox_command_prefix)
+            .field(
+                "declared_env",
+                &self
+                    .declared_env
+                    .iter()
+                    .map(|(key, _)| key.as_str())
+                    .collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
@@ -115,6 +131,7 @@ impl<'a> AgentInvocation<'a> {
             iteration_timeout: None,
             hook_isolation_key: "default".to_owned(),
             sandbox_command_prefix: &[],
+            declared_env: &[],
         }
     }
 
@@ -157,6 +174,18 @@ impl<'a> AgentInvocation<'a> {
     #[must_use]
     pub fn with_sandbox_command_prefix(mut self, prefix: &'a [OsString]) -> Self {
         self.sandbox_command_prefix = prefix;
+        self
+    }
+
+    /// Set the operator-declared child environment for this invocation.
+    ///
+    /// The runner supplies [`Agent::declared_env`] for the selected agent.
+    /// Routers replace it when dispatching to a sub-agent so the direct
+    /// process environment and sandbox clear-env reinjection see the same
+    /// concrete set.
+    #[must_use]
+    pub fn with_declared_env(mut self, env: &'a [(String, String)]) -> Self {
+        self.declared_env = env;
         self
     }
 }
@@ -242,6 +271,18 @@ pub trait Agent: Send + Sync {
     /// returns its sub-agents so their profiles can be unioned. The default
     /// returns an empty slice — a leaf agent composes nothing.
     fn sub_agents(&self) -> &[(String, Box<dyn Agent>)] {
+        &[]
+    }
+
+    /// Operator-declared environment variables for this agent's child
+    /// command.
+    ///
+    /// These values are explicit child env settings, not host-inherited
+    /// passthrough requests. The runner threads this slice into
+    /// [`AgentInvocation`], and [`SandboxProfile::for_agent`](crate::workspace::sandbox::SandboxProfile::for_agent)
+    /// snapshots it for sandbox setup so Linux `--clearenv` backends can
+    /// restore it without relying on `env_pass`.
+    fn declared_env(&self) -> &[(String, String)] {
         &[]
     }
 }
