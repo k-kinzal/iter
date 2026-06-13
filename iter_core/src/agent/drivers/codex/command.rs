@@ -7,7 +7,7 @@
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
 //! `From` impl in `mod.rs`).
 //!
-//! # Output contract (Codex `exec --json`, 2026-05-29 ground truth)
+//! # Output contract (Codex `exec --json`, 2026-06-13 ground truth)
 //!
 //! `codex exec --json` streams newline-delimited JSON events to stdout. Codex
 //! wraps most events as `{"type": "...", ...}` (some builds nest the payload
@@ -15,8 +15,10 @@
 //! Command keys off of:
 //!
 //! * a **session-configured** event carrying a session/conversation id;
-//! * a terminal **turn-status** record reporting `Completed` / `Failed` /
-//!   `Interrupted`;
+//! * a terminal **turn-status** record: Codex 0.139.0 reports success as a
+//!   flat `turn.completed` event with no `status` field, and failure as
+//!   `turn.failed { error: { message } }`; older builds may instead report
+//!   `Completed` / `Failed` / `Interrupted` in a status-bearing record;
 //! * **error** items carrying a `will_retry` flag;
 //! * **token-usage** events.
 //!
@@ -26,11 +28,13 @@
 //! failure surfaces the message "You've hit your usage limit.".
 //!
 //! Field → conclusion chain: *did it run* = a terminal turn-status record is
-//! present; *success/fail* = its status (`Completed` = success); *why* = the
-//! error item + `will_retry`, refined to a token/usage limit when the stream
-//! text says so. A process that never produced a turn-status record never ran
-//! a turn: exit `2` is a bad-args launch failure, a signal is a signal error,
-//! any other non-zero exit is a startup/"no result" failure.
+//! present; *success/fail* = the terminal event type first (`turn.completed`
+//! = success, `turn.failed` / stream `error` = failure), otherwise the legacy
+//! status string (`Completed` = success); *why* = the error item +
+//! `will_retry`, refined to a token/usage limit when the stream text says so.
+//! A process that never produced a turn-status record never ran a turn: exit
+//! `2` is a bad-args launch failure, a signal is a signal error, any other
+//! non-zero exit is a startup/"no result" failure.
 
 use serde_json::Value;
 use thiserror::Error;
@@ -172,14 +176,23 @@ fn payload(value: &Value) -> &Value {
     value.get("msg").filter(|m| m.is_object()).unwrap_or(value)
 }
 
+fn value_event_type_is(value: &Value, marker: &str) -> bool {
+    value
+        .as_object()
+        .is_some_and(|obj| event_type_is(obj, marker))
+}
+
 /// Heuristic: does this object look like a terminal turn-status record? Codex
-/// builds vary, so accept either an explicit `task_complete`/`turn_complete`
-/// type or any object carrying a `status` field with a turn-status string.
+/// builds vary, so accept 0.139.0's typed terminal events, older explicit
+/// `task_complete`/`turn_complete` types, or any object carrying a `status`
+/// field with a turn-status string.
 fn is_turn_status(obj: &serde_json::Map<String, Value>) -> bool {
     if event_type_is(obj, "task_complete")
         || event_type_is(obj, "turn_complete")
         || event_type_is(obj, "turn.completed")
+        || event_type_is(obj, "turn.failed")
         || event_type_is(obj, "turn_status")
+        || event_type_is(obj, "error")
     {
         return true;
     }
@@ -210,6 +223,41 @@ fn turn_status_str(value: &Value) -> Option<String> {
     first_string(value, &["status", "turn_status"])
 }
 
+/// Classify a terminal turn record without requiring a status field. Codex
+/// 0.139.0's flat schema makes the event type itself authoritative.
+fn turn_status(value: &Value) -> CodexTurnStatus {
+    if value_event_type_is(value, "turn.completed") {
+        return CodexTurnStatus::Completed;
+    }
+    if value_event_type_is(value, "turn.failed") || value_event_type_is(value, "error") {
+        return CodexTurnStatus::Failed;
+    }
+    if let Some(status) = turn_status_str(value) {
+        return CodexTurnStatus::parse(&status);
+    }
+    if value_event_type_is(value, "task_complete") || value_event_type_is(value, "turn_complete") {
+        return CodexTurnStatus::Completed;
+    }
+    CodexTurnStatus::Other("unknown".to_owned())
+}
+
+fn turn_status_label(value: &Value, status: &CodexTurnStatus) -> String {
+    turn_status_str(value).unwrap_or_else(|| match status {
+        CodexTurnStatus::Completed => "completed".to_owned(),
+        CodexTurnStatus::Failed => "failed".to_owned(),
+        CodexTurnStatus::Interrupted => "interrupted".to_owned(),
+        CodexTurnStatus::Other(status) => status.clone(),
+    })
+}
+
+fn event_item_type(value: &Value) -> Option<&str> {
+    payload(value)
+        .get("item")
+        .and_then(Value::as_object)
+        .and_then(|item| item.get("type").or_else(|| item.get("item_type")))
+        .and_then(Value::as_str)
+}
+
 /// Pull a session/conversation id from any event that exposes one.
 fn find_session_id(stdout: &str) -> Option<String> {
     let keys = &["session_id", "conversation_id", "thread_id"];
@@ -222,15 +270,28 @@ fn find_session_id(stdout: &str) -> Option<String> {
 /// Pull the final assistant message text from the latest agent-message event.
 fn find_final_message(stdout: &str) -> Option<String> {
     cli_json::last_event_matching(stdout, |obj| {
-        event_type_is(obj, "agent_message") || event_type_is(obj, "agent.message")
+        event_type_is(obj, "agent_message")
+            || event_type_is(obj, "agent.message")
+            || (event_type_is(obj, "item.completed")
+                && event_item_type(&Value::Object(obj.clone())) == Some("agent_message"))
     })
-    .and_then(|v| first_string(&v, &["message", "text", "last_agent_message"]))
+    .and_then(|v| {
+        first_string(&v, &["message", "text", "last_agent_message"]).or_else(|| {
+            payload(&v)
+                .get("item")
+                .and_then(|item| item.get("text"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+    })
 }
 
 /// Pull total token usage from the latest token-usage event.
 fn find_total_tokens(stdout: &str) -> Option<u64> {
     cli_json::last_event_matching(stdout, |obj| {
-        event_type_is(obj, "token_count") || event_type_is(obj, "token_usage")
+        event_type_is(obj, "token_count")
+            || event_type_is(obj, "token_usage")
+            || event_type_is(obj, "turn.completed")
     })
     .and_then(|v| {
         let p = payload(&v);
@@ -238,6 +299,11 @@ fn find_total_tokens(stdout: &str) -> Option<u64> {
             .or_else(|| p.get("total_token_count"))
             .or_else(|| p.pointer("/usage/total_tokens"))
             .and_then(Value::as_u64)
+            .or_else(|| {
+                let input = p.pointer("/usage/input_tokens").and_then(Value::as_u64)?;
+                let output = p.pointer("/usage/output_tokens").and_then(Value::as_u64)?;
+                input.checked_add(output)
+            })
     })
 }
 
@@ -287,8 +353,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexResult, CodexErro
         return Err(CodexError::NoResult { exit_code });
     };
 
-    let status_str = turn_status_str(&value).unwrap_or_default();
-    let status = CodexTurnStatus::parse(&status_str);
+    let status = turn_status(&value);
 
     if !matches!(status, CodexTurnStatus::Completed) {
         // A failing / interrupted turn: refine into a usage/token limit when
@@ -297,7 +362,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexResult, CodexErro
             return Err(CodexError::TokenLimit(detail));
         }
         return Err(CodexError::Reported {
-            status: status_str,
+            status: turn_status_label(&value, &status),
             will_retry: find_will_retry(&stdout),
             exit_code,
         });
@@ -347,6 +412,51 @@ mod tests {
         let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-2"));
         assert_eq!(res.turn_status, CodexTurnStatus::Completed);
+    }
+
+    #[test]
+    fn parses_codex_0_139_flat_turn_completed_without_status() {
+        let stream = concat!(
+            "{\"type\":\"thread.started\",\"thread_id\":\"thread-139\"}\n",
+            "{\"type\":\"turn.started\"}\n",
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"item-1\",\"type\":\"agent_message\",\"text\":\"done from flat stream\"}}\n",
+            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":17}}\n",
+        );
+        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        assert_eq!(res.session_id.as_deref(), Some("thread-139"));
+        assert_eq!(res.turn_status, CodexTurnStatus::Completed);
+        assert_eq!(res.final_message.as_deref(), Some("done from flat stream"));
+        assert_eq!(res.total_tokens, Some(117));
+    }
+
+    #[test]
+    fn codex_0_139_turn_completed_does_not_consult_token_limit_heuristic() {
+        let stream = concat!(
+            "{\"type\":\"thread.started\",\"thread_id\":\"thread-limit-text\"}\n",
+            "{\"type\":\"item.completed\",\"item\":{\"id\":\"item-1\",\"type\":\"agent_message\",\"text\":\"source mentions context window\"}}\n",
+            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"cached_input_tokens\":0,\"output_tokens\":1}}\n",
+        );
+        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        assert_eq!(res.turn_status, CodexTurnStatus::Completed);
+        assert_eq!(
+            res.final_message.as_deref(),
+            Some("source mentions context window")
+        );
+    }
+
+    #[test]
+    fn codex_0_139_turn_failed_maps_to_reported() {
+        let stream = concat!(
+            "{\"type\":\"thread.started\",\"thread_id\":\"thread-failed\"}\n",
+            "{\"type\":\"turn.started\"}\n",
+            "{\"type\":\"turn.failed\",\"error\":{\"message\":\"tool failed\"}}\n",
+        );
+        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        assert!(matches!(
+            err,
+            CodexError::Reported { ref status, will_retry: false, exit_code: Some(1) }
+                if status == "failed"
+        ));
     }
 
     #[test]
