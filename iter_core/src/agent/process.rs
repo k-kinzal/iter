@@ -19,6 +19,7 @@
 //!   [`RawExit`], optionally finalizing a hook bundle first.
 
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -29,7 +30,7 @@ use crate::log::{LogStream, OutputSink};
 use crate::process_group::{self, ProcessGroup};
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::AgentError;
@@ -54,6 +55,16 @@ pub(crate) const AGENT_TERMINATION_GRACE: Duration = Duration::from_secs(5);
 /// shutdown latency stays imperceptible.
 const CANCEL_TEE_DRAIN: Duration = Duration::from_secs(1);
 
+/// Maximum raw stdout/stderr tail recorded in telemetry for each agent stream.
+///
+/// The full streams are still captured for driver parsing and teed to
+/// `log.ndjson` line-by-line, but the structured raw-process telemetry event
+/// carries only the last 64 KiB per stream to keep OTel/log payloads bounded.
+/// The event also records the complete byte lengths and truncation booleans,
+/// so operators can tell when the tail is incomplete. These bytes are not
+/// redacted here; they already transit the process log sink unchanged today.
+pub(crate) const RAW_AGENT_STDIO_TAIL_BYTES: usize = 64 * 1024;
+
 /// Platform exit disposition of an agent child process, as observed by the
 /// shared spawn primitive — *before* any CLI-specific interpretation.
 ///
@@ -71,6 +82,23 @@ pub(crate) enum RawExit {
 }
 
 impl RawExit {
+    /// Stable label for the platform exit disposition.
+    pub(crate) fn disposition(self) -> &'static str {
+        match self {
+            Self::Code(_) => "exited",
+            Self::Signal(_) => "signal",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Process exit code, when the platform reported one.
+    pub(crate) fn exit_code(self) -> Option<i32> {
+        match self {
+            Self::Code(code) => Some(code),
+            Self::Signal(_) | Self::Unknown => None,
+        }
+    }
+
     /// Map a non-success exit to an [`AgentError`] for Commands whose mode
     /// produces no richer in-band signal (interactive TUI runs, and the
     /// text-only CLIs once their scanners find nothing). Returns `None` for a
@@ -116,6 +144,62 @@ impl CommandOutput {
     /// Borrow stderr as a UTF-8 string (lossy).
     pub(crate) fn stderr_str(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.stderr)
+    }
+}
+
+struct NullableExitCode(Option<i32>);
+
+impl fmt::Display for NullableExitCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(code) => write!(f, "{code}"),
+            None => f.write_str("null"),
+        }
+    }
+}
+
+fn raw_stdio_tail_lossy(bytes: &[u8]) -> String {
+    let start = bytes.len().saturating_sub(RAW_AGENT_STDIO_TAIL_BYTES);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
+}
+
+fn record_raw_agent_process(exit: RawExit, stdout: &[u8], stderr: &[u8]) {
+    let exit_code = exit.exit_code();
+    let exit_disposition = exit.disposition();
+    let span = tracing::Span::current();
+    if let Some(code) = exit_code {
+        span.record("iter.agent.exit_code", code);
+    }
+    span.record("iter.agent.exit_disposition", exit_disposition);
+
+    tracing::info!(
+        target: "iter::agent",
+        {
+            "iter.agent.event" = "raw_process_output",
+            "iter.agent.exit_code" = %NullableExitCode(exit_code),
+            "iter.agent.exit_disposition" = exit_disposition,
+            "iter.agent.stdout.bytes" = stdout.len() as u64,
+            "iter.agent.stderr.bytes" = stderr.len() as u64,
+            "iter.agent.stdout.tail" = %raw_stdio_tail_lossy(stdout),
+            "iter.agent.stderr.tail" = %raw_stdio_tail_lossy(stderr),
+            "iter.agent.stdout.tail_truncated" = stdout.len() > RAW_AGENT_STDIO_TAIL_BYTES,
+            "iter.agent.stderr.tail_truncated" = stderr.len() > RAW_AGENT_STDIO_TAIL_BYTES,
+        },
+        "agent raw process output captured"
+    );
+}
+
+fn record_raw_agent_command_output(output: &CommandOutput) {
+    record_raw_agent_process(output.exit, &output.stdout, &output.stderr);
+}
+
+fn spawn_child_recording_launch_failure(command: &mut Command) -> Result<Child, SpawnError> {
+    match command.spawn() {
+        Ok(child) => Ok(child),
+        Err(err) => {
+            record_raw_agent_process(RawExit::Unknown, &[], &[]);
+            Err(SpawnError::Launch(err))
+        }
     }
 }
 
@@ -386,7 +470,7 @@ pub(crate) async fn spawn_capture(
         return Err(SpawnError::Cancelled);
     }
 
-    let mut child = command.spawn().map_err(SpawnError::Launch)?;
+    let mut child = spawn_child_recording_launch_failure(&mut command)?;
     // Record the spawned tree by its pgid so cancel can reap the entire
     // group (including grandchildren spawned by the agent's tool calls).
     let mut group = ProcessGroup::from_child(&child);
@@ -403,7 +487,14 @@ pub(crate) async fn spawn_capture(
                     drop(child.wait().await);
                     return Err(SpawnError::Cancelled);
                 }
-                res = stdin.write_all(text.as_bytes()) => res.map_err(SpawnError::Launch)?,
+                res = stdin.write_all(text.as_bytes()) => {
+                    if let Err(err) = res {
+                        group.terminate(AGENT_TERMINATION_GRACE).await;
+                        drop(child.wait().await);
+                        record_raw_agent_process(RawExit::Unknown, &[], &[]);
+                        return Err(SpawnError::Launch(err));
+                    }
+                }
             }
         }
         // Dropping here closes the pipe and delivers EOF.
@@ -443,13 +534,14 @@ pub(crate) async fn spawn_capture(
         biased;
         () = cancel.cancelled() => {
             group.terminate(AGENT_TERMINATION_GRACE).await;
-            drop(child.wait().await);
-            if let Some(h) = stdout_handle.take() {
-                drop(tokio::time::timeout(CANCEL_TEE_DRAIN, h).await);
-            }
-            if let Some(h) = stderr_handle.take() {
-                drop(tokio::time::timeout(CANCEL_TEE_DRAIN, h).await);
-            }
+            let exit = child
+                .wait()
+                .await
+                .map(map_exit_status)
+                .unwrap_or(RawExit::Unknown);
+            let stdout_buf = drain_tee_on_cancel(stdout_handle.take()).await;
+            let stderr_buf = drain_tee_on_cancel(stderr_handle.take()).await;
+            record_raw_agent_process(exit, &stdout_buf, &stderr_buf);
             return Err(SpawnError::Cancelled);
         }
         res = async {
@@ -463,14 +555,32 @@ pub(crate) async fn spawn_capture(
                 None => Vec::new(),
             };
             Ok::<_, std::io::Error>((status, stdout_buf, stderr_buf))
-        } => res.map_err(SpawnError::Launch)?,
+        } => match res {
+            Ok(output) => output,
+            Err(err) => {
+                record_raw_agent_process(RawExit::Unknown, &[], &[]);
+                return Err(SpawnError::Launch(err));
+            }
+        },
     };
 
-    Ok(CommandOutput {
+    let output = CommandOutput {
         exit: map_exit_status(status),
         stdout: stdout_buf,
         stderr: stderr_buf,
-    })
+    };
+    record_raw_agent_command_output(&output);
+    Ok(output)
+}
+
+async fn drain_tee_on_cancel(handle: Option<tokio::task::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    let Some(handle) = handle else {
+        return Vec::new();
+    };
+    match tokio::time::timeout(CANCEL_TEE_DRAIN, handle).await {
+        Ok(Ok(buf)) => buf,
+        Ok(Err(_)) | Err(_) => Vec::new(),
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -621,20 +731,33 @@ pub(crate) async fn drive_interactive(
         return Err(SpawnError::Cancelled);
     }
 
-    let mut child = command.spawn().map_err(SpawnError::Launch)?;
+    let mut child = spawn_child_recording_launch_failure(&mut command)?;
     let mut group = ProcessGroup::from_child(&child);
 
     let status = tokio::select! {
         biased;
         () = cancel.cancelled() => {
             group.terminate(AGENT_TERMINATION_GRACE).await;
-            drop(child.wait().await);
+            let exit = child
+                .wait()
+                .await
+                .map(map_exit_status)
+                .unwrap_or(RawExit::Unknown);
+            record_raw_agent_process(exit, &[], &[]);
             return Err(SpawnError::Cancelled);
         }
-        res = child.wait() => res.map_err(SpawnError::Launch)?,
+        res = child.wait() => match res {
+            Ok(status) => status,
+            Err(err) => {
+                record_raw_agent_process(RawExit::Unknown, &[], &[]);
+                return Err(SpawnError::Launch(err));
+            }
+        },
     };
 
-    Ok(map_exit_status(status))
+    let exit = map_exit_status(status);
+    record_raw_agent_process(exit, &[], &[]);
+    Ok(exit)
 }
 
 /// Drive a pre-configured interactive child to completion, then finalize the
@@ -691,7 +814,18 @@ fn map_exit_status(status: std::process::ExitStatus) -> RawExit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::testutil::ctx;
+    use crate::agent::{Agent, GenericAgent};
+    use crate::prompt::Prompt;
     use async_trait::async_trait;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+    use tracing::Instrument;
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::layer::Context;
+    use tracing_subscriber::prelude::*;
+    use tracing_subscriber::registry::LookupSpan;
 
     #[test]
     fn raw_exit_into_failure_maps_each_disposition() {
@@ -784,7 +918,111 @@ mod tests {
     // regression test below mutate process-wide env vars; this mutex ensures
     // they never race each other. The remaining prefix-wrapping tests touch no
     // environment at all and take no lock.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[derive(Default)]
+    struct TelemetryCapture {
+        events: Mutex<Vec<BTreeMap<String, String>>>,
+        span_records: Mutex<Vec<BTreeMap<String, String>>>,
+    }
+
+    struct CaptureLayer {
+        capture: Arc<TelemetryCapture>,
+    }
+
+    impl<S> Layer<S> for CaptureLayer
+    where
+        S: tracing::Subscriber,
+        S: for<'lookup> LookupSpan<'lookup>,
+    {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            if event.metadata().target() != "iter::agent" {
+                return;
+            }
+            let mut visitor = FieldVisitor::default();
+            event.record(&mut visitor);
+            self.capture.events.lock().unwrap().push(visitor.fields);
+        }
+
+        fn on_record(
+            &self,
+            id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            ctx: Context<'_, S>,
+        ) {
+            let Some(span) = ctx.span(id) else {
+                return;
+            };
+            if span.metadata().name() != "iter.agent.run" {
+                return;
+            }
+            let mut visitor = FieldVisitor::default();
+            values.record(&mut visitor);
+            self.capture
+                .span_records
+                .lock()
+                .unwrap()
+                .push(visitor.fields);
+        }
+    }
+
+    #[derive(Default)]
+    struct FieldVisitor {
+        fields: BTreeMap<String, String>,
+    }
+
+    impl FieldVisitor {
+        fn insert(&mut self, field: &Field, value: String) {
+            self.fields.insert(field.name().to_owned(), value);
+        }
+    }
+
+    impl Visit for FieldVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+            self.insert(field, format!("{value:?}"));
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.insert(field, value.to_owned());
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.insert(field, value.to_string());
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.insert(field, value.to_string());
+        }
+
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.insert(field, value.to_string());
+        }
+    }
+
+    fn raw_process_event(capture: &TelemetryCapture) -> BTreeMap<String, String> {
+        capture
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|event| {
+                event
+                    .get("iter.agent.event")
+                    .is_some_and(|value| value == "raw_process_output")
+            })
+            .cloned()
+            .expect("raw process telemetry event")
+    }
+
+    fn assert_field_contains(fields: &BTreeMap<String, String>, key: &str, needle: &str) {
+        let value = fields
+            .get(key)
+            .unwrap_or_else(|| panic!("missing field {key}; fields: {fields:?}"));
+        assert!(
+            value.contains(needle),
+            "field {key} value {value:?} did not contain {needle:?}"
+        );
+    }
 
     #[test]
     fn apply_sandbox_prefix_passes_through_when_empty() {
@@ -797,6 +1035,80 @@ mod tests {
         assert_eq!(std_cmd.get_program(), "/bin/echo");
         let args: Vec<_> = std_cmd.get_args().map(OsStr::to_os_string).collect();
         assert_eq!(args, vec![OsString::from("hi")]);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn raw_process_event_survives_token_limit_classification() {
+        let stdout = "stdout before context window after";
+        let stderr = "stderr side channel";
+        let script = format!("printf '%s' '{stdout}'; printf '%s' '{stderr}' >&2; exit 7");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), script]);
+        let prompt = Prompt::from("ignored");
+        let ctx = ctx(tmp.path(), &prompt).with_declared_env(agent.declared_env());
+        let capture = Arc::new(TelemetryCapture::default());
+        let subscriber = tracing_subscriber::registry().with(CaptureLayer {
+            capture: capture.clone(),
+        });
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let agent_span = tracing::info_span!(
+            "iter.agent.run",
+            iter.agent.exit_code = tracing::field::Empty,
+            iter.agent.exit_disposition = tracing::field::Empty,
+        );
+
+        let err = async { agent.run(ctx).await }
+            .instrument(agent_span)
+            .await
+            .expect_err("token-limit text on nonzero exit is an error");
+
+        assert!(
+            matches!(err, AgentError::TokenLimit(_)),
+            "expected token-limit classification, got {err:?}"
+        );
+        let event = raw_process_event(&capture);
+        let stdout_len = stdout.len().to_string();
+        let stderr_len = stderr.len().to_string();
+        assert_eq!(
+            event.get("iter.agent.exit_disposition").map(String::as_str),
+            Some("exited")
+        );
+        assert_eq!(
+            event.get("iter.agent.stdout.bytes").map(String::as_str),
+            Some(stdout_len.as_str())
+        );
+        assert_eq!(
+            event.get("iter.agent.stderr.bytes").map(String::as_str),
+            Some(stderr_len.as_str())
+        );
+        assert_field_contains(&event, "iter.agent.exit_code", "7");
+        assert_field_contains(&event, "iter.agent.stdout.tail", stdout);
+        assert_field_contains(&event, "iter.agent.stderr.tail", stderr);
+
+        let records = capture.span_records.lock().unwrap();
+        assert!(
+            records.iter().any(|fields| fields
+                .get("iter.agent.exit_disposition")
+                .is_some_and(|value| value == "exited")),
+            "span did not record raw exit disposition: {records:?}"
+        );
+        assert!(
+            records.iter().any(|fields| fields
+                .get("iter.agent.exit_code")
+                .is_some_and(|value| value == "7")),
+            "span did not record raw exit code: {records:?}"
+        );
+    }
+
+    #[test]
+    fn raw_stdio_tail_is_bounded_to_last_bytes() {
+        let mut bytes = vec![b'a'; RAW_AGENT_STDIO_TAIL_BYTES + 32];
+        bytes.extend_from_slice(b"tail-marker");
+
+        let tail = raw_stdio_tail_lossy(&bytes);
+
+        assert_eq!(tail.len(), RAW_AGENT_STDIO_TAIL_BYTES);
+        assert!(tail.ends_with("tail-marker"));
     }
 
     /// Minimal async reader that yields one chunk of bytes, then returns

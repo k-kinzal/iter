@@ -69,6 +69,7 @@ tempfile.workspace = true
 pretty_assertions.workspace = true
 insta = { workspace = true, features = ["yaml"] }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+tracing-subscriber.workspace = true
 
 # NOTE: do not use `[lints] workspace = true` here — cargo forbids mixing
 # workspace inheritance with per-package overrides. iter_core needs to

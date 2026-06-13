@@ -569,6 +569,7 @@ async fn drive_workspace(
         iter.prompt.bytes = prompt.as_str().len(),
         iter.agent.result = field::Empty,
         iter.agent.exit_code = field::Empty,
+        iter.agent.exit_disposition = field::Empty,
     );
     let agent_result = crate::agent::run_with_timeout(agent, agent_ctx)
         .instrument(agent_span.clone())
