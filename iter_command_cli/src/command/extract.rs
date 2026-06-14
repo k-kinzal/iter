@@ -18,7 +18,6 @@ pub enum ExtractMode {
     Lines,
     /// Parse the entire stdout as a JSON array of objects. Each object's
     /// top-level fields become metadata.
-    #[allow(dead_code)]
     JsonArray,
     /// Parse stdout line by line with a regular expression. Named capture
     /// groups become metadata fields.
@@ -44,9 +43,13 @@ impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
                 let parsed: Value = serde_json::from_str(stdout)?;
                 match parsed {
                     Value::Array(items) => Ok(items),
-                    other => Err(CommandTriggerError::Json(serde::de::Error::custom(
-                        format!("expected JSON array, got {other:?}"),
-                    ))),
+                    other @ (Value::Null
+                    | Value::Bool(_)
+                    | Value::Number(_)
+                    | Value::String(_)
+                    | Value::Object(_)) => Err(CommandTriggerError::Json(
+                        serde::de::Error::custom(format!("expected JSON array, got {other:?}")),
+                    )),
                 }
             }
             ExtractMode::Regex(_) => {
@@ -80,7 +83,7 @@ pub(super) fn json_to_metadata_value(v: &Value) -> MetadataValue {
             MetadataValue::Integer,
         ),
         Value::String(s) => MetadataValue::String(s.clone()),
-        other => MetadataValue::String(other.to_string()),
+        other @ (Value::Array(_) | Value::Object(_)) => MetadataValue::String(other.to_string()),
     }
 }
 
@@ -90,7 +93,7 @@ pub(super) fn value_to_string(v: &Value) -> String {
         Value::Null => String::new(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        other => other.to_string(),
+        other @ (Value::Array(_) | Value::Object(_)) => other.to_string(),
     }
 }
 

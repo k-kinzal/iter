@@ -92,7 +92,29 @@ fn map_render_error(err: &handlebars::RenderError) -> TemplateError {
             TemplateError::UnknownVariable(path.clone())
         }
         RenderErrorReason::MissingVariable(None) => TemplateError::UnknownVariable(String::new()),
-        _ => TemplateError::Render(err.to_string()),
+        RenderErrorReason::TemplateNotFound(_)
+        | RenderErrorReason::TemplateError(_)
+        | RenderErrorReason::PartialNotFound(_)
+        | RenderErrorReason::PartialBlockNotFound
+        | RenderErrorReason::HelperNotFound(_)
+        | RenderErrorReason::ParamNotFoundForIndex(..)
+        | RenderErrorReason::ParamNotFoundForName(..)
+        | RenderErrorReason::ParamTypeMismatchForName(..)
+        | RenderErrorReason::HashTypeMismatchForName(..)
+        | RenderErrorReason::DecoratorNotFound(_)
+        | RenderErrorReason::CannotIncludeSelf
+        | RenderErrorReason::InvalidLoggingLevel(_)
+        | RenderErrorReason::InvalidParamType(_)
+        | RenderErrorReason::BlockContentRequired
+        | RenderErrorReason::InvalidJsonPath(_)
+        | RenderErrorReason::InvalidJsonIndex(_)
+        | RenderErrorReason::SerdeError(_)
+        | RenderErrorReason::IOError(_)
+        | RenderErrorReason::Utf8Error(_)
+        | RenderErrorReason::NestedError(_)
+        | RenderErrorReason::Unimplemented
+        | RenderErrorReason::Other(_)
+        | _ => TemplateError::Render(err.to_string()),
     }
 }
 

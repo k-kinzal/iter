@@ -52,7 +52,7 @@ use tracing::warn;
 /// execution logic. Which event it responds to is the dispatcher's
 /// responsibility at registration time.
 #[derive(Debug, Clone)]
-pub struct ShellAction {
+pub(crate) struct ShellAction {
     command_source: String,
     compiled: Template,
 }
@@ -64,7 +64,7 @@ impl ShellAction {
     ///
     /// Returns [`TemplateError::InvalidSyntax`] if `command` is not a valid
     /// Handlebars template.
-    pub fn new(command: impl Into<String>) -> Result<Self, TemplateError> {
+    pub(crate) fn new(command: impl Into<String>) -> Result<Self, TemplateError> {
         let command_source = command.into();
         let compiled = Template::compile(command_source.clone())?;
         Ok(Self {
@@ -175,10 +175,9 @@ mod tests {
         let mut dispatcher = EventDispatcher::new();
         dispatcher.on(EventName::AgentFinished, action);
 
-        let report = dispatcher
+        dispatcher
             .emit(&torndown_event(PathBuf::from("/tmp")), &iter_ctx())
             .await;
-        assert!(report.is_clean());
     }
 
     #[tokio::test]
@@ -321,6 +320,9 @@ mod tests {
         let (signal, cwd) = extract_context(&HookEvent::RunnerFinished {
             reason: iter_core::RunnerTerminationReason::Once,
             iteration_count: 0,
+            last_signal_id: None,
+            event_handler_error_count: 0,
+            observer_error_count: 0,
         });
         assert!(signal.is_none());
         assert!(cwd.is_none());

@@ -64,11 +64,12 @@ pub use ast::{
     EventName, ExtractExpr, FilesSource, GitFastForward, GitLocator, InlineService, IterationField,
     Iterfile, MetadataSource, NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService,
     NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard,
-    PromptValue, QueueDef, QueueRef, RetryPolicyDef, RouterStrategy, RunnerDef, SandboxNetworkDef,
-    SandboxPolicyDef, SecretExpr, ServiceSource, SignalAcquisition, SourceDef, SourceDerive,
-    SourceDisposition, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials,
-    SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef, TelemetryProtocol,
-    TriggerDef, Value, WatchEventKind, WorkspaceDef, WorkspaceSourceRef,
+    PromptValue, QueueDef, QueueRef, RetryPolicyDef, RouterFallbackClass, RouterFallbackTriggers,
+    RouterStrategy, RunnerDef, SandboxNetworkDef, SandboxPolicyDef, SecretExpr, ServiceSource,
+    SignalAcquisition, SourceDef, SourceDerive, SourceDisposition, Span, Spanned, SqsConfig,
+    SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,
+    Subscription, TelemetryDef, TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef,
+    WorkspaceSourceRef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{

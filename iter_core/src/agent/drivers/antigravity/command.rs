@@ -1,7 +1,7 @@
 //! `AntigravityCommand` — the **Command level** for Antigravity's print mode.
 //!
 //! Owns the print-mode argv (`agy -p <prompt>`) and classifies the CLI's
-//! complete output into a CLI-shaped [`AntigravityResult`] or a CLI-shaped
+//! complete output into a CLI-shaped [`AntigravityRun`] or a CLI-shaped
 //! [`AntigravityError`] hierarchy. Nothing here is iter-domain — projecting
 //! these onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -44,7 +44,7 @@
 //! 4. exit `2` / `126` / `127` → [`AntigravityError::Launch`].
 //! 5. exit by signal → [`AntigravityError::Signal`].
 //! 6. otherwise a non-zero code → [`AntigravityError::Failed`]; a clean exit
-//!    (after the markers above are ruled out) → `Ok(AntigravityResult)`.
+//!    (after the markers above are ruled out) → `Ok(AntigravityRun)`.
 //!
 //! ## Cancellation
 //!
@@ -114,8 +114,7 @@ impl AntigravityCommand<'_> {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct AntigravityResult {
+pub(crate) struct AntigravityRun {
     /// Always `None` — `agy` print mode reports no session id.
     pub(crate) session_id: Option<String>,
     /// The captured stdout, when non-empty. Informational only.
@@ -161,7 +160,7 @@ pub(crate) enum AntigravityError {
 /// See the module docs for the full contract. The order of checks matters:
 /// the text markers are scanned first because `agy` overloads exit `0` to
 /// mean auth-required and TTY-failure as well as clean success.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<AntigravityResult, AntigravityError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<AntigravityRun, AntigravityError> {
     let stdout = output.stdout_str();
     let stderr = output.stderr_str();
 
@@ -182,7 +181,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<AntigravityResult, Ant
 
     // 4/5/6. Fall back to the exit disposition.
     match output.exit {
-        RawExit::Code(0) => Ok(AntigravityResult {
+        RawExit::Code(0) => Ok(AntigravityRun {
             session_id: None,
             final_text: non_empty(stdout.trim()),
         }),

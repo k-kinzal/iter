@@ -51,10 +51,10 @@ use crate::output::{ListingArgs, ValidateFormat};
                   iter inspect <ID> | jq .name\n  \
                   iter completions zsh > ~/.zsh/_iter"
 )]
-pub struct Cli {
+pub(crate) struct Cli {
     /// Subcommand to dispatch.
     #[command(subcommand)]
-    pub command: Command,
+    pub(crate) command: Command,
 }
 
 /// Top-level subcommands.
@@ -64,7 +64,7 @@ pub struct Cli {
 /// `enqueue`, `run`) are kept as ergonomic aliases that share their
 /// underlying argument structs with the canonical forms.
 #[derive(Debug, Subcommand)]
-pub enum Command {
+pub(crate) enum Command {
     /// Run an Iterfile in runner-only mode (no triggers).
     #[command(
         long_about = "Run a single Iterfile against its declared queue.\n\n\
@@ -194,7 +194,7 @@ pub enum Command {
 
 /// Subcommands grouped under `iter compose`.
 #[derive(Debug, Subcommand)]
-pub enum ComposeCmd {
+pub(crate) enum ComposeCmd {
     /// Build and spawn services and triggers declared in `compose.iter`.
     /// When targets are given, only the named services are started
     /// (requires `--detach`).
@@ -279,7 +279,7 @@ pub enum ComposeCmd {
 
 /// Subcommands grouped under `iter process`.
 #[derive(Debug, Subcommand)]
-pub enum ProcessCmd {
+pub(crate) enum ProcessCmd {
     /// List detached process records.
     #[command(
         visible_alias = "ps",
@@ -334,7 +334,7 @@ pub enum ProcessCmd {
 
 /// Subcommands grouped under `iter signal`.
 #[derive(Debug, Subcommand)]
-pub enum SignalCmd {
+pub(crate) enum SignalCmd {
     /// Push a single signal onto a queue.
     #[command(after_help = "EXAMPLES:\n  \
                       iter signal push --queue-url memory://\n  \
@@ -345,119 +345,119 @@ pub enum SignalCmd {
 
 /// Arguments accepted by `iter compose validate`.
 #[derive(Debug, Parser, Clone)]
-pub struct ComposeValidateArgs {
+pub(crate) struct ComposeValidateArgs {
     /// Path to the compose file (defaults to `./compose.iter`).
     #[arg(short = 'f', long = "file")]
-    pub file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = ValidateFormat::Text)]
-    pub format: ValidateFormat,
+    pub(crate) format: ValidateFormat,
 }
 
 /// Arguments accepted by `iter compose config`.
 #[derive(Debug, Parser, Clone)]
-pub struct ComposeConfigArgs {
+pub(crate) struct ComposeConfigArgs {
     /// Path to the compose file (defaults to `./compose.iter`).
     #[arg(short = 'f', long = "file")]
-    pub file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
 
     /// Shared `-q`, `--format`, `--no-trunc` listing flags.
     #[command(flatten)]
-    pub listing: ListingArgs,
+    pub(crate) listing: ListingArgs,
 }
 
 /// Arguments accepted by `iter compose ls`. No `-f` — this enumerates
 /// every active project from the local registry.
 #[derive(Debug, Parser, Clone)]
-pub struct ComposeLsArgs {
+pub(crate) struct ComposeLsArgs {
     /// Include projects whose runners are all in a terminal state.
     /// Defaults to false — like `docker compose ls`, only running
     /// projects are listed.
     #[arg(short = 'a', long = "all", default_value_t = false)]
-    pub all: bool,
+    pub(crate) all: bool,
 
     /// Shared `-q`, `--format`, `--no-trunc` listing flags.
     #[command(flatten)]
-    pub listing: ListingArgs,
+    pub(crate) listing: ListingArgs,
 }
 
 /// Arguments accepted by `iter compose ps`.
 #[derive(Debug, Parser, Clone)]
-pub struct ComposePsArgs {
+pub(crate) struct ComposePsArgs {
     /// Path to the compose file used to derive the project slug
     /// (defaults to `./compose.iter`). Ignored when `-p` is given.
     #[arg(short = 'f', long = "file")]
-    pub file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
 
     /// Project name override (docker-compose convention). Takes
     /// precedence over the compose file's directory basename.
     #[arg(short = 'p', long = "project-name")]
-    pub project_name: Option<String>,
+    pub(crate) project_name: Option<String>,
 
     /// Include runners in a terminal state. Defaults to false — like
     /// `docker compose ps`, only non-terminal runners are listed.
     #[arg(short = 'a', long = "all", default_value_t = false)]
-    pub all: bool,
+    pub(crate) all: bool,
 
     /// Shared `-q`, `--format`, `--no-trunc` listing flags.
     #[command(flatten)]
-    pub listing: ListingArgs,
+    pub(crate) listing: ListingArgs,
 }
 
 /// Arguments accepted by `iter compose down`.
 #[derive(Debug, Parser, Clone)]
-pub struct ComposeDownArgs {
+pub(crate) struct ComposeDownArgs {
     /// Optional service targets. When given, only the named services are
     /// stopped; the orchestrator and sibling services are left running.
     /// Accepts bare service names (`worker-a`) or explicit resource
     /// references (`service/worker-a`).
     #[arg(value_name = "TARGET")]
-    pub targets: Vec<String>,
+    pub(crate) targets: Vec<String>,
 
     /// Path to the compose file used to derive the project slug
     /// (defaults to `./compose.iter`). Ignored when `-p` is given.
     #[arg(short = 'f', long = "file")]
-    pub file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
 
     /// Project name override (docker-compose convention). Takes
     /// precedence over the compose file's directory basename.
     #[arg(short = 'p', long = "project-name")]
-    pub project_name: Option<String>,
+    pub(crate) project_name: Option<String>,
 
     /// Stop services built from the given Iterfile path. Resolved
     /// against `service { build = ... }` declarations in the compose
     /// file. If multiple services share the same Iterfile, all are
     /// stopped.
     #[arg(long = "source")]
-    pub source: Option<PathBuf>,
+    pub(crate) source: Option<PathBuf>,
 
     /// Seconds to wait for graceful `SIGTERM` shutdown before
     /// escalating to `SIGKILL`. Mirrors `docker compose down --timeout`.
     #[arg(short = 't', long = "timeout", default_value_t = 30)]
-    pub timeout: u64,
+    pub(crate) timeout: u64,
 
     /// Suppress per-runner status lines.
     #[arg(short, long)]
-    pub quiet: bool,
+    pub(crate) quiet: bool,
 }
 
 /// Arguments accepted by `iter compose up`.
 #[derive(Debug, Parser, Clone)]
-pub struct ComposeUpArgs {
+pub(crate) struct ComposeUpArgs {
     /// Optional service targets. When given, only the named services are
     /// started. Requires `--detach`. Accepts bare service names
     /// (`worker-a`) or explicit resource references (`service/worker-a`).
     #[arg(value_name = "TARGET")]
-    pub targets: Vec<String>,
+    pub(crate) targets: Vec<String>,
 
     /// Path to the compose file (defaults to `./compose.iter`).
     #[arg(short = 'f', long = "file")]
-    pub file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
 
     /// What to do when one task fails.
     #[arg(long = "on-failure", value_enum, default_value_t = ComposeFailure::Abort)]
-    pub on_failure: ComposeFailure,
+    pub(crate) on_failure: ComposeFailure,
 
     /// Run the compose orchestrator in the background. The launching shell
     /// returns immediately; the orchestrator hosts triggers in-process and
@@ -465,29 +465,29 @@ pub struct ComposeUpArgs {
     /// Unlike `iter run --detach`, the orchestrator itself is **not**
     /// registered (compose is stateless, like `docker compose`).
     #[arg(short, long)]
-    pub detach: bool,
+    pub(crate) detach: bool,
 
     /// Project name override. Defaults to the canonical basename of the
     /// compose file's parent directory (docker-compose convention).
     /// Same project name = same project; use this when two compose files
     /// in different directories happen to share a basename.
     #[arg(short = 'p', long = "project-name")]
-    pub project_name: Option<String>,
+    pub(crate) project_name: Option<String>,
 
     /// Start services built from the given Iterfile path. Resolved
     /// against `service { build = ... }` declarations in the compose
     /// file. Requires `--detach`.
     #[arg(long = "source")]
-    pub source: Option<PathBuf>,
+    pub(crate) source: Option<PathBuf>,
 
     /// Enable debug-level tracing output.
     #[arg(long)]
-    pub debug: bool,
+    pub(crate) debug: bool,
 }
 
 /// Mirror of [`crate::FailurePolicy`] for clap parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ComposeFailure {
+pub(crate) enum ComposeFailure {
     /// Cancel every other task on the first error.
     Abort,
     /// Log the failure and let the surviving tasks run to completion.
@@ -496,39 +496,39 @@ pub enum ComposeFailure {
 
 /// Arguments accepted by `iter run` / `iter process run`.
 #[derive(Debug, Parser, Clone)]
-pub struct RunArgs {
+pub(crate) struct RunArgs {
     /// Path to the Iterfile (defaults to `./Iterfile`).
-    pub iterfile: Option<PathBuf>,
+    pub(crate) iterfile: Option<PathBuf>,
 
     /// Path to the optional TOML config file (defaults to
     /// `~/.iter/config.toml`).
     #[arg(short, long)]
-    pub config: Option<PathBuf>,
+    pub(crate) config: Option<PathBuf>,
 
     /// Spawn a detached background process and return its instance id.
     ///
     /// Mac/Linux only. On Windows this returns a clean "not supported"
     /// error.
     #[arg(short, long)]
-    pub detach: bool,
+    pub(crate) detach: bool,
 
     /// Human-friendly name to assign to the spawned instance.
     #[arg(long)]
-    pub name: Option<String>,
+    pub(crate) name: Option<String>,
 
     /// Exit after exactly one signal has been processed.
     #[arg(long)]
-    pub once: bool,
+    pub(crate) once: bool,
 
     /// Enable debug-level tracing output.
     #[arg(long)]
-    pub debug: bool,
+    pub(crate) debug: bool,
 
-    /// Internal: set by `iter_core::process::spawn_detached` when forking
+    /// Internal: set by `crate::process::spawn_detached` when forking
     /// the detached child. Triggers `adopt_from_argv` instead of
     /// `register_foreground`.
     #[arg(long = "process-id", hide = true)]
-    pub process_id: Option<String>,
+    pub(crate) process_id: Option<String>,
 
     /// Run a single named service from a compose file instead of an
     /// Iterfile.
@@ -540,7 +540,7 @@ pub struct RunArgs {
     /// each service as its own subprocess so that every service shows
     /// up in `iter ps` / `iter logs` independently.
     #[arg(long = "service")]
-    pub service: Option<String>,
+    pub(crate) service: Option<String>,
 
     /// Override an Iterfile `arg` default. Repeatable.
     ///
@@ -548,40 +548,40 @@ pub struct RunArgs {
     /// declaration in the Iterfile. If the Iterfile declares `arg <key>`
     /// with no default, the override is required.
     #[arg(long = "arg", value_name = "KEY=VALUE")]
-    pub arg: Vec<String>,
+    pub(crate) arg: Vec<String>,
 }
 
 /// Arguments accepted by `iter enqueue` / `iter signal push`.
 #[derive(Debug, Parser, Clone)]
-pub struct EnqueueArgs {
+pub(crate) struct EnqueueArgs {
     /// Connect-style queue URL (`file:///abs/path`, `memory://`, `redis://...`).
     /// Takes precedence over `-f`.
     #[arg(long = "queue-url")]
-    pub queue_url: Option<String>,
+    pub(crate) queue_url: Option<String>,
 
     /// Path to a `compose.iter` or `Iterfile`. When omitted, the file is
     /// auto-detected from the working directory (`./compose.iter` →
     /// `./Iterfile`).
     #[arg(short = 'f', long = "file")]
-    pub file: Option<PathBuf>,
+    pub(crate) file: Option<PathBuf>,
 
     /// Queue name when the resolved file declares more than one queue.
     /// Compose-only.
     #[arg(long = "queue")]
-    pub queue: Option<String>,
+    pub(crate) queue: Option<String>,
 
     /// Metadata pair `KEY=VALUE`. Repeatable. Values are stored as strings.
     #[arg(short = 'm', long = "metadata", value_name = "KEY=VALUE")]
-    pub metadata: Vec<String>,
+    pub(crate) metadata: Vec<String>,
 
     /// Signal priority.
     #[arg(long = "priority", value_enum, default_value_t = EnqueuePriority::Normal)]
-    pub priority: EnqueuePriority,
+    pub(crate) priority: EnqueuePriority,
 }
 
 /// Mirror of [`iter_core::Priority`] for clap parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum EnqueuePriority {
+pub(crate) enum EnqueuePriority {
     /// Background work that may be deferred indefinitely.
     Low,
     /// Default priority used when no value is supplied.
@@ -594,34 +594,34 @@ pub enum EnqueuePriority {
 
 /// Arguments accepted by `iter ps` / `iter process ls`.
 #[derive(Debug, Parser, Clone)]
-pub struct PsArgs {
+pub(crate) struct PsArgs {
     /// Show stopped/failed/killed instances in addition to running ones.
     #[arg(short, long)]
-    pub all: bool,
+    pub(crate) all: bool,
 
     /// Shared `-q`, `--format`, `--no-trunc` listing flags.
     #[command(flatten)]
-    pub listing: ListingArgs,
+    pub(crate) listing: ListingArgs,
 }
 
 /// Arguments accepted by `iter logs` / `iter process logs`.
 #[derive(Debug, Parser, Clone)]
-pub struct LogsArgs {
+pub(crate) struct LogsArgs {
     /// Instance id (ulid) or human-friendly name.
-    pub instance: String,
+    pub(crate) instance: String,
 
     /// Follow new lines as they arrive (`tail -f`).
     #[arg(short, long)]
-    pub follow: bool,
+    pub(crate) follow: bool,
 
     /// Print only the last N lines before following.
     #[arg(long)]
-    pub tail: Option<usize>,
+    pub(crate) tail: Option<usize>,
 
     /// Show RFC3339 microsecond timestamps in front of every line, matching
     /// the `docker logs -t` shape.
     #[arg(short = 't', long)]
-    pub timestamps: bool,
+    pub(crate) timestamps: bool,
 }
 
 /// Arguments accepted by `iter inspect` / `iter process inspect`.
@@ -631,26 +631,26 @@ pub struct LogsArgs {
 /// Deliberately no `--format` flag here so clap cannot accept a value
 /// the dispatcher would only reject.
 #[derive(Debug, Parser, Clone)]
-pub struct InspectArgs {
+pub(crate) struct InspectArgs {
     /// Instance id (ulid) or human-friendly name.
-    pub instance: String,
+    pub(crate) instance: String,
 }
 
 /// Generic single-target arguments (stop / kill / rm).
 #[derive(Debug, Parser, Clone)]
-pub struct TargetArgs {
+pub(crate) struct TargetArgs {
     /// Instance id (ulid) or human-friendly name.
-    pub instance: String,
+    pub(crate) instance: String,
 
     /// Suppress the "<id>: <from> -> <to>" confirmation on stderr.
     /// Successful exit (`0`) is the success signal under `--quiet`.
     #[arg(short, long, default_value_t = false)]
-    pub quiet: bool,
+    pub(crate) quiet: bool,
 }
 
 /// Shell choices accepted by `iter completions <SHELL>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ShellArg {
+pub(crate) enum ShellArg {
     /// Generate a Bash completion script.
     Bash,
     /// Generate a Zsh completion script.

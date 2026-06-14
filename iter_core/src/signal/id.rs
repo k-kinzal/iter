@@ -10,6 +10,8 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::time::{IdSource, SystemIdSource};
+
 /// Time-ordered identifier (UUID v7) attached to every [`Signal`](super::Signal).
 ///
 /// Because the underlying value is a UUID v7, lexicographic ordering of
@@ -23,7 +25,7 @@ impl SignalId {
     /// Generate a new time-ordered `SignalId`.
     #[must_use]
     pub fn new() -> Self {
-        Self(Uuid::now_v7())
+        IdSource::new_id(&SystemIdSource)
     }
 
     /// Wrap an existing UUID as a `SignalId`.

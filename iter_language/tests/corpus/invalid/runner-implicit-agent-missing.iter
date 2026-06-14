@@ -1,0 +1,10 @@
+workspace local {
+  base = "."
+}
+
+runner {
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "Missing agent."
+}

@@ -111,7 +111,6 @@ impl<Q: Queue + ?Sized + 'static> FilesTrigger<Q> {
     /// restarts.  When set, the trigger resumes from the last emitted
     /// offset instead of re-reading from the beginning.
     #[must_use]
-    #[allow(dead_code)]
     pub fn with_state_dir(mut self, dir: PathBuf) -> Self {
         self.state_dir = Some(dir);
         self

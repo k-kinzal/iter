@@ -54,8 +54,7 @@ pub struct AgentInvocation<'a> {
     /// Sink the agent should tee its child stdout/stderr through so every
     /// line lands in `log.ndjson`. Defaults to a [`NoopSink`] for tests
     /// and standalone constructions; the runner replaces it with the
-    /// active `Arc<dyn OutputSink>` from the
-    /// [`ProcessRuntime`](crate::process::ProcessRuntime) when running
+    /// active `Arc<dyn OutputSink>` supplied by the caller when running
     /// under a process record.
     pub stdio_sink: Arc<dyn OutputSink>,
     /// Optional per-iteration timeout. When set, [`run_with_timeout`]

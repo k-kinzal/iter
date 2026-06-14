@@ -18,6 +18,8 @@
 //! `iteration.count == 1`, so `iteration.count % 10 == 0` fires on
 //! iterations 10, 20, 30… as a human would expect.
 
+use std::time::{Duration, UNIX_EPOCH};
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -27,7 +29,7 @@ use crate::signal::SignalId;
 /// [`IterationState::record_failure`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PreviousResult {
+pub enum PriorIterationStatus {
     /// No previous iteration has been recorded yet (first iteration).
     None,
     /// Previous iteration completed without error or non-zero agent exit
@@ -38,7 +40,7 @@ pub enum PreviousResult {
     Errored,
 }
 
-impl PreviousResult {
+impl PriorIterationStatus {
     fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -59,7 +61,7 @@ impl PreviousResult {
 pub struct IterationState {
     runner_started_at: DateTime<Utc>,
     current_iteration_started_at: DateTime<Utc>,
-    previous_result: PreviousResult,
+    previous_result: PriorIterationStatus,
     previous_exit_code: Option<i32>,
     previous_signal_id: Option<SignalId>,
     previous_finished_at: Option<DateTime<Utc>>,
@@ -76,7 +78,7 @@ impl IterationState {
         Self {
             runner_started_at,
             current_iteration_started_at: runner_started_at,
-            previous_result: PreviousResult::None,
+            previous_result: PriorIterationStatus::None,
             previous_exit_code: None,
             previous_signal_id: None,
             previous_finished_at: None,
@@ -101,7 +103,7 @@ impl IterationState {
         exit_code: Option<i32>,
         finished_at: DateTime<Utc>,
     ) {
-        self.previous_result = PreviousResult::Success;
+        self.previous_result = PriorIterationStatus::Success;
         self.previous_exit_code = exit_code;
         self.previous_signal_id = Some(signal_id);
         self.previous_finished_at = Some(finished_at);
@@ -118,7 +120,7 @@ impl IterationState {
         exit_code: Option<i32>,
         finished_at: DateTime<Utc>,
     ) {
-        self.previous_result = PreviousResult::Errored;
+        self.previous_result = PriorIterationStatus::Errored;
         self.previous_exit_code = exit_code;
         self.previous_signal_id = Some(signal_id);
         self.previous_finished_at = Some(finished_at);
@@ -146,7 +148,7 @@ impl IterationState {
 
     /// Borrow the latest recorded result category.
     #[must_use]
-    pub fn previous_result(&self) -> PreviousResult {
+    pub fn previous_result(&self) -> PriorIterationStatus {
         self.previous_result
     }
 
@@ -196,7 +198,7 @@ pub struct IterationContext {
     pub runner_started_at: DateTime<Utc>,
     /// Result category of the previous iteration; `None` on the first.
     /// Rendered in templates/guards as `iteration.previous_result`.
-    pub previous_result: PreviousResult,
+    pub previous_result: PriorIterationStatus,
     /// Process exit code recorded for the previous iteration. Under the
     /// `Ok = ran` model this is the normalized success value `Some(0)`
     /// after a clean run; on a failed run it carries the code the agent
@@ -239,7 +241,7 @@ impl IterationContext {
     /// and call `snapshot(count)` directly.
     #[must_use]
     pub fn for_count(count: u32) -> Self {
-        let now = Utc::now();
+        let now = DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs(1_700_000_000));
         IterationState::new(now).snapshot(count)
     }
 
@@ -264,7 +266,7 @@ mod tests {
     use crate::signal::Signal;
 
     fn now() -> DateTime<Utc> {
-        Utc::now()
+        DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
     }
 
     #[test]
@@ -272,7 +274,7 @@ mod tests {
         let state = IterationState::new(now());
         let snap = state.snapshot(1);
         assert_eq!(snap.count, 1);
-        assert_eq!(snap.previous_result, PreviousResult::None);
+        assert_eq!(snap.previous_result, PriorIterationStatus::None);
         assert_eq!(snap.previous_exit_code, None);
         assert_eq!(snap.previous_signal_id, None);
         assert_eq!(snap.consecutive_failures, 0);
@@ -290,7 +292,7 @@ mod tests {
         state.record_success(signal.id(), Some(0), now());
         assert_eq!(state.consecutive_failures(), 0);
         assert_eq!(state.consecutive_successes(), 1);
-        assert_eq!(state.previous_result(), PreviousResult::Success);
+        assert_eq!(state.previous_result(), PriorIterationStatus::Success);
     }
 
     #[test]
@@ -304,7 +306,7 @@ mod tests {
         state.record_failure(signal.id(), Some(1), now());
         assert_eq!(state.consecutive_failures(), 1);
         assert_eq!(state.consecutive_successes(), 0);
-        assert_eq!(state.previous_result(), PreviousResult::Errored);
+        assert_eq!(state.previous_result(), PriorIterationStatus::Errored);
     }
 
     #[test]
@@ -321,7 +323,7 @@ mod tests {
         state.record_success(signal.id(), Some(0), now());
         let snap = state.snapshot(2);
         assert_eq!(snap.previous_signal_id, Some(signal.id()));
-        assert_eq!(snap.previous_result, PreviousResult::Success);
+        assert_eq!(snap.previous_result, PriorIterationStatus::Success);
         assert_eq!(snap.previous_exit_code, Some(0));
     }
 

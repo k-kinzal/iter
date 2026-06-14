@@ -20,7 +20,7 @@
 //! [`find_active_orchestrator`] return a fingerprint pointing at an
 //! arbitrary same-UID pid; `compose down` would then signal that pid
 //! after re-verifying its start-time fingerprint via
-//! [`iter_core::process::signal_identity`]. This is the same trust model
+//! [`crate::process::signal_identity`]. This is the same trust model
 //! as `docker compose down` reading container labels — the user-local
 //! filesystem is the boundary.
 //!
@@ -37,11 +37,11 @@
 use std::collections::BTreeMap;
 use std::io;
 
-use chrono::{DateTime, Utc};
-use iter_core::process::{
+use crate::process::{
     Pid, ProcessError, ProcessIdentity, ProcessRecord, ProcessRegistry, ProcessStartTime,
     ProcessStatus, list_default, process_is_alive_with_start_time,
 };
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::compose::{
@@ -51,9 +51,9 @@ use crate::compose::{
 
 /// One compose-managed runner, materialised from a registry record.
 #[derive(Debug, Clone)]
-pub struct ProjectMember {
+pub(crate) struct ProjectMember {
     /// The runner's registry record.
-    pub record: ProcessRecord,
+    pub(crate) record: ProcessRecord,
     /// Compose project slug (`iter.compose.project`).
     ///
     /// Carried alongside `service` so callers (e.g. `compose ls`) can group
@@ -61,35 +61,35 @@ pub struct ProjectMember {
     /// metadata to recover the project label opens a TOCTOU window in
     /// which a concurrent `iter rm` between the two reads would silently
     /// drop the member from the listing — see Codex iter-3 Minor 2.
-    pub project: String,
+    pub(crate) project: String,
     /// Compose service name (`iter.compose.service`).
-    pub service: String,
+    pub(crate) service: String,
     /// Runner status as recorded in the status token.
-    pub status: ProcessStatus,
+    pub(crate) status: ProcessStatus,
     /// When the runner was registered (`meta.json`'s `started_at`).
     ///
     /// Pulled from the same `meta.json` read that built the rest of the
     /// member so `compose ps` does not have to re-open the metadata file
     /// — see Codex iter-3 Minor 3. A second read would race a concurrent
     /// `iter rm` and turn a listing command into a hard `ENOENT` error.
-    pub started_at: DateTime<Utc>,
+    pub(crate) started_at: DateTime<Utc>,
     /// Orchestrator identity stamped into the runner labels.
-    pub orchestrator: ProcessIdentity,
+    pub(crate) orchestrator: ProcessIdentity,
 }
 
 /// Information needed to act on a still-live orchestrator: signal it
 /// (`compose down`) or refuse to start another one (`compose up -d`).
 #[derive(Debug, Clone)]
-pub struct ActiveOrchestrator {
+pub(crate) struct ActiveOrchestrator {
     /// The compose project this orchestrator owns.
-    pub project: String,
+    pub(crate) project: String,
     /// pid + start-time fingerprint (`kill -0` + start-time cross-check).
-    pub identity: ProcessIdentity,
+    pub(crate) identity: ProcessIdentity,
 }
 
 /// Errors returned by the discovery functions.
 #[derive(Debug, Error)]
-pub enum DiscoveryError {
+pub(crate) enum DiscoveryError {
     /// Listing process records or reading their metadata failed.
     #[error(transparent)]
     Process(#[from] ProcessError),
@@ -101,7 +101,7 @@ pub enum DiscoveryError {
 /// # Errors
 ///
 /// Returns [`DiscoveryError::Process`] if the registry root cannot be opened.
-pub fn open_default_registry() -> Result<ProcessRegistry, DiscoveryError> {
+pub(crate) fn open_default_registry() -> Result<ProcessRegistry, DiscoveryError> {
     Ok(ProcessRegistry::open_default()?)
 }
 
@@ -113,7 +113,7 @@ pub fn open_default_registry() -> Result<ProcessRegistry, DiscoveryError> {
 ///
 /// Returns [`DiscoveryError::Process`] if the registry scan or any
 /// `meta.json` read fails.
-pub fn list_project_members(slug: &str) -> Result<Vec<ProjectMember>, DiscoveryError> {
+pub(crate) fn list_project_members(slug: &str) -> Result<Vec<ProjectMember>, DiscoveryError> {
     let mut out = Vec::new();
     for record in list_default()? {
         let Some(member) = project_member_from_record(&record, Some(slug))? else {
@@ -129,8 +129,8 @@ pub fn list_project_members(slug: &str) -> Result<Vec<ProjectMember>, DiscoveryE
 /// # Errors
 ///
 /// Returns [`DiscoveryError::Process`] if the registry scan fails.
-pub fn list_all_members_by_project() -> Result<BTreeMap<String, Vec<ProjectMember>>, DiscoveryError>
-{
+pub(crate) fn list_all_members_by_project()
+-> Result<BTreeMap<String, Vec<ProjectMember>>, DiscoveryError> {
     let mut by_project: BTreeMap<String, Vec<ProjectMember>> = BTreeMap::new();
     for record in list_default()? {
         let Some(member) = project_member_from_record(&record, None)? else {
@@ -162,7 +162,9 @@ pub fn list_all_members_by_project() -> Result<BTreeMap<String, Vec<ProjectMembe
 ///
 /// Returns [`DiscoveryError::Process`] if the registry scan or alive
 /// check fails.
-pub fn find_active_orchestrator(slug: &str) -> Result<Option<ActiveOrchestrator>, DiscoveryError> {
+pub(crate) fn find_active_orchestrator(
+    slug: &str,
+) -> Result<Option<ActiveOrchestrator>, DiscoveryError> {
     for member in list_project_members(slug)? {
         if process_is_alive_with_start_time(&member.orchestrator)? {
             return Ok(Some(ActiveOrchestrator {
@@ -249,7 +251,7 @@ fn project_member_from_record(
 /// already gone" rather than a hard error. See [`project_member_from_record`].
 fn read_metadata_or_skip(
     record: &ProcessRecord,
-) -> Result<Option<iter_core::process::ProcessMetadata>, DiscoveryError> {
+) -> Result<Option<crate::process::ProcessMetadata>, DiscoveryError> {
     match record.metadata() {
         Ok(meta) => Ok(Some(meta)),
         Err(ProcessError::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),

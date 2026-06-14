@@ -12,10 +12,8 @@
 //! to stderr; stdout is reserved.
 
 #![deny(rust_2018_idioms)]
-#![allow(unreachable_pub)]
 
 mod banner;
-mod command;
 mod error;
 mod logging;
 mod signal_defaults;
@@ -25,9 +23,9 @@ mod termination;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::command::{CommandTrigger, CommandTriggerError, ExtractMode, OnError};
 use clap::{Parser, ValueEnum};
-use iter_core::process::interrupt::install_signal_handlers;
+use iter_command_cli::{CommandTrigger, CommandTriggerError, ExtractMode, OnError};
+use iter_core::os_signal::install_signal_handlers;
 use iter_core::queue::{BudgetedQueue, ConnectError, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::defaults::MetadataPairError;
 use thiserror::Error;

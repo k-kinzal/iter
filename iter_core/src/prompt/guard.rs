@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::runner::iteration::{IterationContext, PreviousResult};
+use crate::runner::iteration::{IterationContext, PriorIterationStatus};
 use crate::signal::Signal;
 use crate::signal::metadata::MetadataValue;
 
@@ -191,11 +191,11 @@ fn apply_cmp(lhs: i64, op: CmpOp, rhs: i64) -> bool {
     }
 }
 
-fn result_matches(previous: PreviousResult, expected: &str) -> bool {
+fn result_matches(previous: PriorIterationStatus, expected: &str) -> bool {
     let actual = match previous {
-        PreviousResult::None => "none",
-        PreviousResult::Success => "success",
-        PreviousResult::Errored => "errored",
+        PriorIterationStatus::None => "none",
+        PriorIterationStatus::Success => "success",
+        PriorIterationStatus::Errored => "errored",
     };
     actual == expected
 }
@@ -206,7 +206,9 @@ fn result_matches(previous: PreviousResult, expected: &str) -> bool {
 fn matches_metadata(signal: &Signal, key: &str) -> Option<String> {
     match signal.metadata().get_str(key)? {
         MetadataValue::Null => Some(String::new()),
-        other => Some(other.to_string()),
+        other @ (MetadataValue::String(_) | MetadataValue::Integer(_) | MetadataValue::Bool(_)) => {
+            Some(other.to_string())
+        }
     }
 }
 

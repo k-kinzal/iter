@@ -29,10 +29,11 @@ agent <kind> {
 | [`generic`](#agent-generic) | Arbitrary argv | ✘ | ✘ |
 | [`noop`](#agent-noop) | Built-in (no binary) | ✘ | ✘ |
 | [`fake`](#agent-fake) | Built-in (no binary) | ✘ | ✘ |
+| [`router`](#agent-router) | Built-in multi-agent router | ✘ | ✘ |
 
-Every named kind (all but `generic`, `noop`, and `fake`) carries a required `command` field plus a pass-through `args` list. iter prepends mode-specific defaults (`--print`, `exec`, etc.) and appends `args` after them.
+Every CLI-backed named kind has a conventional default `command` matching its backing CLI. Set `command` only when you need to override that default, including pinning an absolute path for determinism or security. iter prepends mode-specific defaults (`--print`, `exec`, etc.) and appends `args` after them.
 
-`noop` and `fake` do not require any external binary — they run entirely in-process.
+`noop`, `fake`, and `router` do not require any external binary — they run entirely in-process.
 
 ---
 
@@ -92,6 +93,61 @@ Used by kinds that support the `mode` field.
 
 ---
 
+## `agent router`
+
+Built-in meta-agent that dispatches each iteration to named sub-agents.
+
+### Example
+
+```hcl
+agent router {
+  strategy = fallback
+  fallback_on = [token_limit, failure]
+
+  primary {
+    kind = claude
+    mode = print
+  }
+
+  secondary {
+    kind = codex
+    mode = print
+  }
+}
+```
+
+### Arguments
+
+| Name | Type | Required | Default | Description |
+| --- | --- | :---: | --- | --- |
+| `strategy` | `enum { fallback \| rotate }` | Optional | `fallback` | Routing strategy. |
+| `fallback_on` | `any` or `list(enum)` | Optional | `any` | Failure classes that trigger fallback. Only valid with `strategy = fallback`. |
+| `<name>` | `block { kind = ... }` | Required | - | Named sub-agent block. At least one sub-agent is required. |
+
+### Strategies
+
+`fallback` starts with the first named sub-agent. If that agent fails with a configured fallback class, the router tries the next sub-agent in declaration order. By default, `fallback_on = any`, meaning every agent failure class falls back except cancellation.
+
+`rotate` runs one sub-agent per iteration, round-robin. `fallback_on` is not valid with `rotate`.
+
+### `fallback_on` values
+
+Valid fallback classes are:
+
+| Token | Agent error class |
+| --- | --- |
+| `timeout` | Iteration timeout. |
+| `token_limit` | Context-window or token-limit overflow. |
+| `errored` | Launch, auth, startup, or configuration failure. |
+| `terminated_by_signal` | Agent process terminated by signal. |
+| `failure` | Non-zero exit or in-band failure. |
+
+Use `fallback_on = any` to fall back on all failure classes. To reproduce the legacy token-limit-only behavior, set `fallback_on = [token_limit]`.
+
+`cancelled` is never a fallback trigger. Cancellation is iter's cooperative shutdown path and always propagates.
+
+---
+
 ## `agent claude`
 
 Anthropic Claude Code.
@@ -101,7 +157,6 @@ Anthropic Claude Code.
 ```hcl
 agent claude {
   mode    = interactive
-  command = "claude"
 }
 
 agent claude {
@@ -117,7 +172,7 @@ agent claude {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
-| `command` | `string` | Required | — | Binary name or absolute path. Resolved via `PATH`. |
+| `command` | `string` | Optional | `"claude"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed defaults. |
 | `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `--session-id <uuid>`. Omit to run each iteration as a fresh session. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
@@ -133,7 +188,6 @@ OpenAI Codex.
 ```hcl
 agent codex {
   mode    = print
-  command = "codex"
   args    = ["--model", "o1-preview"]
 }
 ```
@@ -143,7 +197,7 @@ agent codex {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"codex"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
@@ -158,7 +212,7 @@ Google Gemini.
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"gemini"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
@@ -173,13 +227,11 @@ Nous Research Hermes Agent — an open-source, self-hosted AI coding agent.
 ```hcl
 agent hermes {
   mode    = print
-  command = "hermes"
   args    = ["--yolo", "--max-turns", "30"]
 }
 
 agent hermes {
   mode    = interactive
-  command = "hermes"
 }
 ```
 
@@ -188,7 +240,7 @@ agent hermes {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"hermes"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
@@ -205,13 +257,11 @@ Google Antigravity CLI (`agy`), successor to Gemini CLI.
 ```hcl
 agent antigravity {
   mode    = print
-  command = "agy"
   args    = ["--print-timeout", "600"]
 }
 
 agent antigravity {
   mode            = print
-  command         = "agy"
   conversation_id = "my-session"
 }
 ```
@@ -221,7 +271,7 @@ agent antigravity {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"agy"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `conversation_id` | `string` | Optional | — | Conversation identifier for session persistence. When set, iter passes `--conversation <id>` on every invocation so the agent resumes the same session. Omit to start a fresh conversation each iteration. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
@@ -238,7 +288,6 @@ GitHub Copilot. Unusually, the CLI takes a subcommand between the binary and the
 # Use iter's default subcommand
 agent copilot {
   mode    = print
-  command = "gh"
 }
 
 # Override the subcommand explicitly
@@ -262,7 +311,7 @@ agent copilot {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"gh"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `subcommand` | `list(string)` | Optional | iter default | Tokens inserted between `command` and the positional prompt. Unset means iter picks a sane default. `[]` means "no subcommand". `[...]` overrides entirely. |
 | `args` | `list(string)` | Optional | `[]` | Arguments appended between `subcommand` and the positional prompt. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
@@ -277,7 +326,7 @@ Cursor.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"cursor"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
@@ -293,7 +342,7 @@ Cline.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"cline"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
@@ -307,7 +356,7 @@ opencode.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `command` | `string` | Required | — | Binary name or absolute path. |
+| `command` | `string` | Optional | `"opencode"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
@@ -329,11 +378,9 @@ Authentication uses `XAI_API_KEY` (or a prior local login). Set it through the a
 
 ```hcl
 agent grok {
-  command = "grok"
 }
 
 agent grok {
-  command         = "grok"
   args            = ["--output-format", "json"]
   session_id_file = ".iter/session.txt"
 }
@@ -343,7 +390,7 @@ agent grok {
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `command` | `string` | Required | — | Binary name or absolute path. Resolved via `PATH`. |
+| `command` | `string` | Optional | `"grok"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed headless flags (`-p`, `--always-approve`, `-s`). |
 | `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `-s <uuid>` so Grok resumes the same headless session. Omit to run each iteration as a fresh session. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |

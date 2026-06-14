@@ -4,13 +4,12 @@ use std::collections::BTreeMap;
 
 /// Agent backend declaration.
 ///
-/// Every named variant (all but [`AgentDef::Generic`]) carries a required
-/// `command` field and an `args` pass-through list so authors can point the
-/// agent at a specific binary path and forward arbitrary flags to it without
-/// iter having to model each underlying CLI flag as a typed field. The iter
-/// runtime still prepends its mode-specific default flags (e.g. `--print`,
-/// `--oneshot`, `exec`) so the common case — "just pick a mode" — stays
-/// terse; `args` is appended after those defaults.
+/// Every named variant (all but [`AgentDef::Generic`]) carries a concrete
+/// `command` field and an `args` pass-through list. The semantic lowerer
+/// fills `command` from the agent kind's conventional binary when the source
+/// omits it, while explicit source values let authors pin a specific binary
+/// path. The iter runtime still prepends its mode-specific default flags
+/// (e.g. `--print`, `--oneshot`, `exec`) and appends `args` after them.
 ///
 /// Every variant also carries an `env` map: key–value pairs that become
 /// environment variables in the spawned agent child process. At runtime,
@@ -23,7 +22,7 @@ pub enum AgentDef {
     Claude {
         /// Invocation mode for the underlying CLI. Required.
         mode: AgentMode,
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults. Empty
         /// is allowed.
@@ -47,7 +46,7 @@ pub enum AgentDef {
     Codex {
         /// Invocation mode for the underlying CLI. Required.
         mode: AgentMode,
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -58,7 +57,7 @@ pub enum AgentDef {
     Gemini {
         /// Invocation mode for the underlying CLI. Required.
         mode: AgentMode,
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -69,7 +68,7 @@ pub enum AgentDef {
     Hermes {
         /// Invocation mode for the underlying CLI. Required.
         mode: AgentMode,
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -80,7 +79,7 @@ pub enum AgentDef {
     Antigravity {
         /// Invocation mode for the underlying CLI. Required.
         mode: AgentMode,
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -95,7 +94,7 @@ pub enum AgentDef {
     Copilot {
         /// Invocation mode for the underlying CLI. Required.
         mode: AgentMode,
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Override the subcommand inserted between the binary and the
         /// positional prompt. `None` leaves the agent's canonical
@@ -111,7 +110,7 @@ pub enum AgentDef {
     },
     /// Cursor agent.
     Cursor {
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -120,7 +119,7 @@ pub enum AgentDef {
     },
     /// Cline agent.
     Cline {
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -129,7 +128,7 @@ pub enum AgentDef {
     },
     /// `opencode` agent.
     OpenCode {
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
@@ -142,7 +141,7 @@ pub enum AgentDef {
     /// There is no `mode` field because the TUI path is out of scope for
     /// this driver.
     Grok {
-        /// Binary name or absolute path. Required.
+        /// Binary name or absolute path.
         command: String,
         /// Extra arguments appended after the iter-managed headless flags.
         args: Vec<String>,
@@ -190,16 +189,42 @@ pub enum AgentDef {
         agents: Vec<(String, Box<AgentDef>)>,
         /// How the router selects an agent each iteration.
         strategy: RouterStrategy,
+        /// Failure classes that trigger fallback when `strategy = fallback`.
+        fallback_on: RouterFallbackTriggers,
     },
 }
 
 /// Strategy for agent routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouterStrategy {
-    /// Use the first agent; fall back to the next on token-limit errors.
+    /// Use the first agent; fall back to the next on configured failures.
     Fallback,
     /// Rotate through agents round-robin across iterations.
     Rotate,
+}
+
+/// Router fallback trigger set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouterFallbackTriggers {
+    /// Fall back on every failure class except cancellation.
+    Any,
+    /// Fall back only on the listed failure classes.
+    Only(std::collections::BTreeSet<RouterFallbackClass>),
+}
+
+/// Fallback-eligible agent failure classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RouterFallbackClass {
+    /// Iteration timeout.
+    Timeout,
+    /// Context-window or token-limit overflow.
+    TokenLimit,
+    /// Launch, auth, startup, or configuration failure.
+    Launch,
+    /// Process terminated by signal.
+    TerminatedBySignal,
+    /// Non-zero exit or in-band failure.
+    Failure,
 }
 
 /// Agent invocation mode.

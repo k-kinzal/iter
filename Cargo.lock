@@ -1927,10 +1927,12 @@ name = "iter_cli"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "clap",
  "clap_complete",
  "globset",
+ "hex",
  "iter_command_cli",
  "iter_core",
  "iter_cron_cli",
@@ -1942,6 +1944,7 @@ dependencies = [
  "libc",
  "nix",
  "pretty_assertions",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "tabwriter",
@@ -1952,6 +1955,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]
@@ -1997,11 +2001,9 @@ dependencies = [
  "insta",
  "iter_tracing",
  "libc",
- "nix",
  "notify",
  "percent-encoding",
  "pretty_assertions",
- "rand 0.8.6",
  "redis",
  "serde",
  "serde_json",
@@ -2012,7 +2014,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "ulid",
  "uuid",
 ]
 

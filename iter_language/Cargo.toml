@@ -24,5 +24,33 @@ arbitrary.workspace = true
 default = []
 serde = ["dep:serde"]
 
-[lints]
-workspace = true
+# NOTE: iter_language deliberately does not inherit the workspace lint table.
+# Its test oracle lowers Pest's generated `Rule` enum and intentionally keeps
+# fallback arms for unexpected parse-tree shapes. The core-domain wildcard
+# policy is still enforced in the workspace table and duplicated in iter_core.
+[lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+trivial_numeric_casts = "deny"
+let_underscore_drop = "deny"
+dead_code = "allow"
+unused_imports = "allow"
+unused_macros = "allow"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+unnecessary_safety_comment = "deny"
+wildcard_enum_match_arm = "allow"
+match_wildcard_for_single_variants = "allow"
+cast_possible_truncation = "allow"
+ignored_unit_patterns = "allow"
+module_inception = "allow"
+needless_pass_by_value = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+uninlined_format_args = "allow"
+unused_async = "allow"

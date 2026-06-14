@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::id::SignalId;
 use super::kind::SignalKind;
 use super::metadata::{Metadata, MetadataKey, MetadataValue};
+use crate::time::{Clock, IdSource, SystemClock, SystemIdSource};
 
 /// A pure event flowing through the [`Queue`](crate::queue::Queue).
 ///
@@ -35,13 +36,22 @@ pub struct Signal {
 }
 
 impl Signal {
-    /// Create a new `Signal` with a freshly generated id and `Utc::now()`
-    /// timestamp.
+    /// Create a new `Signal` with the system clock and id source.
     #[must_use]
     pub fn new(metadata: Metadata) -> Self {
+        Self::new_with_sources(metadata, &SystemClock, &SystemIdSource)
+    }
+
+    /// Create a new `Signal` with injected time and id sources.
+    #[must_use]
+    pub fn new_with_sources(
+        metadata: Metadata,
+        clock: &dyn Clock,
+        id_source: &dyn IdSource,
+    ) -> Self {
         Self {
-            id: SignalId::new(),
-            created_at: Utc::now(),
+            id: id_source.new_id(),
+            created_at: clock.now(),
             kind: SignalKind::Work,
             metadata,
         }
@@ -63,6 +73,12 @@ impl Signal {
         Self::new(Metadata::new())
     }
 
+    /// Create a synthesized `Signal` with injected time and id sources.
+    #[must_use]
+    pub fn synthesized_with_sources(clock: &dyn Clock, id_source: &dyn IdSource) -> Self {
+        Self::new_with_sources(Metadata::new(), clock, id_source)
+    }
+
     /// Create a termination signal.
     ///
     /// When a runner dequeues a terminate signal it exits gracefully
@@ -70,9 +86,15 @@ impl Signal {
     /// triggers (or any external producer) that want the runner to stop.
     #[must_use]
     pub fn terminate() -> Self {
+        Self::terminate_with_sources(&SystemClock, &SystemIdSource)
+    }
+
+    /// Create a termination signal with injected time and id sources.
+    #[must_use]
+    pub fn terminate_with_sources(clock: &dyn Clock, id_source: &dyn IdSource) -> Self {
         Self {
-            id: SignalId::new(),
-            created_at: Utc::now(),
+            id: id_source.new_id(),
+            created_at: clock.now(),
             kind: SignalKind::Terminate,
             metadata: Metadata::new(),
         }

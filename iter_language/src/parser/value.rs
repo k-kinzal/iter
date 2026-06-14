@@ -75,7 +75,23 @@ impl Parser<'_> {
                     Some(CstValue::Ident(name, tok.span))
                 }
             }
-            _ => {
+            Token::RBrace
+            | Token::RBracket
+            | Token::LParen
+            | Token::RParen
+            | Token::Comma
+            | Token::Equals
+            | Token::EqEq
+            | Token::BangEq
+            | Token::Lt
+            | Token::LtEq
+            | Token::Gt
+            | Token::GtEq
+            | Token::Percent
+            | Token::AmpAmp
+            | Token::PipePipe
+            | Token::Dot
+            | Token::FatArrow => {
                 let got = tok.token.describe();
                 self.errors.push(Diagnostic::error(
                     tok.span,

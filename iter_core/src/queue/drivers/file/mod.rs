@@ -33,9 +33,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use crate::queue::QueueError;
+use crate::time::{Clock, SystemClock};
 use crate::{Priority, Queue, Signal};
 use async_trait::async_trait;
 use notify::{Config as NotifyConfig, PollWatcher, RecursiveMode, Watcher};
@@ -103,6 +104,8 @@ struct Inner {
     /// 3. Same-process producers wake consumers via the in-process
     ///    [`Notify`] directly, bypassing the watcher entirely.
     _watcher: PollWatcher,
+    /// Clock used for filename ordering timestamps.
+    clock: Arc<dyn Clock>,
 }
 
 impl std::fmt::Debug for Inner {
@@ -128,6 +131,20 @@ impl FileQueue {
     /// created or swept, or [`FileQueueError::Watcher`] if the underlying
     /// `notify` watcher cannot attach to `pending/`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, FileQueueError> {
+        Self::open_with_clock(path, Arc::new(SystemClock))
+    }
+
+    /// Open (or create) a [`FileQueue`] with an injected clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FileQueueError::Io`] if the queue directory cannot be
+    /// created or swept, or [`FileQueueError::Watcher`] if the underlying
+    /// `notify` watcher cannot attach to `pending/`.
+    pub fn open_with_clock(
+        path: impl AsRef<Path>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, FileQueueError> {
         let root = path.as_ref().to_path_buf();
         let pending = root.join(PENDING_DIR);
         let tmp = root.join(TMP_DIR);
@@ -166,6 +183,7 @@ impl FileQueue {
                 closed: AtomicBool::new(false),
                 notify,
                 _watcher: watcher,
+                clock,
             }),
         })
     }
@@ -249,7 +267,10 @@ impl FileQueue {
 
         let payload = serde_json::to_vec(&signal)?;
 
-        let nanos = SystemTime::now()
+        let nanos = self
+            .inner
+            .clock
+            .system_time()
             .duration_since(UNIX_EPOCH)
             .map_or(0u128, |d| d.as_nanos());
         let seq = self.inner.next_seq.fetch_add(1, Ordering::Relaxed);
@@ -436,7 +457,9 @@ mod tests {
             .expect("label present")
         {
             MetadataValue::String(s) => s.clone(),
-            other => panic!("unexpected metadata variant: {other:?}"),
+            other @ (MetadataValue::Integer(_) | MetadataValue::Bool(_) | MetadataValue::Null) => {
+                panic!("unexpected metadata variant: {other:?}")
+            }
         }
     }
 

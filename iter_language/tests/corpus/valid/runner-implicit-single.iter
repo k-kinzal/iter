@@ -1,0 +1,11 @@
+workspace local {
+  base = "."
+}
+
+agent noop {}
+
+runner {
+  continue_on_error = false
+  behavior = loop
+  prompt = "Implicit single binding."
+}

@@ -56,7 +56,11 @@ impl GlobPair {
             excludes.iter().partition(|p| p.starts_with('!'));
         let neg_patterns: Vec<String> = negated
             .iter()
-            .map(|p| p.strip_prefix('!').unwrap().to_string())
+            .map(|p| {
+                p.strip_prefix('!')
+                    .expect("negated exclude patterns are selected by starts_with('!')")
+                    .to_string()
+            })
             .collect();
         let pos_patterns: Vec<String> = positive.into_iter().cloned().collect();
         Ok(Self {

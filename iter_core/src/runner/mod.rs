@@ -7,16 +7,15 @@
 //!
 //! # Cancellation
 //!
-//! The Runner is one party in the crate-wide cancellation discipline
-//! documented at [`process::interrupt`](crate::process::interrupt). It may
-//! *fire* cancellation only through its own iteration timeout
+//! The Runner is one party in the crate-wide cancellation discipline. OS
+//! interrupts are translated into cancellation by [`crate::os_signal`]; the
+//! Runner may *fire* cancellation only through its own iteration timeout
 //! (`iteration_timeout`); on *receipt* it owes exactly one thing — complete
 //! the current iteration's teardown and report the outcome. It never closes a
 //! Queue, kills an Agent's process tree directly, or finalizes a run record;
 //! each of those belongs to the party that owns it.
 
 pub mod builder;
-pub mod config;
 /// Error types for [`Runner::run`].
 pub mod error;
 pub mod event;
@@ -26,10 +25,10 @@ mod events;
 pub mod iteration;
 pub mod lifecycle;
 pub mod observer;
+pub mod policy;
 
 use std::sync::Arc;
 
-use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, field};
 
@@ -37,17 +36,18 @@ use crate::agent::Agent;
 use crate::prompt::{Prompt, PromptSelector};
 use crate::queue::Queue;
 use crate::signal::{Signal, SignalId};
+use crate::time::{Clock, IdSource};
 use crate::workspace::Workspace;
 
 pub use builder::{BuilderError, RunnerBuilder};
-pub use config::{RunnerPolicy, RunnerSummary, RunnerTerminationReason, SignalAcquisition};
-pub use error::{ErrorSource, RunnerExitError};
+pub use error::{ErrorSource, RunnerError};
 pub use event::{EventName, HookEvent, SharedSignal};
-pub use event_emitter::{EmitReport, EventDispatcher};
+pub use event_emitter::EventDispatcher;
 pub use event_handler::{BoxError, EventAction};
-pub use iteration::{IterationContext, IterationState, PreviousResult};
+pub use iteration::{IterationContext, IterationState, PriorIterationStatus};
 pub use lifecycle::{RedactedMetadata, RunnerLifecycleEvent};
 pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
+pub use policy::{RunnerPolicy, RunnerTerminationReason, SignalAcquisition};
 
 use events::RunnerEmitter;
 
@@ -72,15 +72,15 @@ pub struct Runner {
     /// Each registered observer receives the
     /// [`RunnerLifecycleEvent`] projection of every lifecycle `HookEvent` *before*
     /// the user-defined `events` emitter sees it. Observer errors are
-    /// tallied separately into
-    /// [`RunnerSummary::observer_error_count`]; they never block
-    /// runner progress.
+    /// tallied separately into the terminal `runner_finished` event; they
+    /// never block runner progress.
     pub(crate) observers: Vec<Arc<dyn DynRunnerObserver>>,
     /// Sink the agent should tee its child stdout/stderr through. Wired
-    /// by [`RunnerBuilder::stdio_sink`] from
-    /// [`crate::process::ProcessRuntime::stdio`]; unset runners get a
+    /// by [`RunnerBuilder::stdio_sink`]; unset runners get a
     /// [`crate::log::NoopSink`].
     pub(crate) stdio_sink: Arc<dyn crate::log::OutputSink>,
+    pub(crate) clock: Arc<dyn Clock>,
+    pub(crate) id_source: Arc<dyn IdSource>,
 }
 
 impl Runner {
@@ -107,7 +107,7 @@ impl Runner {
     /// applying the configured `delay` between successive synthesised
     /// iterations. The first iteration runs without delay so a one-shot
     /// `behavior = loop` invocation starts immediately.
-    pub async fn run(self, cancel: CancellationToken) -> Result<RunnerSummary, RunnerExitError> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<(), RunnerError> {
         let Runner {
             queue,
             workspaces: workspace_factory,
@@ -117,9 +117,11 @@ impl Runner {
             config,
             observers,
             stdio_sink,
+            clock,
+            id_source,
         } = self;
         let mut events = RunnerEmitter::new(emitter, observers);
-        let runner_started_at = Utc::now();
+        let runner_started_at = clock.now();
         let mut iter_state = IterationState::new(runner_started_at);
         let mut iteration_count: u32 = 0;
         let mut last_signal_id: Option<SignalId> = None;
@@ -136,6 +138,8 @@ impl Runner {
             &config,
             &cancel,
             &stdio_sink,
+            clock.as_ref(),
+            id_source.as_ref(),
             &mut events,
             &mut iter_state,
             &mut iteration_count,
@@ -143,26 +147,24 @@ impl Runner {
         )
         .await;
 
-        let (final_reason, final_iter_count) = match &loop_result {
-            Ok(s) => (s.termination_reason.clone(), s.iteration_count),
-            Err(err) => (
-                RunnerTerminationReason::Error {
-                    error_source: err.error_source(),
-                    message: err.message().to_owned(),
-                },
-                iteration_count,
-            ),
+        let final_reason = match &loop_result {
+            Ok(reason) => reason.clone(),
+            Err(err) => RunnerTerminationReason::Error {
+                error_source: err.error_source(),
+                message: err.message().to_owned(),
+            },
         };
-        let runner_finished_snapshot = iter_state.snapshot(final_iter_count);
+        let runner_finished_snapshot = iter_state.snapshot(iteration_count);
         events
-            .runner_finished(final_reason, final_iter_count, &runner_finished_snapshot)
+            .runner_finished(
+                final_reason,
+                iteration_count,
+                last_signal_id,
+                &runner_finished_snapshot,
+            )
             .await;
 
-        with_counters(
-            loop_result,
-            events.handler_error_count,
-            events.observer_error_count,
-        )
+        loop_result.map(|_| ())
     }
 }
 
@@ -191,6 +193,19 @@ struct DequeueError {
     source: BoxedError,
 }
 
+#[derive(Debug)]
+struct InvalidSignalAcquisition {
+    message: &'static str,
+}
+
+impl std::fmt::Display for InvalidSignalAcquisition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message)
+    }
+}
+
+impl std::error::Error for InvalidSignalAcquisition {}
+
 impl DequeueError {
     fn new<E: std::error::Error + Send + Sync + 'static>(err: E) -> Self {
         let message = err.to_string();
@@ -204,17 +219,11 @@ impl DequeueError {
         &self.message
     }
 
-    fn into_exit_error(
-        self,
-        event_handler_error_count: u32,
-        observer_error_count: u32,
-    ) -> RunnerExitError {
-        RunnerExitError {
+    fn into_error(self) -> RunnerError {
+        RunnerError {
             error_source: ErrorSource::Dequeue,
             message: self.message,
             source: self.source,
-            event_handler_error_count,
-            observer_error_count,
         }
     }
 }
@@ -250,17 +259,11 @@ impl IterationFailure {
         self.error_source
     }
 
-    fn into_exit_error(
-        self,
-        event_handler_error_count: u32,
-        observer_error_count: u32,
-    ) -> RunnerExitError {
-        RunnerExitError {
+    fn into_error(self) -> RunnerError {
+        RunnerError {
             error_source: self.error_source,
             message: self.message,
             source: self.source,
-            event_handler_error_count,
-            observer_error_count,
         }
     }
 }
@@ -302,40 +305,6 @@ fn decide_after_processing_failure(cfg: &RunnerPolicy) -> FailureDecision {
     FailureDecision::Retry
 }
 
-/// Build a `RunnerSummary` with placeholder error counts. The post-loop
-/// `runner_finished` emit can itself raise handler errors, so the counts
-/// are patched by [`with_counters`] after the emission completes. This
-/// mirrors the historical behaviour where the counts in the summary are
-/// the final tallies, including handlers fired during `RunnerFinished`.
-fn summary(
-    reason: RunnerTerminationReason,
-    iteration_count: u32,
-    last_signal_id: Option<SignalId>,
-) -> RunnerSummary {
-    RunnerSummary {
-        iteration_count,
-        last_signal_id,
-        termination_reason: reason,
-        event_handler_error_count: 0,
-        observer_error_count: 0,
-    }
-}
-
-fn with_counters(
-    result: Result<RunnerSummary, RunnerExitError>,
-    handler_error_count: u32,
-    observer_error_count: u32,
-) -> Result<RunnerSummary, RunnerExitError> {
-    match result {
-        Ok(mut s) => {
-            s.event_handler_error_count = handler_error_count;
-            s.observer_error_count = observer_error_count;
-            Ok(s)
-        }
-        Err(err) => Err(err.with_counters(handler_error_count, observer_error_count)),
-    }
-}
-
 /// Acquire the next signal: park on the queue, race a non-blocking
 /// dequeue against synthesise, or synthesise outright depending on
 /// `(queue, behavior)`. Pure acquisition — no events, no I/O on the
@@ -345,6 +314,8 @@ async fn next_signal(
     behavior: &SignalAcquisition,
     cancel: &CancellationToken,
     iteration_count: u32,
+    clock: &dyn Clock,
+    id_source: &dyn IdSource,
 ) -> NextSignal {
     match (queue, behavior) {
         (Some(queue), SignalAcquisition::Wait) => {
@@ -387,7 +358,7 @@ async fn next_signal(
                             return NextSignal::Cancelled;
                         }
                     }
-                    NextSignal::Got(Signal::synthesized())
+                    NextSignal::Got(Signal::synthesized_with_sources(clock, id_source))
                 }
                 Err(err) => NextSignal::Failed(DequeueError::new(err)),
             }
@@ -407,10 +378,12 @@ async fn next_signal(
                     return NextSignal::Cancelled;
                 }
             }
-            NextSignal::Got(Signal::synthesized())
+            NextSignal::Got(Signal::synthesized_with_sources(clock, id_source))
         }
         (None, SignalAcquisition::Wait) => {
-            unreachable!("(queue=None, behavior=Wait) is rejected at builder time")
+            NextSignal::Failed(DequeueError::new(InvalidSignalAcquisition {
+                message: "(queue=None, behavior=Wait) is rejected at builder time",
+            }))
         }
     }
 }
@@ -466,8 +439,6 @@ async fn best_effort_teardown(
 
 /// Drive the workspace bracket — setup -> agent -> teardown — for one
 /// signal, emitting lifecycle events as it goes.
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)]
 async fn drive_workspace(
     workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &dyn Agent,
@@ -691,8 +662,6 @@ fn agent_result_message(label: &str, exit_code: Option<i32>) -> String {
         None => format!("agent result {label}"),
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn run_iteration(
     workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
     agent: &dyn Agent,
@@ -700,6 +669,7 @@ async fn run_iteration(
     config: &RunnerPolicy,
     cancel: &CancellationToken,
     stdio_sink: &Arc<dyn crate::log::OutputSink>,
+    clock: &dyn Clock,
     events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
     iteration_count: u32,
@@ -712,7 +682,7 @@ async fn run_iteration(
     // to `&Signal`, and `signal.as_signal()` hands the bare `&Signal` to the
     // functions (e.g. `render_prompt`) that require it.
     let signal = SharedSignal::new(signal);
-    let now = Utc::now();
+    let now = clock.now();
     iter_state.begin_iteration(now);
     let snap = iter_state.snapshot(iteration_count + 1);
     let signal_id = signal.id();
@@ -748,7 +718,7 @@ async fn run_iteration(
         &snap,
     )
     .await?;
-    iter_state.record_success(signal_id, record.exit_code, Utc::now());
+    iter_state.record_success(signal_id, record.exit_code, clock.now());
     Ok(())
 }
 
@@ -758,8 +728,6 @@ async fn run_iteration(
 /// dequeue failures do NOT bump `iteration_count` and do NOT call
 /// `iter_state.record_failure` — they happen pre-iteration. Only
 /// `run_iteration` errors bump the counter and update streak state.
-#[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_lines)]
 async fn run_loop(
     queue: Option<&dyn Queue>,
     workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
@@ -768,18 +736,16 @@ async fn run_loop(
     config: &RunnerPolicy,
     cancel: &CancellationToken,
     stdio_sink: &Arc<dyn crate::log::OutputSink>,
+    clock: &dyn Clock,
+    id_source: &dyn IdSource,
     events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
     iteration_count: &mut u32,
     last_signal_id: &mut Option<SignalId>,
-) -> Result<RunnerSummary, RunnerExitError> {
+) -> Result<RunnerTerminationReason, RunnerError> {
     loop {
         if cancel.is_cancelled() {
-            return Ok(summary(
-                RunnerTerminationReason::Cancelled,
-                *iteration_count,
-                *last_signal_id,
-            ));
+            return Ok(RunnerTerminationReason::Cancelled);
         }
 
         // Pre-iteration snapshot (count = iteration_count + 1) so a
@@ -787,20 +753,21 @@ async fn run_loop(
         // number that *would* have run.
         let snap = iter_state.snapshot(*iteration_count + 1);
 
-        match next_signal(queue, &config.behavior, cancel, *iteration_count).await {
+        match next_signal(
+            queue,
+            &config.behavior,
+            cancel,
+            *iteration_count,
+            clock,
+            id_source,
+        )
+        .await
+        {
             NextSignal::Drained => {
-                return Ok(summary(
-                    RunnerTerminationReason::QueueDrained,
-                    *iteration_count,
-                    *last_signal_id,
-                ));
+                return Ok(RunnerTerminationReason::QueueDrained);
             }
             NextSignal::Cancelled => {
-                return Ok(summary(
-                    RunnerTerminationReason::Cancelled,
-                    *iteration_count,
-                    *last_signal_id,
-                ));
+                return Ok(RunnerTerminationReason::Cancelled);
             }
             NextSignal::Failed(dequeue_err) => {
                 events
@@ -815,16 +782,12 @@ async fn run_loop(
                     )
                     .await;
                 if !config.continue_on_error {
-                    return Err(dequeue_err.into_exit_error(0, 0));
+                    return Err(dequeue_err.into_error());
                 }
             }
             NextSignal::Got(signal) if signal.is_terminate() => {
                 *last_signal_id = Some(signal.id());
-                return Ok(summary(
-                    RunnerTerminationReason::TerminateSignalReceived,
-                    *iteration_count,
-                    *last_signal_id,
-                ));
+                return Ok(RunnerTerminationReason::TerminateSignalReceived);
             }
             NextSignal::Got(signal) => {
                 let signal_id = signal.id();
@@ -854,6 +817,7 @@ async fn run_loop(
                     config,
                     cancel,
                     stdio_sink,
+                    clock,
                     events,
                     iter_state,
                     *iteration_count,
@@ -866,11 +830,7 @@ async fn run_loop(
                         span.record("iter.runner.result", "success");
                         *iteration_count += 1;
                         if config.once {
-                            return Ok(summary(
-                                RunnerTerminationReason::Once,
-                                *iteration_count,
-                                *last_signal_id,
-                            ));
+                            return Ok(RunnerTerminationReason::Once);
                         }
                     }
                     Err(failure) => {
@@ -880,19 +840,15 @@ async fn run_loop(
                             failure.error_source().as_str(),
                             failure.message(),
                         );
-                        iter_state.record_failure(failure.signal_id(), failure.exit(), Utc::now());
+                        iter_state.record_failure(failure.signal_id(), failure.exit(), clock.now());
                         *iteration_count += 1;
                         match decide_after_processing_failure(config) {
                             FailureDecision::Retry => {}
                             FailureDecision::Once => {
-                                return Ok(summary(
-                                    RunnerTerminationReason::Once,
-                                    *iteration_count,
-                                    *last_signal_id,
-                                ));
+                                return Ok(RunnerTerminationReason::Once);
                             }
                             FailureDecision::Bubble => {
-                                return Err(failure.into_exit_error(0, 0));
+                                return Err(failure.into_error());
                             }
                         }
                     }

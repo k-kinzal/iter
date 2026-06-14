@@ -32,7 +32,7 @@ use crate::tracing_preferences::TracingPreferences;
 
 /// Errors produced by `iter enqueue`.
 #[derive(Debug, Error)]
-pub enum EnqueueCmdError {
+pub(crate) enum EnqueueCmdError {
     /// Resolving / building the queue failed.
     #[error(transparent)]
     Compose(#[from] ComposeError),
@@ -117,7 +117,7 @@ impl IntoExitCode for EnqueueCmdError {
 /// # Errors
 ///
 /// See [`EnqueueCmdError`].
-pub async fn run_enqueue(
+pub(crate) async fn run_enqueue(
     args: EnqueueArgs,
     prefs: TracingPreferences,
 ) -> Result<(), EnqueueCmdError> {

@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use iter_core::{BuilderError, RunnerExitError};
+use iter_core::{BuilderError, RunnerError};
 use iter_language::Diagnostic;
 use thiserror::Error;
 
-use iter_core::process::{ProcessError, ProcessStatus, SpawnError};
+use crate::process::{ProcessError, ProcessStatus, SpawnError};
 
 use crate::arg::ArgError;
 use crate::queue::QueueBuildError;
@@ -14,7 +14,7 @@ use crate::start::StartError;
 
 /// Errors produced while loading or building a `compose.iter` file.
 #[derive(Debug, Error)]
-pub enum ComposeError {
+pub(crate) enum ComposeError {
     /// Reading a compose / iterfile from disk failed.
     #[error("reading {path}: {source}")]
     Io {
@@ -231,7 +231,7 @@ impl ComposeError {
 /// the runner's own exit error; `FinalizeStatus` surfaces a non-terminal
 /// registry record left behind after a clean run.
 #[derive(Debug, Error)]
-pub enum ServiceRunError {
+pub(crate) enum ServiceRunError {
     /// Foreground process registry bootstrap failed.
     #[error(transparent)]
     Lifecycle(#[from] crate::process_lifecycle::LifecycleError),
@@ -241,7 +241,7 @@ pub enum ServiceRunError {
     Builder(#[from] BuilderError),
     /// The runner exited with an error.
     #[error(transparent)]
-    Runner(#[from] RunnerExitError),
+    Runner(#[from] RunnerError),
     /// Runner finished cleanly but the registry record could not be
     /// flipped to a terminal state.
     #[error("finalize failed to write terminal status: {0}")]
@@ -250,7 +250,7 @@ pub enum ServiceRunError {
 
 /// Errors produced by [`super::spawn_targeted_service`].
 #[derive(Debug, Error)]
-pub enum TargetedSpawnError {
+pub(crate) enum TargetedSpawnError {
     /// The named service does not exist in the plan. Defensive guard for
     /// callers that skip pre-validation; `run_compose_up_targeted` validates
     /// names before calling `spawn_targeted_service`, so this is unreachable
@@ -284,7 +284,7 @@ pub enum TargetedSpawnError {
 /// (`current_exe()`) rather than a static basename so failure
 /// diagnostics name the exact `iter` executable that failed to fork.
 #[derive(Debug, Error)]
-pub enum ServiceSubprocessError {
+pub(crate) enum ServiceSubprocessError {
     /// Opening the process registry failed.
     #[error("opening process registry: {0}")]
     OpenRegistry(#[source] ProcessError),

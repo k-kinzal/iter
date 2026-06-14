@@ -28,8 +28,11 @@ pub(crate) mod reconcile;
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tempfile::TempDir;
+
+use crate::time::{Clock, SystemClock};
 
 pub(crate) use filter::{ApplyBackFilter, CloneFilter};
 
@@ -70,12 +73,37 @@ impl Mirror {
         apply_back_filter: ApplyBackFilter,
         preserve_mtime: bool,
     ) -> io::Result<Self> {
+        Self::materialize_with_clock(
+            base,
+            clone_filter,
+            apply_back_filter,
+            preserve_mtime,
+            Arc::new(SystemClock),
+        )
+        .await
+    }
+
+    /// Materialise a mirror with an injected clock.
+    pub(crate) async fn materialize_with_clock(
+        base: PathBuf,
+        clone_filter: &CloneFilter,
+        apply_back_filter: ApplyBackFilter,
+        preserve_mtime: bool,
+        clock: Arc<dyn Clock>,
+    ) -> io::Result<Self> {
         let temp = tokio::task::spawn_blocking(TempDir::new)
             .await
             .map_err(io::Error::other)??;
         let temp_path = temp.path().to_path_buf();
 
-        materialize::copy_dir_recursive(&base, &temp_path, clone_filter, preserve_mtime).await?;
+        materialize::copy_dir_recursive(
+            &base,
+            &temp_path,
+            clone_filter,
+            preserve_mtime,
+            clock.as_ref(),
+        )
+        .await?;
 
         Ok(Self {
             base,

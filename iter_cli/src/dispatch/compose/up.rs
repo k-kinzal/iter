@@ -1,15 +1,15 @@
 use std::time::{Duration, Instant};
 
 use crate::iterfile::RunRecordMetadata;
+use crate::process::{
+    UnmanagedChild, current_identity, pid_in_process_table, signal_pid_kill, signal_pid_term,
+    spawn_unmanaged_detached,
+};
 use crate::{
     OrchestratorContext, ProjectLockError, ProjectMember, acquire_project_lock, build,
     find_active_orchestrator, list_project_members, load_compose, project_slug, run,
 };
-use iter_core::process::interrupt::install_signal_handlers;
-use iter_core::process::{
-    UnmanagedChild, current_identity, pid_in_process_table, signal_pid_kill, signal_pid_term,
-    spawn_unmanaged_detached,
-};
+use iter_core::os_signal::install_signal_handlers;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
@@ -40,7 +40,7 @@ use super::{ComposeUpError, canonical_compose_path, resolve_compose_path};
 /// * The file does not exist or cannot be parsed.
 /// * One or more services/triggers fail to build.
 /// * Any task returns an error and the failure policy is `Abort`.
-pub async fn run_compose_up(
+pub(crate) async fn run_compose_up(
     args: ComposeUpArgs,
     prefs: TracingPreferences,
 ) -> Result<(), ComposeUpError> {

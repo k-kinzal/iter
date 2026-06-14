@@ -186,8 +186,9 @@ impl NdjsonReader {
 mod tests {
     use super::*;
     use crate::log::LogStream;
-    use chrono::Utc;
+    use chrono::{DateTime, Utc};
     use std::time::Duration;
+    use std::time::UNIX_EPOCH;
     use tempfile::TempDir;
 
     fn write_entries(path: &Path, entries: &[LogEntry]) {
@@ -201,7 +202,7 @@ mod tests {
 
     fn entry(stream: LogStream, line: &str) -> LogEntry {
         LogEntry {
-            ts: Utc::now(),
+            ts: DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs(1_700_000_000)),
             stream,
             line: line.into(),
         }

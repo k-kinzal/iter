@@ -308,24 +308,24 @@ fn install_stderr_subscriber_inner(
     let tracer_provider = match build_tracer_provider(&otel_config) {
         Ok(provider) => provider,
         Err(err) => {
-            eprintln!("warning: failed to initialize OpenTelemetry trace exporter: {err}");
             let _installed = tracing_subscriber::registry()
                 .with(stderr_layer)
                 .with(env_filter)
                 .try_init()
                 .is_ok();
+            tracing::warn!(error = %err, "failed to initialize OpenTelemetry trace exporter");
             return TelemetryGuard::noop();
         }
     };
     let logger_provider = match build_logger_provider(&otel_config) {
         Ok(provider) => provider,
         Err(err) => {
-            eprintln!("warning: failed to initialize OpenTelemetry log exporter: {err}");
             let _installed = tracing_subscriber::registry()
                 .with(stderr_layer)
                 .with(env_filter)
                 .try_init()
                 .is_ok();
+            tracing::warn!(error = %err, "failed to initialize OpenTelemetry log exporter");
             return TelemetryGuard::noop();
         }
     };
@@ -722,7 +722,13 @@ mod tests {
             .attributes_iter()
             .filter_map(|(key, value)| match value {
                 AnyValue::String(value) => Some((key.as_str(), value.as_str())),
-                _ => None,
+                AnyValue::Int(_)
+                | AnyValue::Double(_)
+                | AnyValue::Boolean(_)
+                | AnyValue::Bytes(_)
+                | AnyValue::ListAny(_)
+                | AnyValue::Map(_)
+                | _ => None,
             })
             .collect::<Vec<_>>();
         assert!(attributes.iter().any(|(key, value)| {

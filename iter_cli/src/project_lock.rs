@@ -25,11 +25,11 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use iter_core::process::{ProcessError, proc_root_default};
+use crate::process::{ProcessError, proc_root_default};
 
 /// Errors returned by [`acquire_project_lock`].
 #[derive(Debug, Error)]
-pub enum ProjectLockError {
+pub(crate) enum ProjectLockError {
     /// Resolving `~/.iter/proc/` (and from it the compose lock root)
     /// failed — typically because `$HOME` is unset.
     #[error("could not resolve iter root: {0}")]
@@ -75,7 +75,7 @@ pub enum ProjectLockError {
 /// underlying flock when the held [`File`] is closed.
 #[derive(Debug)]
 #[must_use = "drop releases the project lock; assign to a binding"]
-pub struct ProjectLock {
+pub(crate) struct ProjectLock {
     _file: File,
     project: String,
 }
@@ -85,7 +85,7 @@ impl ProjectLock {
     /// to confirm which slug was actually locked (e.g. after override
     /// resolution).
     #[must_use]
-    pub fn project(&self) -> &str {
+    pub(crate) fn project(&self) -> &str {
         &self.project
     }
 }
@@ -108,7 +108,7 @@ impl ProjectLock {
 ///   currently inside its lock-protected critical section.
 /// * [`ProjectLockError::Flock`] — `flock(2)` failed for an unexpected
 ///   reason.
-pub fn acquire_project_lock(project: &str) -> Result<ProjectLock, ProjectLockError> {
+pub(crate) fn acquire_project_lock(project: &str) -> Result<ProjectLock, ProjectLockError> {
     let lock_path = lock_path_for(project)?;
 
     #[cfg(unix)]
@@ -201,7 +201,6 @@ fn lock_path_for(project: &str) -> Result<PathBuf, ProjectLockError> {
 }
 
 #[cfg(unix)]
-#[allow(unsafe_code)] // libc::flock requires unsafe; FD validity is documented
 fn flock_nonblock(file: &File) -> io::Result<()> {
     // SAFETY: `file.as_raw_fd()` is a live kernel file descriptor for
     // the lifetime of the `&File` borrow; `libc::flock` reads only the

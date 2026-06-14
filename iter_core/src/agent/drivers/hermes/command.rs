@@ -2,7 +2,7 @@
 //! (`-z`) mode.
 //!
 //! Owns the `-z` rendered and parses the CLI's complete output + exit into a
-//! CLI-shaped [`HermesResult`] or a CLI-shaped [`HermesError`] hierarchy.
+//! CLI-shaped [`HermesRun`] or a CLI-shaped [`HermesError`] hierarchy.
 //! Nothing here is iter-domain — projecting these onto
 //! [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -82,14 +82,13 @@ impl HermesCommand<'_> {
 ///
 /// Scripted mode exposes no session / conversation id (Hermes addresses
 /// sessions only via its own `SQLite` store and `--resume`), so
-/// [`HermesResult::session_id`] is always `None`. The final stdout text is
+/// [`HermesRun::session_id`] is always `None`. The final stdout text is
 /// retained for completeness even though iter's domain result discards it.
 #[derive(Debug, Clone, Default)]
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct HermesResult {
+pub(crate) struct HermesRun {
     /// Always `None`: `-z` mode surfaces no machine-readable session id.
     pub(crate) session_id: Option<String>,
     /// Final assistant text written to stdout, when non-empty.
@@ -150,7 +149,7 @@ fn snippet(text: &str) -> String {
 /// limits (the one router-relevant class detectable from text). Exit `0`
 /// is the sole positive signal and yields a result even when stdout is
 /// empty.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<HermesResult, HermesError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<HermesRun, HermesError> {
     let stdout = output.stdout_str();
     let stderr = output.stderr_str();
 
@@ -167,7 +166,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<HermesResult, HermesEr
                 let trimmed = stdout.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_owned())
             };
-            Ok(HermesResult {
+            Ok(HermesRun {
                 session_id: None,
                 final_text,
             })
@@ -259,7 +258,10 @@ mod tests {
             HermesError::Uncaught(detail) => {
                 assert!(detail.contains("Traceback"), "got {detail:?}");
             }
-            other => panic!("expected Uncaught, got {other:?}"),
+            other @ (HermesError::TokenLimit(_)
+            | HermesError::BadArgs
+            | HermesError::Failed { .. }
+            | HermesError::Signal(_)) => panic!("expected Uncaught, got {other:?}"),
         }
     }
 
@@ -270,7 +272,10 @@ mod tests {
             HermesError::Uncaught(detail) => {
                 assert!(detail.contains("printed error"), "got {detail:?}");
             }
-            other => panic!("expected Uncaught, got {other:?}"),
+            other @ (HermesError::TokenLimit(_)
+            | HermesError::BadArgs
+            | HermesError::Failed { .. }
+            | HermesError::Signal(_)) => panic!("expected Uncaught, got {other:?}"),
         }
     }
 
@@ -310,7 +315,10 @@ mod tests {
                 assert_eq!(exit_code, Some(139));
                 assert!(detail.contains("segfault"), "got {detail:?}");
             }
-            other => panic!("expected Failed, got {other:?}"),
+            other @ (HermesError::TokenLimit(_)
+            | HermesError::Uncaught(_)
+            | HermesError::BadArgs
+            | HermesError::Signal(_)) => panic!("expected Failed, got {other:?}"),
         }
     }
 

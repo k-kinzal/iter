@@ -1,10 +1,9 @@
 //! Compose service types: orchestrator context, failure policy, completed
-//! tasks, and the aggregate report.
+//! tasks, and the completed-service aggregate.
 
 use std::collections::BTreeMap;
 
-use iter_core::RunnerSummary;
-use iter_core::process::{ProcessId, ProcessIdentity};
+use crate::process::{ProcessId, ProcessIdentity};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
 use super::supervisor::TriggerLifecycleState;
@@ -12,7 +11,7 @@ use super::trigger::TriggerRunError;
 
 /// How [`super::run`] reacts to the first failing service.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum FailurePolicy {
+pub(crate) enum FailurePolicy {
     /// Cancel every other task on the first error.
     #[default]
     AbortAll,
@@ -22,14 +21,14 @@ pub enum FailurePolicy {
 
 /// Result of a single spawned service task.
 #[derive(Debug)]
-pub enum CompletedTask {
+pub(crate) enum CompletedTask {
     /// A service runner completed (or errored).
     Service {
         /// Service name from the compose file.
         name: String,
-        /// `Ok(_)` with the runner summary, `Err(_)` if the runner
+        /// `Ok(())` if the runner completed cleanly, `Err(_)` if it
         /// failed to bootstrap, build, run, or finalize.
-        result: Result<RunnerSummary, ServiceRunError>,
+        result: Result<(), ServiceRunError>,
     },
     /// A subprocess-spawned service completed (or errored). Used when
     /// the service's queue has a cross-process URL form (file://, redis://);
@@ -58,7 +57,7 @@ pub enum CompletedTask {
     },
     /// A spawned task panicked (or was cancelled by `JoinSet`
     /// teardown). Synthesised in [`super::run`]'s join loop so panics
-    /// surface in [`ComposeReport::has_errors`] and trigger
+    /// surface in [`CompletedServices::has_errors`] and trigger
     /// [`FailurePolicy::AbortAll`]; without this synthesis a panic
     /// was silently dropped and the abort policy was defeated (Codex
     /// iter-9 Major 3).
@@ -73,7 +72,7 @@ pub enum CompletedTask {
 impl CompletedTask {
     /// `true` when this task completed with an error.
     #[must_use]
-    pub fn is_err(&self) -> bool {
+    pub(crate) fn is_err(&self) -> bool {
         match self {
             Self::Service { result, .. } => result.is_err(),
             Self::ServiceSubprocess { result, .. } => result.is_err(),
@@ -84,7 +83,7 @@ impl CompletedTask {
 
     /// Display name of the underlying service or trigger.
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         match self {
             Self::Service { name, .. }
             | Self::ServiceSubprocess { name, .. }
@@ -94,44 +93,44 @@ impl CompletedTask {
     }
 }
 
-/// Aggregate report returned by [`super::run`].
+/// Completed service and trigger tasks returned by [`super::run`].
 #[derive(Debug, Default)]
-pub struct ComposeReport {
+pub(crate) struct CompletedServices {
     /// One entry per spawned service task, in completion order.
-    pub results: Vec<CompletedTask>,
+    pub(crate) results: Vec<CompletedTask>,
 }
 
-impl ComposeReport {
+impl CompletedServices {
     /// `true` when at least one result carries an error.
     #[must_use]
-    pub fn has_errors(&self) -> bool {
+    pub(crate) fn has_errors(&self) -> bool {
         self.results.iter().any(CompletedTask::is_err)
     }
 }
 
 /// `ProcessMetadata.labels` key for the docker-compose-style project slug
 /// stamped onto every service runner the orchestrator spawns.
-pub const LABEL_PROJECT: &str = "iter.compose.project";
+pub(crate) const LABEL_PROJECT: &str = "iter.compose.project";
 /// `ProcessMetadata.labels` key naming the compose service that owns this
 /// runner.
-pub const LABEL_SERVICE: &str = "iter.compose.service";
+pub(crate) const LABEL_SERVICE: &str = "iter.compose.service";
 /// `ProcessMetadata.labels` key recording the orchestrator's pid so
 /// `iter compose down` can locate it without scanning the process table.
-pub const LABEL_ORCHESTRATOR_PID: &str = "iter.compose.orchestrator_pid";
+pub(crate) const LABEL_ORCHESTRATOR_PID: &str = "iter.compose.orchestrator_pid";
 /// `ProcessMetadata.labels` key recording the orchestrator's
 /// [`ProcessStartTime`] fingerprint (round-trip form). Combined with
 /// [`LABEL_ORCHESTRATOR_PID`] this is reuse-proof against pid recycling.
 ///
-/// [`ProcessStartTime`]: iter_core::process::ProcessStartTime
-pub const LABEL_ORCHESTRATOR_START_TIME: &str = "iter.compose.orchestrator_start_time";
+/// [`ProcessStartTime`]: crate::process::ProcessStartTime
+pub(crate) const LABEL_ORCHESTRATOR_START_TIME: &str = "iter.compose.orchestrator_start_time";
 /// `ProcessMetadata.labels` key recording the orchestrator's Linux
 /// `boot_id` (`/proc/sys/kernel/random/boot_id`). Present only on Linux;
 /// absent on macOS where the kernel start-time is reuse-proof on its own.
 /// Required by [`process_is_alive_with_start_time`] to reject the case
 /// where pid + tick-since-boot collide across reboots.
 ///
-/// [`process_is_alive_with_start_time`]: iter_core::process::process_is_alive_with_start_time
-pub const LABEL_ORCHESTRATOR_BOOT_ID: &str = "iter.compose.orchestrator_boot_id";
+/// [`process_is_alive_with_start_time`]: crate::process::process_is_alive_with_start_time
+pub(crate) const LABEL_ORCHESTRATOR_BOOT_ID: &str = "iter.compose.orchestrator_boot_id";
 
 /// Per-orchestrator identity passed into [`super::run`].
 ///
@@ -140,13 +139,13 @@ pub const LABEL_ORCHESTRATOR_BOOT_ID: &str = "iter.compose.orchestrator_boot_id"
 /// reconstruct the project graph from runner state alone — the same
 /// label-discovery model docker compose uses on container labels.
 #[derive(Clone)]
-pub struct OrchestratorContext {
+pub(crate) struct OrchestratorContext {
     /// Docker-compose-style project slug (see [`crate::project::project_slug`]).
-    pub project: String,
+    pub(crate) project: String,
     /// Identity of the orchestrator process itself (pid + start-time
     /// fingerprint). Used to populate [`LABEL_ORCHESTRATOR_PID`] /
     /// [`LABEL_ORCHESTRATOR_START_TIME`].
-    pub identity: ProcessIdentity,
+    pub(crate) identity: ProcessIdentity,
 }
 
 impl OrchestratorContext {
@@ -184,7 +183,7 @@ impl std::fmt::Debug for OrchestratorContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_core::process::{Pid, ProcessStartTime};
+    use crate::process::{Pid, ProcessStartTime};
 
     #[test]
     fn labels_for_round_trips_orchestrator_identity() {

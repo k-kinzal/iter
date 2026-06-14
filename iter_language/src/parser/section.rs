@@ -203,21 +203,27 @@ impl Parser<'_> {
             span: keyword_span.start..span_end,
         })
     }
-
-    #[allow(clippy::too_many_lines)]
     pub(super) fn parse_block(&mut self) -> CstBlock {
         let lbrace_span = self.peek_span();
         if !self.expect(&Token::LBrace, "`{`") {
-            return CstBlock {
-                fields: Vec::new(),
-                routes: Vec::new(),
-                actions: Vec::new(),
-                prompt_arms: Vec::new(),
-                event_handlers: Vec::new(),
-                span: lbrace_span,
-            };
+            return Self::empty_block(lbrace_span);
         }
         let start = lbrace_span.start;
+        self.parse_block_body(start)
+    }
+
+    fn empty_block(span: std::ops::Range<usize>) -> CstBlock {
+        CstBlock {
+            fields: Vec::new(),
+            routes: Vec::new(),
+            actions: Vec::new(),
+            prompt_arms: Vec::new(),
+            event_handlers: Vec::new(),
+            span,
+        }
+    }
+
+    fn parse_block_body(&mut self, start: usize) -> CstBlock {
         let mut fields = Vec::new();
         let mut routes = Vec::new();
         let mut actions = Vec::new();

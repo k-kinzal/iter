@@ -39,7 +39,7 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
 ///
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
-pub fn register_event_actions(
+pub(crate) fn register_event_actions(
     mut builder: RunnerBuilder,
     iterfile: &Iterfile,
 ) -> Result<RunnerBuilder, TemplateError> {
@@ -58,7 +58,7 @@ pub fn register_event_actions(
 ///
 /// Returns [`TemplateError`] when any `shell` action fails to compile as a
 /// Handlebars template.
-pub fn register_event_actions_from_events(
+pub(crate) fn register_event_actions_from_events(
     mut builder: RunnerBuilder,
     events: &[Spanned<EventHandlerDef>],
 ) -> Result<RunnerBuilder, TemplateError> {

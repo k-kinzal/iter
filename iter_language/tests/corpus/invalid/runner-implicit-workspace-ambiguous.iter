@@ -1,0 +1,16 @@
+workspace local as main {
+  base = "."
+}
+
+workspace local as scratch {
+  base = "/tmp"
+}
+
+agent noop {}
+
+runner {
+  agent = noop
+  continue_on_error = false
+  behavior = loop
+  prompt = "Ambiguous workspace."
+}

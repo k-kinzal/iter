@@ -27,11 +27,11 @@
 //! and skipped — that matches the external-trigger behaviour for ad-hoc
 //! scripts.
 
-pub mod config;
 pub mod error;
+pub mod settings;
 
-pub use config::ShellQueueConfig;
 pub use error::ShellQueueError;
+pub use settings::ShellQueueConfig;
 
 use std::process::Stdio;
 use std::sync::Arc;
@@ -413,7 +413,9 @@ fn build_metadata(map: &serde_json::Map<String, Value>) -> Result<Metadata, Meta
                 MetadataValue::Integer,
             ),
             Value::String(s) => MetadataValue::String(s.clone()),
-            other => MetadataValue::String(other.to_string()),
+            other @ (Value::Array(_) | Value::Object(_)) => {
+                MetadataValue::String(other.to_string())
+            }
         };
         metadata.insert(key, value);
     }

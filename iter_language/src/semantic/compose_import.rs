@@ -82,7 +82,14 @@ impl Analyzer {
                     CstValue::String(s, _) => {
                         build_path = Some((s, field.span));
                     }
-                    other => {
+                    other @ (CstValue::Integer(..)
+                    | CstValue::Duration(..)
+                    | CstValue::Bool(..)
+                    | CstValue::Null(_)
+                    | CstValue::Ident(..)
+                    | CstValue::List(..)
+                    | CstValue::Block(_)
+                    | CstValue::Call { .. }) => {
                         self.errors.push(Diagnostic::error(
                             other.span(),
                             "compose `build` must be a string path",
@@ -138,7 +145,14 @@ impl Analyzer {
                         CstValue::Ident(parent_name, _) => {
                             overrides.insert(child_name, QueueRef::Named(parent_name));
                         }
-                        other => {
+                        other @ (CstValue::String(..)
+                        | CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::List(..)
+                        | CstValue::Block(_)
+                        | CstValue::Call { .. }) => {
                             self.errors.push(Diagnostic::error(
                                 other.span(),
                                 "queue override value must be a queue name (bareword)",
@@ -147,7 +161,14 @@ impl Analyzer {
                     }
                 }
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "compose `queues` must be a block `{ child = parent }`",
@@ -174,7 +195,14 @@ impl Analyzer {
                                         CstValue::Ident(n, _) => {
                                             queue = Some(QueueRef::Named(n));
                                         }
-                                        other => {
+                                        other @ (CstValue::String(..)
+                                        | CstValue::Integer(..)
+                                        | CstValue::Duration(..)
+                                        | CstValue::Bool(..)
+                                        | CstValue::Null(_)
+                                        | CstValue::List(..)
+                                        | CstValue::Block(_)
+                                        | CstValue::Call { .. }) => {
                                             self.errors.push(Diagnostic::error(
                                                 other.span(),
                                                 "service override `queue` must be a queue name",
@@ -185,7 +213,14 @@ impl Analyzer {
                             }
                             overrides.insert(child_name, ComposeServiceOverride { queue });
                         }
-                        other => {
+                        other @ (CstValue::String(..)
+                        | CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Call { .. }) => {
                             self.errors.push(Diagnostic::error(
                                 other.span(),
                                 "service override must be a block `{ queue = ... }`",
@@ -194,7 +229,14 @@ impl Analyzer {
                     }
                 }
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "compose `services` must be a block",
@@ -224,7 +266,14 @@ impl Analyzer {
                                         CstValue::Ident(n, _) => {
                                             target = Some(QueueRef::Named(n));
                                         }
-                                        other => {
+                                        other @ (CstValue::String(..)
+                                        | CstValue::Integer(..)
+                                        | CstValue::Duration(..)
+                                        | CstValue::Bool(..)
+                                        | CstValue::Null(_)
+                                        | CstValue::List(..)
+                                        | CstValue::Block(_)
+                                        | CstValue::Call { .. }) => {
                                             self.errors.push(Diagnostic::error(
                                                 other.span(),
                                                 "trigger override `target` must be a queue name",
@@ -236,7 +285,13 @@ impl Analyzer {
                             overrides
                                 .insert(child_name, ComposeTriggerOverride::Override { target });
                         }
-                        other => {
+                        other @ (CstValue::String(..)
+                        | CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Call { .. }) => {
                             self.errors.push(Diagnostic::error(
                                 other.span(),
                                 "trigger override must be `null` or a block",
@@ -245,7 +300,14 @@ impl Analyzer {
                     }
                 }
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "compose `triggers` must be a block",

@@ -7,7 +7,7 @@
 //! # Three-layer split
 //!
 //! * **Command** ([`command`]) — owns the `cline --oneshot --json` argv and
-//!   parses the complete output into a CLI-shaped [`command::ClineResult`] /
+//!   parses the complete output into a CLI-shaped [`command::ClineRun`] /
 //!   [`command::ClineError`].
 //! * **Driver/Adapter** (this module) — implements iter's [`Agent`] trait,
 //!   projecting the Command result/error onto iter's domain

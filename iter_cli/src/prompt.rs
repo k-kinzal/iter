@@ -27,7 +27,7 @@ use iter_language::{
 /// Errors produced while building a [`PromptSelector`] from prompt
 /// declarations.
 #[derive(Debug, thiserror::Error)]
-pub enum PromptBuildError {
+pub(crate) enum PromptBuildError {
     /// No `prompt` block was declared.
     #[error("iterfile is missing a `prompt` declaration")]
     Missing,
@@ -60,7 +60,9 @@ pub enum PromptBuildError {
 ///
 /// * The Iterfile contains no runner or no prompt.
 /// * The Iterfile declares more than one unguarded prompt.
-pub fn build_prompt_selector(iterfile: &Iterfile) -> Result<PromptSelector, PromptBuildError> {
+pub(crate) fn build_prompt_selector(
+    iterfile: &Iterfile,
+) -> Result<PromptSelector, PromptBuildError> {
     let runner = iterfile.runners.first().ok_or(PromptBuildError::Missing)?;
     let prompts = crate::start::prompt_defs_from_expr(&runner.node.prompt, &iterfile.prompts);
     prompt_selector_from_defs(&prompts)
@@ -74,7 +76,7 @@ pub fn build_prompt_selector(iterfile: &Iterfile) -> Result<PromptSelector, Prom
 ///
 /// * `prompts` is empty.
 /// * More than one entry is unguarded.
-pub fn prompt_selector_from_defs(
+pub(crate) fn prompt_selector_from_defs(
     prompts: &[Spanned<PromptDef>],
 ) -> Result<PromptSelector, PromptBuildError> {
     if prompts.is_empty() {

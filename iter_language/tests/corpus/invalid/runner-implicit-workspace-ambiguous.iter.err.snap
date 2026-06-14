@@ -1,0 +1,15 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-implicit-workspace-ambiguous.iter
+---
+Error: runner omits `workspace` but 2 `workspace` definitions exist (`main`, `scratch`); add `workspace = <name>`
+    ╭─[runner-implicit-workspace-ambiguous.iter:11:1]
+    │
+ 11 │ ╭─▶ runner {
+    ┆ ┆   
+ 16 │ ├─▶ }
+    │ │       
+    │ ╰─────── runner omits `workspace` but 2 `workspace` definitions exist (`main`, `scratch`); add `workspace = <name>`
+    │     
+    │     Help: flat Iterfile syntax is ambiguous with multiple `workspace` definitions
+────╯

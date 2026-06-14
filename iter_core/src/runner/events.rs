@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
-use super::config::RunnerTerminationReason;
 use super::error::ErrorSource;
 use super::event::{HookEvent, SharedSignal};
 use super::event_emitter::EventDispatcher;
 use super::iteration::IterationContext;
+use super::policy::RunnerTerminationReason;
 use crate::agent::AgentRun;
 use crate::prompt::Prompt;
 use crate::runner::lifecycle::{RedactedMetadata, RunnerLifecycleEvent};
@@ -15,9 +15,8 @@ use crate::runner::observer::DynRunnerObserver;
 use crate::signal::SignalId;
 
 /// Owns the dual emission stream (system observers + user handlers) plus
-/// the per-stream error tallies that surface as
-/// [`RunnerSummary::event_handler_error_count`] /
-/// [`RunnerSummary::observer_error_count`].
+/// the per-stream error tallies that surface on the terminal
+/// `runner_finished` event.
 pub(super) struct RunnerEmitter {
     emitter: EventDispatcher,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
@@ -60,10 +59,10 @@ impl RunnerEmitter {
         if let Some(lc) = lifecycle {
             self.observe(lc).await;
         }
-        let report = self.emitter.emit(&event, snap).await;
+        let error_count = self.emitter.emit_counted(&event, snap).await;
         self.handler_error_count = self
             .handler_error_count
-            .saturating_add(u32::try_from(report.error_count).unwrap_or(u32::MAX));
+            .saturating_add(u32::try_from(error_count).unwrap_or(u32::MAX));
     }
 
     pub(super) async fn bootstrap(&mut self, started_at: DateTime<Utc>) {
@@ -209,12 +208,27 @@ impl RunnerEmitter {
         &mut self,
         reason: RunnerTerminationReason,
         iteration_count: u32,
+        last_signal_id: Option<SignalId>,
         snap: &IterationContext,
     ) {
         let event = HookEvent::RunnerFinished {
-            reason,
+            reason: reason.clone(),
             iteration_count,
+            last_signal_id,
+            event_handler_error_count: self.handler_error_count,
+            observer_error_count: self.observer_error_count,
         };
-        self.emit(event, None, snap).await;
+        let error_count = self.emitter.emit_counted(&event, snap).await;
+        self.handler_error_count = self
+            .handler_error_count
+            .saturating_add(u32::try_from(error_count).unwrap_or(u32::MAX));
+        let lifecycle = RunnerLifecycleEvent::RunnerFinished {
+            termination_reason: reason,
+            iteration_count,
+            last_signal_id,
+            event_handler_error_count: self.handler_error_count,
+            observer_error_count: self.observer_error_count,
+        };
+        self.observe(&lifecycle).await;
     }
 }

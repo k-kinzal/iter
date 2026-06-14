@@ -1,11 +1,10 @@
 //! `NdjsonWriter` — an mpsc + writer-task pipeline that appends
 //! [`LogEntry`] records to a file as NDJSON lines.
 //!
-//! It has no dependency on `crate::process`, which keeps the generic
-//! NDJSON serialization out of the process layer; its diagnostics name
-//! `log.ndjson`, its sole caller today. Process-side framing (line
-//! splitting, partial buffers, the global sender) lives in
-//! [`crate::process::log`].
+//! It has no dependency on the CLI-owned process record layer, which keeps
+//! generic NDJSON serialization out of operator-state code. Process-side
+//! framing (line splitting, partial buffers, the global sender) lives in
+//! `iter_cli::process::log`.
 
 use std::io;
 use std::os::unix::fs::OpenOptionsExt;
@@ -19,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 use super::LogEntry;
 
 /// One message in the writer-task channel.
-pub(crate) enum WriterMsg {
+pub enum WriterMsg {
     /// Append one record as a single NDJSON line.
     Entry(LogEntry),
     /// Flush buffered writes, acknowledging the result through the
@@ -31,14 +30,14 @@ pub(crate) enum WriterMsg {
 ///
 /// Read back by [`writer_dead_error`] so a send onto a dead channel can
 /// surface the original I/O cause instead of an opaque `BrokenPipe`.
-pub(crate) type WriterErrorSlot = Arc<std::sync::Mutex<Option<String>>>;
+pub type WriterErrorSlot = Arc<std::sync::Mutex<Option<String>>>;
 
 /// Owns the NDJSON writer-task channel and its shared error slot.
 ///
 /// Construction opens the target file for append and spawns the writer
 /// task. Producers fan in by cloning the [`sender`](Self::sender); a
 /// dead task is detected through the [`error_slot`](Self::error_slot).
-pub(crate) struct NdjsonWriter {
+pub struct NdjsonWriter {
     sender: mpsc::Sender<WriterMsg>,
     error_slot: WriterErrorSlot,
 }
@@ -50,7 +49,7 @@ impl NdjsonWriter {
     /// # Errors
     ///
     /// Returns the underlying [`io::Error`] when the file open fails.
-    pub(crate) async fn open(path: PathBuf, buffer: usize) -> io::Result<Self> {
+    pub async fn open(path: PathBuf, buffer: usize) -> io::Result<Self> {
         let file = open_log_file(path).await?;
         let (tx, rx) = mpsc::channel::<WriterMsg>(buffer);
         let error_slot: WriterErrorSlot = Arc::new(std::sync::Mutex::new(None));
@@ -64,13 +63,13 @@ impl NdjsonWriter {
     /// Borrow the channel sender, for enqueuing directly or cloning into
     /// additional producers.
     #[must_use]
-    pub(crate) fn sender(&self) -> &mpsc::Sender<WriterMsg> {
+    pub fn sender(&self) -> &mpsc::Sender<WriterMsg> {
         &self.sender
     }
 
     /// Borrow the shared error slot for dead-task diagnosis.
     #[must_use]
-    pub(crate) fn error_slot(&self) -> &WriterErrorSlot {
+    pub fn error_slot(&self) -> &WriterErrorSlot {
         &self.error_slot
     }
 }
@@ -140,7 +139,7 @@ fn record_writer_error(slot: &WriterErrorSlot, err: &io::Error, context: &str) {
 
 /// Build the `BrokenPipe` error returned when the writer-task channel is
 /// closed, enriching it with the recorded original cause when present.
-pub(crate) fn writer_dead_error(slot: &WriterErrorSlot, fallback: &str) -> io::Error {
+pub fn writer_dead_error(slot: &WriterErrorSlot, fallback: &str) -> io::Error {
     let recorded = slot.lock().ok().and_then(|g| g.clone());
     match recorded {
         Some(orig) => io::Error::new(

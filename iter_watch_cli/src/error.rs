@@ -18,10 +18,8 @@ pub(crate) mod exit_codes {
     pub(crate) const SUCCESS: i32 = 0;
     pub(crate) const USER_INPUT: i32 = 1;
     pub(crate) const RUNTIME: i32 = 2;
-    #[allow(dead_code)]
     pub(crate) const CONFIG: i32 = 64;
     pub(crate) const INTERNAL: i32 = 125;
-    #[allow(dead_code)]
     pub(crate) const SIGINT: i32 = 130;
 }
 

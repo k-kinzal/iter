@@ -1,7 +1,7 @@
 //! `CodexCommand` — the **Command level** for `OpenAI` Codex's `exec` mode.
 //!
 //! Owns the `codex exec --json` argv and parses the CLI's complete output
-//! (a JSON-lines / JSONL event stream) into a CLI-shaped [`CodexResult`] or a
+//! (a JSON-lines / JSONL event stream) into a CLI-shaped [`CodexRun`] or a
 //! CLI-shaped [`CodexError`] hierarchy. Nothing here is iter-domain —
 //! projecting these onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -109,8 +109,7 @@ impl CodexTurnStatus {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct CodexResult {
+pub(crate) struct CodexRun {
     /// Session / conversation id (feeds iter's session Factors), when the
     /// stream surfaced one.
     pub(crate) session_id: Option<String>,
@@ -330,7 +329,7 @@ fn detect_limit(text: &str) -> Option<String> {
 }
 
 /// Parse Codex's complete `exec --json` output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexResult, CodexError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexRun, CodexError> {
     let stdout = output.stdout_str();
     let terminal = cli_json::last_event_matching(&stdout, is_turn_status);
 
@@ -368,7 +367,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexResult, CodexErro
         });
     }
 
-    Ok(CodexResult {
+    Ok(CodexRun {
         session_id: find_session_id(&stdout),
         turn_status: status,
         final_message: find_final_message(&stdout),

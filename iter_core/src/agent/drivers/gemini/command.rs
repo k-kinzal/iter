@@ -1,7 +1,7 @@
 //! `GeminiCommand` — the **Command level** for the Gemini CLI's print mode.
 //!
 //! Owns the print-mode rendered (`gemini -p <prompt> -o json`) and parses the
-//! CLI's complete output + exit into a CLI-shaped [`GeminiResult`] or a
+//! CLI's complete output + exit into a CLI-shaped [`GeminiRun`] or a
 //! CLI-shaped [`GeminiError`] hierarchy. Nothing here is iter-domain —
 //! projecting these onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -16,7 +16,7 @@
 //! / `error.code` (plus the fatal startup exit codes below).
 //!
 //! Gemini does not expose a session / conversation id in `-o json` output,
-//! so [`GeminiResult::session_id`] is parsed defensively and is `None` in
+//! so [`GeminiRun::session_id`] is parsed defensively and is `None` in
 //! practice.
 //!
 //! # Exit-code surface
@@ -79,8 +79,7 @@ pub(crate) struct GeminiTokenStats {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct GeminiResult {
+pub(crate) struct GeminiRun {
     /// Session / conversation id, if Gemini ever exposes one (it does not in
     /// `-o json` today). Parsed defensively; feeds iter's session Factors.
     pub(crate) session_id: Option<String>,
@@ -179,7 +178,7 @@ fn is_context_error_type(error_type: Option<&str>) -> bool {
 }
 
 /// Parse the Gemini CLI's complete print-mode output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<GeminiResult, GeminiError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<GeminiRun, GeminiError> {
     let stdout = output.stdout_str();
     let exit_code = match output.exit {
         RawExit::Code(c) => Some(c),
@@ -257,7 +256,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<GeminiResult, GeminiEr
         })
         .unwrap_or_default();
 
-    Ok(GeminiResult {
+    Ok(GeminiRun {
         session_id: record.session_id,
         response: record.response,
         tokens,

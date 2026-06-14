@@ -1,0 +1,8 @@
+agent noop {}
+
+runner {
+  agent = noop
+  continue_on_error = false
+  behavior = loop
+  prompt = "Missing workspace."
+}

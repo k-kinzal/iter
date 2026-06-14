@@ -4,12 +4,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
-use iter_core::log::LogStream;
-use iter_core::process::{
+use crate::process::lifetime_lock;
+use crate::process::{
     PidFileState, ProcessError, ProcessHandle, ProcessId, ProcessRecord, ProcessRegistry,
     ProcessStatus, process_is_alive_with_start_time,
 };
+use chrono::{DateTime, Utc};
+use iter_core::log::LogStream;
 use serde::Serialize;
 use std::io::Write;
 use thiserror::Error;
@@ -23,7 +24,7 @@ use crate::output::{
 /// Errors produced by the `iter ps`, `logs`, `stop`, `kill`, `rm`, and
 /// `inspect` subcommands.
 #[derive(Debug, Error)]
-pub enum ProcessCmdError {
+pub(crate) enum ProcessCmdError {
     /// Underlying process-registry / handle / record error.
     #[error(transparent)]
     Process(#[from] ProcessError),
@@ -102,7 +103,7 @@ struct PsRecord {
 ///
 /// Returns an error when the registry cannot be opened or the directory
 /// listing fails.
-pub async fn run_ps(args: PsArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_ps(args: PsArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
     let records = registry.list()?;
     let mut rows: Vec<PsRecord> = Vec::with_capacity(records.len());
@@ -132,7 +133,7 @@ pub async fn run_ps(args: PsArgs) -> Result<(), ProcessCmdError> {
         // Mid-publication race: `ProcessSession::create_initial` writes
         // the directory + status file *before* `meta.json` (the side-files
         // first, then `meta.json` last so its presence implies every
-        // companion is readable — see `iter_core::process::session`). A
+        // companion is readable — see `crate::process::session`). A
         // walker that races between the status write and the metadata
         // write sees `Initializing` here but `metadata()` returns
         // `ENOENT`. The right semantic for a *listing* command is to
@@ -216,9 +217,9 @@ fn print_ps_table(rows: &[PsRecord], no_trunc: bool) {
 ///
 /// Returns an error when the process cannot be found or its log cannot be
 /// opened.
-pub async fn run_logs(args: LogsArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_logs(args: LogsArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_read_only(&registry, &args.instance)?;
     let mut reader = record.tail_log_ndjson(args.follow, args.tail)?;
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
@@ -257,9 +258,9 @@ pub async fn run_logs(args: LogsArgs) -> Result<(), ProcessCmdError> {
 /// # Errors
 ///
 /// Returns an error when the process cannot be found or signalling fails.
-pub async fn run_stop(args: TargetArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_stop(args: TargetArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_live_preferred(&registry, &args.instance)?;
     let handle = ProcessHandle::open(registry.proc_root(), record.id()).await?;
     if let Some(status) = already_terminal(&handle).await? {
         if !args.quiet {
@@ -289,9 +290,9 @@ pub async fn run_stop(args: TargetArgs) -> Result<(), ProcessCmdError> {
 /// - terminal record + pid still alive → `handle.force_kill()` (signals
 ///   only, no transition)
 /// - terminal record + pid gone → no-op `already <state>` message
-pub async fn run_kill(args: TargetArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_kill(args: TargetArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_live_preferred(&registry, &args.instance)?;
     let handle = ProcessHandle::open(registry.proc_root(), record.id()).await?;
     if let Some(status) = already_terminal(&handle).await? {
         let escalated = handle.force_kill()?;
@@ -330,9 +331,9 @@ pub async fn run_kill(args: TargetArgs) -> Result<(), ProcessCmdError> {
 ///
 /// Returns an error when the process cannot be found, is still running, or
 /// the directory cannot be removed.
-pub async fn run_rm(args: TargetArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_rm(args: TargetArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_live_preferred(&registry, &args.instance)?;
     let handle = ProcessHandle::open(registry.proc_root(), record.id()).await?;
     handle.refresh_status().await?;
     if let PidFileState::Found(identity) = record.pid_identity() {
@@ -374,18 +375,18 @@ async fn already_terminal(handle: &ProcessHandle) -> Result<Option<ProcessStatus
 ///
 /// Returns an error when the process cannot be found or the metadata file
 /// cannot be deserialized.
-pub async fn run_inspect(args: InspectArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_inspect(args: InspectArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_read_only(&registry, &args.instance)?;
     let meta = record.metadata()?;
     print_json_pretty(&meta).map_err(ProcessCmdError::JsonSerialize)?;
     Ok(())
 }
 
 /// `iter promote <process>` — execute a deferred source disposition.
-pub async fn run_promote(args: TargetArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_promote(args: TargetArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_live_preferred(&registry, &args.instance)?;
     let pending = crate::source::read_pending_source(&record)?;
     iter_core::source::promote_pending(pending)
         .await
@@ -398,9 +399,9 @@ pub async fn run_promote(args: TargetArgs) -> Result<(), ProcessCmdError> {
 }
 
 /// `iter discard <process>` — drop a deferred source base.
-pub async fn run_discard(args: TargetArgs) -> Result<(), ProcessCmdError> {
+pub(crate) async fn run_discard(args: TargetArgs) -> Result<(), ProcessCmdError> {
     let registry = open_registry()?;
-    let record = lookup(&registry, &args.instance)?;
+    let record = lookup_live_preferred(&registry, &args.instance)?;
     let pending = crate::source::read_pending_source(&record)?;
     iter_core::source::discard_pending(pending)
         .await
@@ -418,7 +419,21 @@ fn open_registry() -> Result<Arc<ProcessRegistry>, ProcessError> {
     Ok(Arc::new(registry))
 }
 
-/// Resolve `id_or_name` to a [`ProcessRecord`].
+/// Resolve `id_or_name` to a [`ProcessRecord`] for read-only commands.
+///
+/// Exact name duplicates resolve deterministically to the most recent
+/// `started_at` timestamp. This path intentionally never probes process
+/// liveness: `iter logs <name>` and `iter inspect <name>` are reads of a
+/// record on disk and must keep working for stopped records, stale records,
+/// and records whose old pid has since been reused by another user.
+fn lookup_read_only(
+    registry: &ProcessRegistry,
+    id_or_name: &str,
+) -> Result<ProcessRecord, ProcessCmdError> {
+    lookup_with_name_resolution(registry, id_or_name, resolve_name_matches_by_started_at)
+}
+
+/// Resolve `id_or_name` to a [`ProcessRecord`] for control commands.
 ///
 /// Three resolution stages, in order:
 ///
@@ -438,7 +453,18 @@ fn open_registry() -> Result<Arc<ProcessRegistry>, ProcessError> {
 ///    ones. Zero matches → `NotFound`; one match → that record;
 ///    multiple matches → `AmbiguousPrefix` (no minimum length: shorter
 ///    prefixes that happen to be unique are accepted).
-fn lookup(registry: &ProcessRegistry, id_or_name: &str) -> Result<ProcessRecord, ProcessCmdError> {
+fn lookup_live_preferred(
+    registry: &ProcessRegistry,
+    id_or_name: &str,
+) -> Result<ProcessRecord, ProcessCmdError> {
+    lookup_with_name_resolution(registry, id_or_name, resolve_name_matches_by_liveness)
+}
+
+fn lookup_with_name_resolution(
+    registry: &ProcessRegistry,
+    id_or_name: &str,
+    resolve_name_matches: fn(Vec<ProcessRecord>, &str) -> Result<ProcessRecord, ProcessCmdError>,
+) -> Result<ProcessRecord, ProcessCmdError> {
     if let Ok(id) = id_or_name.parse::<ProcessId>() {
         return registry.get(id).map_err(ProcessCmdError::Process);
     }
@@ -468,7 +494,32 @@ fn lookup(registry: &ProcessRegistry, id_or_name: &str) -> Result<ProcessRecord,
     }
 }
 
-fn resolve_name_matches(
+fn resolve_name_matches_by_started_at(
+    mut matches: Vec<ProcessRecord>,
+    id_or_name: &str,
+) -> Result<ProcessRecord, ProcessCmdError> {
+    if matches.len() == 1 {
+        return Ok(matches.pop().unwrap());
+    }
+    let mut newest: Option<(DateTime<Utc>, String, ProcessRecord)> = None;
+    for rec in matches {
+        let started_at = rec.started_at()?;
+        let id = rec.id().to_string();
+        if newest
+            .as_ref()
+            .is_none_or(|(current_started_at, current_id, _)| {
+                (started_at, id.as_str()) > (*current_started_at, current_id.as_str())
+            })
+        {
+            newest = Some((started_at, id, rec));
+        }
+    }
+    newest
+        .map(|(_, _, rec)| rec)
+        .ok_or_else(|| ProcessCmdError::NotFound(id_or_name.to_owned()))
+}
+
+fn resolve_name_matches_by_liveness(
     mut matches: Vec<ProcessRecord>,
     id_or_name: &str,
 ) -> Result<ProcessRecord, ProcessCmdError> {
@@ -488,15 +539,20 @@ fn resolve_name_matches(
     }
 }
 
-/// True iff the record is non-terminal *or* its recorded pid is still alive.
+/// True iff the record is non-terminal, holds a lifetime lock, or its
+/// recorded pid is still alive.
 ///
-/// Probe errors are propagated so a transient `/proc` / `proc_pidinfo`
-/// failure surfaces as a clear lookup error rather than silently
-/// excluding a record that may actually be the user's target.
+/// The lifetime lock is pid-reuse immune and is preferred for terminal
+/// records whose process may still be exiting after `iter stop`. The pid
+/// fingerprint probe is a fallback for historical records that predate the
+/// lifetime lock file; it treats foreign-owned reused pids as not live.
 fn record_is_live(rec: &ProcessRecord) -> Result<bool, ProcessError> {
     if let Ok(status) = rec.read_status_token()
         && !status.is_terminal()
     {
+        return Ok(true);
+    }
+    if lifetime_lock::is_contended(rec.dir())? {
         return Ok(true);
     }
     if let PidFileState::Found(identity) = rec.pid_identity() {
@@ -509,8 +565,9 @@ fn record_is_live(rec: &ProcessRecord) -> Result<bool, ProcessError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use iter_core::process::MetadataDraft;
+    use crate::process::session::ProcessSession;
+    use crate::process::{MetadataDraft, ProcessMetadata};
+    use chrono::{Duration, Utc};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -544,6 +601,39 @@ mod tests {
         id
     }
 
+    async fn create_record(
+        root: &std::path::Path,
+        name: &str,
+        started_at: DateTime<Utc>,
+        status: ProcessStatus,
+    ) -> ProcessId {
+        let id = ProcessId::generate();
+        let metadata = ProcessMetadata {
+            id,
+            name: name.to_owned(),
+            iterfile: PathBuf::from("/tmp/Iterfile"),
+            subcommand: "run".into(),
+            started_at,
+            args: vec!["run".into()],
+            env: vec![],
+            debug: false,
+            parent_id: None,
+            labels: BTreeMap::new(),
+        };
+        let session = ProcessSession::create_initial(root, metadata)
+            .await
+            .expect("create record");
+        if status != ProcessStatus::Initializing {
+            session
+                .status_file()
+                .transition(ProcessStatus::Initializing, status)
+                .await
+                .expect("status transition");
+        }
+        drop(session);
+        id
+    }
+
     #[tokio::test]
     async fn lookup_resolves_unique_id_prefix() {
         let tmp = TempDir::new().unwrap();
@@ -552,7 +642,7 @@ mod tests {
         let s = id.to_string();
         // 8-char prefix is overwhelmingly likely to be unique with one record.
         let prefix = &s[..8];
-        let rec = lookup(&registry, prefix).expect("prefix resolves");
+        let rec = lookup_live_preferred(&registry, prefix).expect("prefix resolves");
         assert_eq!(rec.id(), id);
     }
 
@@ -566,7 +656,7 @@ mod tests {
         let _id1 = register(&registry, "one").await;
         let _id2 = register(&registry, "two").await;
 
-        let err = lookup(&registry, "0").expect_err("must be ambiguous");
+        let err = lookup_live_preferred(&registry, "0").expect_err("must be ambiguous");
         assert!(
             matches!(err, ProcessCmdError::AmbiguousPrefix(ref s) if s == "0"),
             "expected AmbiguousPrefix; got {err:?}"
@@ -592,7 +682,7 @@ mod tests {
 
         // Use a lower-case prefix; lookup should still resolve.
         let prefix_lc = id.to_string()[..10].to_string();
-        let rec = lookup(&registry, &prefix_lc).expect("lower-case prefix resolves");
+        let rec = lookup_live_preferred(&registry, &prefix_lc).expect("lower-case prefix resolves");
         assert_eq!(rec.id(), id);
     }
 
@@ -602,10 +692,73 @@ mod tests {
         let registry = ProcessRegistry::open(tmp.path()).unwrap();
         let _id = register(&registry, "alpha").await;
 
-        let err = lookup(&registry, "ffffffffff").expect_err("must not match");
+        let err = lookup_live_preferred(&registry, "ffffffffff").expect_err("must not match");
         assert!(
             matches!(err, ProcessCmdError::NotFound(ref s) if s == "ffffffffff"),
             "expected NotFound; got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn read_only_lookup_resolves_duplicate_name_to_most_recent_record() {
+        let tmp = TempDir::new().unwrap();
+        let registry = ProcessRegistry::open(tmp.path()).unwrap();
+        let older = Utc::now() - Duration::minutes(5);
+        let newer = Utc::now();
+        let old_id = create_record(tmp.path(), "apply_1", older, ProcessStatus::Killed).await;
+        let new_id = create_record(tmp.path(), "apply_1", newer, ProcessStatus::Killed).await;
+
+        let rec = lookup_read_only(&registry, "apply_1").expect("name resolves");
+        assert_eq!(rec.id(), new_id);
+        assert_ne!(rec.id(), old_id);
+    }
+
+    #[tokio::test]
+    async fn read_only_lookup_ignores_liveness_for_duplicate_names() {
+        let tmp = TempDir::new().unwrap();
+        let registry = ProcessRegistry::open(tmp.path()).unwrap();
+        let older = Utc::now() - Duration::minutes(5);
+        let newer = Utc::now();
+        let old_id = create_record(tmp.path(), "apply_1", older, ProcessStatus::Initializing).await;
+        let new_id = create_record(tmp.path(), "apply_1", newer, ProcessStatus::Killed).await;
+
+        let rec = lookup_read_only(&registry, "apply_1").expect("name resolves");
+        assert_eq!(rec.id(), new_id);
+        assert_ne!(rec.id(), old_id);
+    }
+
+    #[tokio::test]
+    async fn live_lookup_selects_terminal_record_with_held_lifetime_lock() {
+        let tmp = TempDir::new().unwrap();
+        let registry = ProcessRegistry::open(tmp.path()).unwrap();
+        let older = Utc::now() - Duration::minutes(5);
+        let newer = Utc::now();
+        let _old_id = create_record(tmp.path(), "apply_1", older, ProcessStatus::Killed).await;
+
+        let live_id = ProcessId::generate();
+        let metadata = ProcessMetadata {
+            id: live_id,
+            name: "apply_1".to_owned(),
+            iterfile: PathBuf::from("/tmp/Iterfile"),
+            subcommand: "run".into(),
+            started_at: newer,
+            args: vec!["run".into()],
+            env: vec![],
+            debug: false,
+            parent_id: None,
+            labels: BTreeMap::new(),
+        };
+        let live_session = ProcessSession::create_initial(tmp.path(), metadata)
+            .await
+            .expect("create live record");
+        live_session
+            .status_file()
+            .transition(ProcessStatus::Initializing, ProcessStatus::Killed)
+            .await
+            .expect("status transition");
+
+        let rec = lookup_live_preferred(&registry, "apply_1").expect("live name resolves");
+        assert_eq!(rec.id(), live_id);
+        drop(live_session);
     }
 }

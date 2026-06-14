@@ -177,7 +177,9 @@ mod tests {
                 d.message_group_id,
                 Some(MetadataSource::FromMetadata("group".into()))
             ),
-            other => panic!("unexpected: {other:?}"),
+            other @ (QueueDescriptor::Memory
+            | QueueDescriptor::File { .. }
+            | QueueDescriptor::Redis { .. }) => panic!("unexpected: {other:?}"),
         }
     }
 

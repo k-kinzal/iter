@@ -170,7 +170,14 @@ impl Analyzer {
                 ));
                 match base.value {
                     CstValue::String(s, _) => Some((s, None)),
-                    other => {
+                    other @ (CstValue::Integer(..)
+                    | CstValue::Duration(..)
+                    | CstValue::Bool(..)
+                    | CstValue::Null(_)
+                    | CstValue::Ident(..)
+                    | CstValue::List(..)
+                    | CstValue::Block(_)
+                    | CstValue::Call { .. }) => {
                         self.errors
                             .push(Diagnostic::error(other.span(), "`base` must be a string"));
                         None
@@ -179,7 +186,14 @@ impl Analyzer {
             }
             (Some(base), None) => match base.value {
                 CstValue::String(s, _) => Some((s, None)),
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors
                         .push(Diagnostic::error(other.span(), "`base` must be a string"));
                     None
@@ -193,7 +207,13 @@ impl Analyzer {
                 CstValue::Ident(name, _) => {
                     Some((String::new(), Some(WorkspaceSourceRef::Named(name))))
                 }
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         "`source` must be a source name or path string",
@@ -238,7 +258,14 @@ impl Analyzer {
         };
         let block = match field.value {
             CstValue::Block(block) => block,
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(
                     Diagnostic::error(other.span(), "`apply_back` must be a block")
                         .with_hint(APPLY_BACK_HINT),
@@ -308,7 +335,14 @@ impl Analyzer {
         };
         match field.value {
             CstValue::Ident(ident, span) => self.parse_clone_apply_back(&ident, span),
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(
                     Diagnostic::error(other.span(), "`mode` must be an identifier")
                         .with_hint(APPLY_BACK_MODE_HINT),
@@ -336,7 +370,14 @@ impl Analyzer {
                 for item in items {
                     match item {
                         CstValue::String(s, _) => out.push(s),
-                        other => self.errors.push(Diagnostic::error(
+                        other @ (CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Block(_)
+                        | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                             other.span(),
                             format!("`{name}` list elements must be strings"),
                         )),
@@ -344,7 +385,14 @@ impl Analyzer {
                 }
                 (Some(out), Some(span))
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a list of strings"),
@@ -371,7 +419,14 @@ impl Analyzer {
         };
         let block = match field.value {
             CstValue::Block(block) => block,
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors
                     .push(Diagnostic::error(other.span(), "`policy` must be a block"));
                 return None;
@@ -441,7 +496,14 @@ impl Analyzer {
                 for item in items {
                     match item {
                         CstValue::String(s, _) => hosts.push(s),
-                        other => self.errors.push(Diagnostic::error(
+                        other @ (CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Block(_)
+                        | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                             other.span(),
                             "`network` host entries must be strings",
                         )),
@@ -449,7 +511,13 @@ impl Analyzer {
                 }
                 Some(SandboxNetworkDef::Hosts(hosts))
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "`network` must be `off`, `all`, or a list of host strings",

@@ -2,5 +2,19 @@ msrv = "1.85"
 avoid-breaking-exported-api = false
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+allow-panic-in-tests = true
 allow-print-in-tests = true
 allow-dbg-in-tests = true
+
+disallowed-methods = [
+    { path = "chrono::Utc::now", reason = "iter_core must use the Clock port so time can be injected in tests and resumable contexts" },
+    { path = "std::time::SystemTime::now", reason = "iter_core must use the Clock port so filesystem and queue ordering time can be injected" },
+    { path = "std::time::Instant::now", reason = "iter_core must use an injected monotonic clock when elapsed time becomes part of core behavior" },
+    { path = "ulid::Ulid::new", reason = "iter_core must use the IdSource port so id generation can be injected" },
+    { path = "ulid::Ulid::generate", reason = "iter_core must use the IdSource port so id generation can be injected" },
+    { path = "rand::random", reason = "iter_core must use an injected source when randomness becomes part of core behavior" },
+    { path = "rand::thread_rng", reason = "iter_core must use an injected source when randomness becomes part of core behavior" },
+    { path = "rand::Rng::gen", reason = "iter_core must use an injected source when randomness becomes part of core behavior" },
+    { path = "rand::Rng::gen_range", reason = "iter_core must use an injected source when randomness becomes part of core behavior" },
+    { path = "rand::RngCore::fill_bytes", reason = "iter_core must use an injected source when randomness becomes part of core behavior" },
+]

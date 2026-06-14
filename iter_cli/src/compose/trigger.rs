@@ -77,7 +77,7 @@ impl std::fmt::Debug for ComposeTrigger {
 
 /// Error produced while running a trigger task.
 #[derive(Debug, Error)]
-pub enum TriggerRunError {
+pub(crate) enum TriggerRunError {
     /// Building the trigger from its declaration failed.
     #[error("{0}")]
     Build(Box<dyn std::error::Error + Send + Sync>),
@@ -148,8 +148,6 @@ pub(crate) async fn enqueue_terminate(trigger: &ComposeTrigger) -> Result<(), Tr
     info!(trigger = %trigger.name, "enqueued terminate signal on target queue");
     Ok(())
 }
-
-#[allow(clippy::too_many_lines)]
 async fn dispatch_trigger(
     name: &str,
     decl: TriggerDef,
@@ -288,8 +286,6 @@ async fn dispatch_trigger(
         )))),
     }
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_cron(
     name: &str,
     queue: Arc<dyn Queue>,
@@ -331,8 +327,6 @@ async fn dispatch_cron(
         .await
         .map_err(|e| TriggerRunError::Run(Box::new(e)))
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_watch(
     name: &str,
     queue: Arc<dyn Queue>,
@@ -373,8 +367,6 @@ async fn dispatch_watch(
         .await
         .map_err(|e| TriggerRunError::Run(Box::new(e)))
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_command(
     name: &str,
     queue: Arc<dyn Queue>,
@@ -413,8 +405,6 @@ async fn dispatch_command(
         .await
         .map_err(|e| TriggerRunError::Run(Box::new(e)))
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_files(
     name: &str,
     queue: Arc<dyn Queue>,
@@ -449,8 +439,6 @@ async fn dispatch_files(
     }
     Ok(())
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn dispatch_webhook(
     name: &str,
     queue: Arc<dyn Queue>,

@@ -1,0 +1,82 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-fallback-on.iter
+---
+Iterfile {
+    args: [],
+    queues: [
+        Spanned {
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
+            span: 0..12,
+        },
+    ],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                    source: None,
+                },
+            },
+            span: 14..46,
+        },
+    ],
+    sources: [],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "router",
+                decl: Router {
+                    agents: [
+                        (
+                            "primary",
+                            Noop,
+                        ),
+                        (
+                            "secondary",
+                            Noop,
+                        ),
+                    ],
+                    strategy: Fallback,
+                    fallback_on: Only(
+                        {
+                            Timeout,
+                            TokenLimit,
+                            Launch,
+                            TerminatedBySignal,
+                            Failure,
+                        },
+                    ),
+                },
+            },
+            span: 48..233,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDef {
+                name: None,
+                agent: "router",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Router fallback_on test.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 235..383,
+        },
+    ],
+}

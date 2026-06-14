@@ -1,0 +1,8 @@
+agent router {
+  strategy = fallback
+  fallback_on = [token_limit, network]
+
+  primary {
+    kind = noop
+  }
+}

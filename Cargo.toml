@@ -28,6 +28,10 @@ license = "Apache-2.0 OR MIT"
 repository = "https://github.com/k-kinzal/iter"
 authors = ["iter contributors"]
 
+# Policy: `anyhow` is test-only in this workspace. If a crate's tests need it,
+# add it to that crate's `[dev-dependencies]`, never `[dependencies]` or
+# `[workspace.dependencies]`. Cargo's dev-dependency scope enforces this
+# boundary; do not add a custom lint for it.
 [workspace.dependencies]
 # Internal crates
 iter_core = { path = "iter_core", version = "0.1.0" }
@@ -41,7 +45,6 @@ iter_webhook_cli = { path = "iter_webhook_cli", version = "0.1.0" }
 
 # Error handling
 thiserror = "2"
-anyhow = "1"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
@@ -126,24 +129,53 @@ opt-level = 0
 # ---------------------------------------------------------------------------
 # Workspace-wide lint policy.
 #
-# Member crates inherit these via `[lints] workspace = true`. Levels are
-# `warn` so existing code still compiles; promote to `deny` once the
-# baseline is clean (or pass `-D warnings` in CI).
-#
-# Group lints carry `priority = -1` so individual `allow`/`deny` overrides
-# applied below take precedence over the group setting.
+# Member crates inherit these via `[lints] workspace = true`. Group lints carry
+# `priority = -1` so individual central overrides below take precedence.
 # ---------------------------------------------------------------------------
 [workspace.lints.rust]
-unsafe_code = "warn"
-unreachable_pub = "warn"
-unused_lifetimes = "warn"
-unused_qualifications = "warn"
-trivial_numeric_casts = "warn"
-let_underscore_drop = "warn"
+unsafe_code = "deny"
+unreachable_pub = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+trivial_numeric_casts = "deny"
+let_underscore_drop = "deny"
+# Shared trigger/CLI modules intentionally keep some feature- and mode-specific helpers.
+dead_code = "allow"
+# Macro re-exports in trigger crates are only used by binary targets.
+unused_imports = "allow"
+# Some trigger crates export paired stdout/stderr macros but only use one side per target.
+unused_macros = "allow"
 
 [workspace.lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Every unsafe block must carry a local justification, and those comments must
+# stay attached to actual unsafe code.
+undocumented_unsafe_blocks = "deny"
+unnecessary_safety_comment = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+panic_in_result_fn = "deny"
+wildcard_enum_match_arm = "deny"
+match_wildcard_for_single_variants = "deny"
+# Numeric narrowing is permitted at explicit protocol and display boundaries.
+cast_possible_truncation = "allow"
+# Unit matches keep some command/trigger control-flow branches visually uniform.
+ignored_unit_patterns = "allow"
+# Module names mirror domain nouns even when a type shares the same noun.
+module_inception = "allow"
+# Several APIs take owned values to match builder and async boundary ergonomics.
+needless_pass_by_value = "allow"
+# CLI and runtime assembly functions are clearer kept as single workflows.
+too_many_arguments = "allow"
+# Parser, CLI, and runtime workflows are sometimes clearer in one function.
+too_many_lines = "allow"
+# Existing formatting style intentionally supports pre-captured format values.
+uninlined_format_args = "allow"
+# Async trait implementations keep uniform signatures across sync/async drivers.
+unused_async = "allow"
 
 # ---------------------------------------------------------------------------
 # Custom lint libraries (dylint).

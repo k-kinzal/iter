@@ -1,13 +1,6 @@
 // edition:2024
 //
 // Fixture for the `no_lint_suppression` lint.
-//
-// `unknown_lints` is a standard Rust lint, not clippy/dylint, so allowing it
-// is fine and avoids noise from lint names that rustc does not know about
-// (e.g. `no_std_print` which is only registered when its dylint library is
-// loaded).
-#![allow(unknown_lints)]
-#![allow(unused)]
 
 // ---- Should be flagged: clippy lint suppression via allow ----
 
@@ -29,16 +22,34 @@ fn clippy_expect() -> i32 {
     return 42;
 }
 
+// ---- Should be flagged: warn downgrades denied lints ----
+
+#[warn(clippy::needless_return)]
+fn clippy_warn() -> i32 {
+    return 42;
+}
+
+#[warn(unsafe_code)]
+fn rust_builtin_warn() {}
+
+// ---- Should be flagged: rust built-in lint suppression ----
+
+#[allow(unsafe_code)]
+fn rust_builtin_allow() {}
+
 // ---- Should be flagged: dylint lint suppression ----
 
-#[allow(no_std_print)]
+#[allow(no_lint_suppression)]
 fn dylint_allow() {}
 
-#[expect(no_std_print)]
+#[expect(no_lint_suppression)]
 fn dylint_expect() {}
 
-#[allow(no_lint_suppression)]
-fn meta_allow() {}
+#[warn(no_lint_suppression)]
+fn dylint_warn() {}
+
+#[allow(meaningful_type_names)]
+fn meaningful_type_names_allow() {}
 
 // ---- Multiple lints in one attribute ----
 
@@ -47,30 +58,28 @@ fn mixed_allow() -> i32 {
     return 42;
 }
 
-// ---- Should NOT be flagged: standard Rust lints ----
+// ---- Should NOT be flagged: non-lint metadata in expect ----
 
-#[allow(dead_code)]
-fn rust_allow() {}
+#[expect(dead_code, reason = "exercise non-lint expect metadata")]
+fn expect_with_reason() {}
 
-#[allow(unused_variables)]
-fn rust_allow2() {
-    let _x = 42;
-}
+// ---- Should be flagged: conditional lint-level attributes ----
 
-#[expect(dead_code)]
-fn rust_expect() {}
-
-// ---- Should NOT be flagged: inner crate-level allow of Rust lints ----
-// (the `#![allow(unknown_lints)]` and `#![allow(unused)]` above are also
-// control cases.)
+#[cfg_attr(all(), allow(dead_code))]
+fn cfg_attr_allow() {}
 
 fn main() {
     clippy_allow();
     clippy_group_all();
     clippy_group_pedantic();
     clippy_expect();
+    clippy_warn();
+    rust_builtin_warn();
+    rust_builtin_allow();
     dylint_allow();
     dylint_expect();
-    meta_allow();
+    dylint_warn();
+    meaningful_type_names_allow();
     mixed_allow();
+    cfg_attr_allow();
 }

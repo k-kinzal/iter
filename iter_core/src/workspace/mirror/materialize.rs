@@ -7,12 +7,12 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
 use tokio::fs;
 
 use super::filter::CloneFilter;
 use super::mtime::{mtime, set_file_mtime};
+use crate::time::Clock;
 
 /// Recursively copy the contents of `src` into `dst`.
 ///
@@ -40,11 +40,12 @@ pub(crate) async fn copy_dir_recursive(
     dst: &Path,
     filter: &CloneFilter,
     preserve_mtime: bool,
+    clock: &dyn Clock,
 ) -> io::Result<()> {
     if !fs::try_exists(dst).await? {
         fs::create_dir_all(dst).await?;
     }
-    let stamp_now = SystemTime::now();
+    let stamp_now = clock.system_time();
 
     let mut stack: Vec<(PathBuf, PathBuf)> = vec![(src.to_path_buf(), dst.to_path_buf())];
     while let Some((cur_src, cur_dst)) = stack.pop() {

@@ -15,12 +15,12 @@
 // them. The cost of churn-converting every internal `pub` to `pub(crate)`
 // across `cli.rs` / `dispatch/*.rs` / module re-exports is not worth it
 // for a leaf application.
-#![allow(unreachable_pub)]
 
 mod cli;
 mod dispatch;
 mod naming;
 mod output;
+mod process;
 mod telemetry;
 mod tracing_preferences;
 
@@ -32,7 +32,6 @@ mod tracing_preferences;
 mod agent;
 mod arg;
 mod compose;
-mod config;
 mod discovery;
 mod events;
 mod iterfile;
@@ -47,40 +46,41 @@ mod source;
 mod start;
 mod workspace;
 
-pub use agent::agent_from_def;
-pub use compose::{
-    CompletedTask, ComposeError, ComposePlan, ComposeReport, DEFAULT_COMPOSE_FILE, FailurePolicy,
-    LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME,
-    LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext, TargetedSpawnError, TriggerLifecycleState,
-    TriggerRunError, TriggerStatus, build, is_compose_filename, load_compose, read_trigger_status,
-    run, spawn_targeted_service, trigger_state_dir, trigger_state_root,
+pub(crate) use agent::agent_from_def;
+pub(crate) use compose::{
+    CompletedServices, CompletedTask, ComposeError, ComposePlan, DEFAULT_COMPOSE_FILE,
+    FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID,
+    LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE, OrchestratorContext,
+    TargetedSpawnError, TriggerLifecycleState, TriggerRunError, TriggerStatus, build,
+    is_compose_filename, load_compose, read_trigger_status, run, spawn_targeted_service,
+    trigger_state_dir, trigger_state_root,
 };
-pub use config::runner_policy_from_def;
-pub use discovery::{
+mod runner_policy;
+pub(crate) use discovery::{
     ActiveOrchestrator, DiscoveryError, ProjectMember, find_active_orchestrator,
     list_all_members_by_project, list_project_members, open_default_registry,
 };
-pub use events::{register_event_actions, register_event_actions_from_events};
-pub use process_lifecycle::{
-    AdoptedBootstrapError, RunRecordMetadata, bootstrap_adopted, derive_finalize_reason,
-    leaves_record_non_terminal, log_finalize_report,
+pub(crate) use events::{register_event_actions, register_event_actions_from_events};
+pub(crate) use process_lifecycle::{
+    AdoptedProcessStartError, RunRecordMetadata, bootstrap_adopted, derive_finalize_reason,
 };
-pub use project::{ENV_PROJECT_NAME, ProjectSlugError, SlugValidationError, project_slug};
-pub use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
-pub use prompt::{build_prompt_selector, prompt_selector_from_defs};
-pub use queue::{QueueBuildError, queue_address, queue_from_def};
-pub use secrets::resolve_secret;
-pub use start::StartError;
-pub use workspace::workspaces_from_def;
+pub(crate) use project::{ENV_PROJECT_NAME, ProjectSlugError, SlugValidationError, project_slug};
+pub(crate) use project_lock::{ProjectLock, ProjectLockError, acquire_project_lock};
+pub(crate) use prompt::{build_prompt_selector, prompt_selector_from_defs};
+pub(crate) use queue::{QueueBuildError, queue_address, queue_from_def};
+pub(crate) use runner_policy::runner_policy_from_def;
+pub(crate) use secrets::resolve_secret;
+pub(crate) use start::StartError;
+pub(crate) use workspace::workspaces_from_def;
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::process::{DetachedSpec, ProcessError, ProcessRegistry, SpawnError, spawn_detached};
 use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
 use clap_complete::generate;
-use iter_core::process::{DetachedSpec, ProcessError, ProcessRegistry, SpawnError, spawn_detached};
 use thiserror::Error;
 
 use crate::cli::{
@@ -346,8 +346,8 @@ fn block_on<F: Future<Output = Result<(), IterCliError>>>(future: F) -> Result<(
     runtime.block_on(future)
 }
 
-/// Spawn a fully detached `iter` child via `iter_core::process::spawn_detached`
-/// and return the freshly-allocated [`iter_core::process::ProcessId`].
+/// Spawn a fully detached `iter` child via `crate::process::spawn_detached`
+/// and return the freshly-allocated [`crate::process::ProcessId`].
 ///
 /// The child argv is rebuilt from the user-supplied [`RunArgs`] so the
 /// canonicalised flag shape is what gets recorded in `meta.json`. The
@@ -360,7 +360,7 @@ fn block_on<F: Future<Output = Result<(), IterCliError>>>(future: F) -> Result<(
 async fn spawn_child(
     args: RunArgs,
     subcommand: &'static str,
-) -> Result<iter_core::process::ProcessId, IterCliError> {
+) -> Result<process::ProcessId, IterCliError> {
     let registry = ProcessRegistry::open_default().map_err(IterCliError::OpenRegistry)?;
     let program = std::env::current_exe().map_err(IterCliError::CurrentExe)?;
     let iterfile = canonical_iterfile(args.iterfile.as_deref())?;

@@ -8,20 +8,59 @@ AST: `RunnerDef` and `RunnerBehavior` in `iter_language/src/ast/runner.rs`.
 
 ```hcl
 runner {
+  agent                  = <agent-name>      # optional when unambiguous
+  workspace              = <workspace-name>  # optional when unambiguous
+  queue                  = <queue-name>      # optional
   continue_on_error      = <bool>
   behavior               = <wait | loop [{ delay_secs = <int> }]>
+  prompt                 = <string | prompt-name | match-block>
   iteration_timeout_secs = <int | duration>   # optional
 }
 ```
 
 `runner` is the only top-level block that takes **no kind**.
 
+`agent` and `workspace` may be omitted only when the Iterfile has exactly one
+top-level definition of that kind. In that case the runner binds to the sole
+definition, whether it was named with `as` or only by its kind:
+
+```hcl
+workspace local { base = "." }
+agent noop {}
+
+runner {
+  continue_on_error = false
+  behavior          = loop
+  prompt            = "Check the workspace."
+}
+```
+
+When there are zero definitions, or two or more definitions of a kind, the
+runner must name the binding explicitly:
+
+```hcl
+agent noop as codex {}
+agent noop as claude {}
+
+runner {
+  agent             = codex
+  workspace         = main
+  continue_on_error = false
+  behavior          = loop
+  prompt            = "Check the workspace."
+}
+```
+
 ## Arguments
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
+| `agent` | identifier | Conditional | sole `agent` definition | Agent definition to run. Required when there are zero or multiple `agent` definitions. |
+| `workspace` | identifier | Conditional | sole `workspace` definition | Workspace definition to prepare. Required when there are zero or multiple `workspace` definitions. |
+| `queue` | identifier | Optional | no queue | Queue definition to consume Signals from. Required in practice when `behavior = wait`. |
 | `continue_on_error` | `bool` | Required | — | Whether to continue the loop after a stage failure. No default — iter does not pick an error policy on the project's behalf. |
 | `behavior` | `enum { wait \| loop { ... } }` | Required | — | What to do when the queue yields no Signal (or when there is no queue at all). No default. |
+| `prompt` | string, identifier, or match block | Required | — | Prompt expression to send to the agent each iteration. |
 | `iteration_timeout_secs` | `integer` or `duration` | Optional | unbounded | Hard upper bound on a single iteration. When the agent (and its descendants) exceed this, iter cancels the iteration, kills the agent process tree, and feeds an `IterationTimeout` error into the normal `continue_on_error` path. Must be positive. |
 
 ### `continue_on_error`

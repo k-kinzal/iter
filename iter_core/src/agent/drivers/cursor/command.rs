@@ -2,7 +2,7 @@
 //! CLI's print mode.
 //!
 //! Owns the print-mode argv (requesting `--output-format json`) and parses
-//! the CLI's complete output into a CLI-shaped [`CursorResult`] or a
+//! the CLI's complete output into a CLI-shaped [`CursorRun`] or a
 //! CLI-shaped [`CursorError`] hierarchy. Nothing here is iter-domain —
 //! projecting these onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -95,8 +95,7 @@ pub(crate) struct CursorUsage {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct CursorResult {
+pub(crate) struct CursorRun {
     /// `session_id` from the terminal record (feeds iter's session Factors).
     pub(crate) session_id: Option<String>,
     /// `request_id` from the terminal record.
@@ -136,7 +135,7 @@ pub(crate) enum CursorError {
 }
 
 /// Parse Cursor's complete print-mode output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<CursorResult, CursorError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<CursorRun, CursorError> {
     let stdout = output.stdout_str();
     // The success contract is "the whole stream is one JSON document", but a
     // streaming revision may precede the terminal record with progress lines;
@@ -158,7 +157,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CursorResult, CursorEr
     // Success: a terminal `result` record is present. `is_error` is
     // hard-coded `false` in this CLI revision, so it is intentionally not
     // consulted. Read fields defensively via `.get()`.
-    Ok(CursorResult {
+    Ok(CursorRun {
         session_id: string_field(&value, "session_id"),
         request_id: string_field(&value, "request_id"),
         final_message: string_field(&value, "result"),
@@ -281,7 +280,11 @@ mod tests {
                 assert_eq!(exit_code, Some(1));
                 assert!(detail.contains("fatal: boom"), "got {detail:?}");
             }
-            other => panic!("expected NoResult, got {other:?}"),
+            other @ (CursorError::TokenLimit(_)
+            | CursorError::Signal(_)
+            | CursorError::BelowMinVersion) => {
+                panic!("expected NoResult, got {other:?}")
+            }
         }
     }
 
@@ -291,7 +294,11 @@ mod tests {
         let err = interpret(&output(stdout, "noise", RawExit::Code(1))).expect_err("err");
         match err {
             CursorError::NoResult { detail, .. } => assert_eq!(detail, "auth required"),
-            other => panic!("expected NoResult, got {other:?}"),
+            other @ (CursorError::TokenLimit(_)
+            | CursorError::Signal(_)
+            | CursorError::BelowMinVersion) => {
+                panic!("expected NoResult, got {other:?}")
+            }
         }
     }
 
@@ -343,7 +350,11 @@ mod tests {
         let err = interpret(&output("", "", RawExit::Code(1))).expect_err("err");
         match err {
             CursorError::NoResult { detail, .. } => assert_eq!(detail, "no error output"),
-            other => panic!("expected NoResult, got {other:?}"),
+            other @ (CursorError::TokenLimit(_)
+            | CursorError::Signal(_)
+            | CursorError::BelowMinVersion) => {
+                panic!("expected NoResult, got {other:?}")
+            }
         }
     }
 }

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::queue::QueueError;
+use crate::time::{Clock, SystemClock};
 use crate::{Priority, Queue, Signal};
 use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify};
@@ -101,10 +102,21 @@ pub struct InMemoryQueue {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Inner {
     state: Mutex<State>,
     notify: Notify,
+    clock: Arc<dyn Clock>,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(State::default()),
+            notify: Notify::new(),
+            clock: Arc::new(SystemClock),
+        }
+    }
 }
 
 impl InMemoryQueue {
@@ -112,6 +124,18 @@ impl InMemoryQueue {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an empty in-memory queue with an injected clock.
+    #[must_use]
+    pub fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                state: Mutex::new(State::default()),
+                notify: Notify::new(),
+                clock,
+            }),
+        }
     }
 
     /// Number of signals currently buffered.
@@ -139,7 +163,7 @@ impl Queue for InMemoryQueue {
             state.next_seq = state.next_seq.wrapping_add(1);
             state.heap.push(Entry {
                 priority,
-                enqueued_at: Reverse(SystemTime::now()),
+                enqueued_at: Reverse(self.inner.clock.system_time()),
                 seq: Reverse(seq),
                 signal,
             });
@@ -238,7 +262,9 @@ mod tests {
             .expect("label present")
         {
             MetadataValue::String(s) => s.clone(),
-            other => panic!("unexpected metadata variant: {other:?}"),
+            other @ (MetadataValue::Integer(_) | MetadataValue::Bool(_) | MetadataValue::Null) => {
+                panic!("unexpected metadata variant: {other:?}")
+            }
         }
     }
 

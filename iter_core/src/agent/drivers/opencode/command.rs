@@ -1,7 +1,7 @@
 //! `OpenCodeCommand` — the **Command level** for `OpenCode`'s print mode.
 //!
 //! Owns the print-mode argv (`opencode run … --format json`) and parses the
-//! CLI's complete output into a CLI-shaped [`OpenCodeResult`] or a CLI-shaped
+//! CLI's complete output into a CLI-shaped [`OpenCodeRun`] or a CLI-shaped
 //! [`OpenCodeError`] hierarchy. Nothing here is iter-domain — projecting these
 //! onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -87,8 +87,7 @@ impl OpenCodeCommand<'_> {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct OpenCodeResult {
+pub(crate) struct OpenCodeRun {
     /// Session id read from a session record, when one is present (feeds
     /// iter's session Factors).
     pub(crate) session_id: Option<String>,
@@ -173,7 +172,7 @@ fn is_error_event(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
 /// The presence of an error event — regardless of the exit code — *is* the
 /// failure signal. Only when no error event is found do we treat the run as a
 /// success and read any session id from the stream.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<OpenCodeResult, OpenCodeError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<OpenCodeRun, OpenCodeError> {
     let stdout = output.stdout_str();
 
     let exit_code = match output.exit {
@@ -232,7 +231,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<OpenCodeResult, OpenCo
     }
 
     // Success: recover any session id / final message from the stream.
-    Ok(OpenCodeResult {
+    Ok(OpenCodeRun {
         session_id: session_id_from_stream(&stdout),
         final_message: final_message_from_stream(&stdout),
     })

@@ -106,7 +106,14 @@ fn pp_field(out: &mut String, f: &CstField, depth: usize) {
             pp_block(out, b, depth);
             out.push('\n');
         }
-        v => {
+        v @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Duration(..)
+        | CstValue::Bool(..)
+        | CstValue::Null(_)
+        | CstValue::Ident(..)
+        | CstValue::List(..)
+        | CstValue::Call { .. }) => {
             out.push_str(" = ");
             pp_value(out, v, depth);
             out.push('\n');
@@ -228,7 +235,11 @@ fn pp_guard(out: &mut String, g: &CstGuard, parent_prec: u8) {
     let (prec, sep): (u8, &str) = match g {
         CstGuard::Or(..) => (1, " || "),
         CstGuard::And(..) => (2, " && "),
-        _ => (3, ""),
+        CstGuard::MetadataEq { .. }
+        | CstGuard::MetadataNeq { .. }
+        | CstGuard::IterationCmp { .. }
+        | CstGuard::IterationResultEq { .. }
+        | CstGuard::IterationResultNeq { .. } => (3, ""),
     };
     let needs_parens = prec < parent_prec;
     if needs_parens {

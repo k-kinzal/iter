@@ -272,7 +272,11 @@ impl<Q: Queue + ?Sized + 'static> CommandTrigger<Q> {
                     metadata.insert(key, json_to_metadata_value(v));
                 }
             }
-            other => {
+            other @ (Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_)) => {
                 let key = MetadataKey::new("value")?;
                 metadata.insert(key, MetadataValue::String(value_to_string(other)));
             }

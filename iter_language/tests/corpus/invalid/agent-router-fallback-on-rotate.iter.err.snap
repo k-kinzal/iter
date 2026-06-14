@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-fallback-on-rotate.iter
+---
+Error: `fallback_on` is only valid with `strategy = fallback`
+   ╭─[agent-router-fallback-on-rotate.iter:3:3]
+   │
+ 3 │   fallback_on = [token_limit]
+   │   ─────┬─────  
+   │        ╰─────── `fallback_on` is only valid with `strategy = fallback`
+   │ 
+   │ Help: remove `fallback_on` or set `strategy = fallback`
+───╯

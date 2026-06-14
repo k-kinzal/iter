@@ -1,0 +1,53 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-implicit-single-alias.iter
+---
+Iterfile {
+    args: [],
+    queues: [],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "dev",
+                decl: Local {
+                    base: ".",
+                    source: None,
+                },
+            },
+            span: 0..39,
+        },
+    ],
+    sources: [],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "primary",
+                decl: Noop,
+            },
+            span: 41..65,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDef {
+                name: None,
+                agent: "primary",
+                workspace: "dev",
+                queue: None,
+                continue_on_error: false,
+                behavior: Synthesize {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Implicit aliased binding.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 67..162,
+        },
+    ],
+}

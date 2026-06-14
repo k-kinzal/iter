@@ -8,11 +8,9 @@
 //! Startup and shutdown banners go to stderr; stdout is reserved.
 
 #![deny(rust_2018_idioms)]
-#![allow(unreachable_pub)]
 
 mod banner;
 mod error;
-mod files_trigger;
 mod logging;
 mod signal_defaults;
 mod stream;
@@ -21,11 +19,11 @@ mod termination;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::files_trigger::{FilesSource, FilesTrigger, FilesTriggerError};
 use clap::Parser;
-use iter_core::process::interrupt::install_signal_handlers;
+use iter_core::os_signal::install_signal_handlers;
 use iter_core::queue::{BudgetedQueue, ConnectError, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::defaults::MetadataPairError;
+use iter_files_cli::{FilesSource, FilesTrigger, FilesTriggerError};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;

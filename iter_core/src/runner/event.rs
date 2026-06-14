@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::agent::AgentRun;
 use crate::prompt::Prompt;
-use crate::runner::config::RunnerTerminationReason;
+use crate::runner::policy::RunnerTerminationReason;
 use crate::signal::{Signal, SignalId};
 
 /// Shared, read-only handle to the [`Signal`] a runner is processing.
@@ -192,13 +192,26 @@ pub enum HookEvent {
     },
     /// The runner has finished its per-signal loop and is about to return
     /// from [`Runner::run`](crate::runner::Runner::run). Fired exactly once
-    /// regardless of termination reason — including `RunnerExitError` exit
+    /// regardless of termination reason — including `RunnerError` exit
     /// paths.
     RunnerFinished {
         /// Why the runner loop terminated.
         reason: RunnerTerminationReason,
         /// Number of signals processed (whether successfully or not).
         iteration_count: u32,
+        /// Identifier of the last signal attempted, regardless of whether
+        /// processing succeeded. `None` if no signal was ever pulled from
+        /// the queue.
+        #[serde(default)]
+        last_signal_id: Option<SignalId>,
+        /// Number of registered [`EventAction`](crate::EventAction) calls
+        /// that returned `Err` before this event was emitted.
+        #[serde(default)]
+        event_handler_error_count: u32,
+        /// Number of system-contract observer calls that returned `Err`
+        /// before this event was emitted.
+        #[serde(default)]
+        observer_error_count: u32,
     },
 }
 
@@ -380,7 +393,7 @@ mod tests {
                 std::ptr::eq(a.as_signal(), b.as_signal()),
                 "events for one bracket must share a single signal allocation",
             ),
-            _ => unreachable!(),
+            _ => panic!("test constructed setup and teardown events"),
         }
     }
 

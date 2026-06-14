@@ -11,11 +11,9 @@
 //!
 //! - `RunnerLifecycleEvent` (this module): system-facing, slim,
 //!   status/log-oriented. Consumed by
-//!   [`RunnerObserver`](crate::runner::RunnerObserver) implementations
-//!   (the canonical one being
-//!   [`LifecycleObserver`](crate::process::observer::LifecycleObserver),
-//!   which re-emits each record as `tracing::info!` under
-//!   `iter::lifecycle`).
+//!   [`RunnerObserver`](crate::runner::RunnerObserver) implementations,
+//!   such as the CLI process-record observer that re-emits each record as
+//!   `tracing::info!` under `iter::lifecycle`.
 //!
 //! Neither stream is a projection of the other. Shared fields may be
 //! derived from the same source values inside the runner, but the two
@@ -37,6 +35,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::error::ErrorSource;
+use super::policy::RunnerTerminationReason;
 use crate::signal::{Metadata, SignalId};
 
 /// A single event in the Runner's system-facing lifecycle stream.
@@ -124,6 +123,25 @@ pub enum RunnerLifecycleEvent {
         /// Stringified error message.
         error_message: String,
     },
+    /// The runner finished its loop.
+    RunnerFinished {
+        /// Why the runner loop terminated.
+        termination_reason: RunnerTerminationReason,
+        /// Number of signals processed (whether successfully or not).
+        iteration_count: u32,
+        /// Identifier of the last signal attempted, regardless of whether
+        /// processing succeeded. `None` if no signal was ever pulled from
+        /// the queue.
+        last_signal_id: Option<SignalId>,
+        /// Number of registered event handlers that returned `Err` during
+        /// the run.
+        #[serde(default)]
+        event_handler_error_count: u32,
+        /// Number of system-contract observers that returned `Err` during
+        /// the run up to this event.
+        #[serde(default)]
+        observer_error_count: u32,
+    },
 }
 
 impl RunnerLifecycleEvent {
@@ -139,6 +157,7 @@ impl RunnerLifecycleEvent {
             | Self::AgentFinished { signal_id, .. }
             | Self::WorkspaceTearDown { signal_id } => Some(*signal_id),
             Self::RunnerError { signal_id, .. } => *signal_id,
+            Self::RunnerFinished { last_signal_id, .. } => *last_signal_id,
         }
     }
 }
@@ -212,15 +231,20 @@ impl RedactedMetadata {
 mod tests {
     use super::*;
     use crate::signal::metadata::{MetadataKey, MetadataValue};
+    use std::time::{Duration, UNIX_EPOCH};
 
     fn signal_id() -> SignalId {
         SignalId::new()
     }
 
+    fn fixed_now() -> DateTime<Utc> {
+        DateTime::<Utc>::from(UNIX_EPOCH + Duration::from_secs(1_700_000_000))
+    }
+
     #[test]
     fn signal_id_returns_none_for_bootstrap_variants() {
         let started = RunnerLifecycleEvent::BootstrapStarted {
-            started_at: Utc::now(),
+            started_at: fixed_now(),
         };
         let failed = RunnerLifecycleEvent::BootstrapFailed {
             error: "boom".into(),
@@ -236,7 +260,7 @@ mod tests {
             RunnerLifecycleEvent::SignalReceived {
                 signal_id: id,
                 metadata: RedactedMetadata::empty(),
-                ts: Utc::now(),
+                ts: fixed_now(),
             },
             RunnerLifecycleEvent::WorkspaceSetup {
                 signal_id: id,
@@ -323,13 +347,16 @@ mod tests {
         // User-only events: no RunnerLifecycleEvent counterpart required.
         drop(HookEvent::RunnerStarting {});
         drop(HookEvent::RunnerFinished {
-            reason: crate::runner::RunnerTerminationReason::Cancelled,
+            reason: RunnerTerminationReason::Cancelled,
             iteration_count: 0,
+            last_signal_id: None,
+            event_handler_error_count: 0,
+            observer_error_count: 0,
         });
 
         // System-only lifecycle records: no HookEvent counterpart required.
         drop(RunnerLifecycleEvent::BootstrapStarted {
-            started_at: Utc::now(),
+            started_at: fixed_now(),
         });
         drop(RunnerLifecycleEvent::BootstrapFailed { error: "x".into() });
 

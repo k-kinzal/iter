@@ -423,7 +423,7 @@ pub fn match_env_pattern(pattern: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{AgentMode, AgentRouter, RoutingStrategy};
+    use crate::agent::{AgentMode, AgentRouter, FallbackTriggers, RoutingStrategy};
     use std::sync::{Mutex, PoisonError};
     use tempfile::TempDir;
 
@@ -534,6 +534,8 @@ mod tests {
             std::env::set_var("HOME", home.path());
         }
         let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("HOME", v),
@@ -600,6 +602,8 @@ mod tests {
             std::env::set_var("HOME", home.path());
         }
         let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("HOME", v),
@@ -631,6 +635,8 @@ mod tests {
             std::env::set_var("HOME", home.path());
         }
         let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("HOME", v),
@@ -697,6 +703,8 @@ mod tests {
             std::env::set_var("PATH", bin_dir.as_os_str());
         }
         let p = SandboxProfile::for_agent(&claude_agent("claude-path-lookup-probe"));
+        // SAFETY: protected by ENV_LOCK; restore PATH to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("PATH", v),
@@ -728,6 +736,8 @@ mod tests {
             std::env::set_var("HOME", home.path());
         }
         let p = SandboxProfile::for_agent(&grok_agent("grok"));
+        // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("HOME", v),
@@ -755,6 +765,8 @@ mod tests {
             std::env::set_var("HOME", home.path());
         }
         let p = SandboxProfile::for_agent(&grok_agent("grok"));
+        // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("HOME", v),
@@ -807,6 +819,8 @@ mod tests {
             std::env::set_var("PATH", bin_dir.as_os_str());
         }
         let p = SandboxProfile::for_agent(&grok_agent("grok-path-lookup-probe"));
+        // SAFETY: protected by ENV_LOCK; restore PATH to its prior process
+        // state before leaving the test.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("PATH", v),
@@ -837,7 +851,11 @@ mod tests {
             ("c".into(), Box::new(claude_agent("claude"))),
             ("g".into(), Box::new(grok_agent("grok"))),
         ];
-        let router = AgentRouter::new(agents, RoutingStrategy::Fallback);
+        let router = AgentRouter::new(
+            agents,
+            RoutingStrategy::Fallback,
+            FallbackTriggers::AnyFailure,
+        );
         let p = SandboxProfile::for_agent(&router);
         assert!(
             p.network_hosts
@@ -866,14 +884,22 @@ mod tests {
     fn nested_router_unions_recursively() {
         let inner: Vec<(String, Box<dyn Agent>)> =
             vec![("c".into(), Box::new(claude_agent("claude")))];
-        let inner_router = AgentRouter::new(inner, RoutingStrategy::Fallback);
+        let inner_router = AgentRouter::new(
+            inner,
+            RoutingStrategy::Fallback,
+            FallbackTriggers::AnyFailure,
+        );
 
         let outer: Vec<(String, Box<dyn Agent>)> = vec![
             ("nested".into(), Box::new(inner_router)),
             ("c2".into(), Box::new(claude_agent("claude"))),
             ("g".into(), Box::new(grok_agent("grok"))),
         ];
-        let outer_router = AgentRouter::new(outer, RoutingStrategy::Fallback);
+        let outer_router = AgentRouter::new(
+            outer,
+            RoutingStrategy::Fallback,
+            FallbackTriggers::AnyFailure,
+        );
 
         let p = SandboxProfile::for_agent(&outer_router);
         // Recursion: the nested Claude's host surfaces through the inner router.

@@ -12,8 +12,8 @@ use tracing::Instrument;
 
 use crate::trigger_util::hmac::verify_github_signature;
 
-use super::config::CompiledSubscription;
 use super::guard::{evaluate_guard, event_pattern_matches, render_metadata};
+use super::settings::CompiledSubscription;
 
 pub(super) struct WebhookState<Q: Queue + ?Sized> {
     pub(super) queue: Arc<Q>,

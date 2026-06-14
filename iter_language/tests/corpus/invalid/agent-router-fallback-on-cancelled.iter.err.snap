@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-fallback-on-cancelled.iter
+---
+Error: `cancelled` is never a fallback trigger
+   ╭─[agent-router-fallback-on-cancelled.iter:3:18]
+   │
+ 3 │   fallback_on = [cancelled]
+   │                  ────┬────  
+   │                      ╰────── `cancelled` is never a fallback trigger
+   │ 
+   │ Help: cancellation is cooperative shutdown and always propagates
+───╯

@@ -301,8 +301,14 @@ impl<'a> Lexer<'a> {
         let digits_end = self.pos;
         // duration suffix?
         if let Some(&b) = self.bytes.get(self.pos) {
-            if matches!(b, b's' | b'm' | b'h' | b'd') {
-                let suffix_start = self.pos;
+            let multiplier = match b {
+                b's' => Some(1),
+                b'm' => Some(60),
+                b'h' => Some(60 * 60),
+                b'd' => Some(60 * 60 * 24),
+                _ => None,
+            };
+            if let Some(multiplier) = multiplier {
                 self.pos += 1;
                 let digits = &self.source[start..digits_end];
                 let n: i64 = if let Ok(n) = digits.parse() {
@@ -314,13 +320,7 @@ impl<'a> Lexer<'a> {
                     ));
                     return;
                 };
-                let secs = match self.bytes[suffix_start] {
-                    b's' => n,
-                    b'm' => n * 60,
-                    b'h' => n * 60 * 60,
-                    b'd' => n * 60 * 60 * 24,
-                    _ => unreachable!(),
-                };
+                let secs = n * multiplier;
                 self.tokens.push(SpannedToken {
                     token: Token::Duration(secs),
                     span: start..self.pos,

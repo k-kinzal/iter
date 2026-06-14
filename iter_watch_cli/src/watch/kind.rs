@@ -30,7 +30,7 @@ impl ChangeKind {
             EventKind::Create(_) => Some(Self::Created),
             EventKind::Modify(_) => Some(Self::Modified),
             EventKind::Remove(_) => Some(Self::Removed),
-            _ => None,
+            EventKind::Any | EventKind::Access(_) | EventKind::Other => None,
         }
     }
 }

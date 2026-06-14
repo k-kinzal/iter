@@ -200,7 +200,11 @@ fn reassociate_left(g: CstGuard) -> CstGuard {
             Box::new(reassociate_left(*r)),
             s,
         ),
-        leaf => leaf,
+        leaf @ (CstGuard::MetadataEq { .. }
+        | CstGuard::MetadataNeq { .. }
+        | CstGuard::IterationCmp { .. }
+        | CstGuard::IterationResultEq { .. }
+        | CstGuard::IterationResultNeq { .. }) => leaf,
     }
 }
 

@@ -16,9 +16,11 @@ pub mod error;
 
 pub use error::RedisQueueError;
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use crate::queue::QueueError;
+use crate::time::{Clock, SystemClock};
 use crate::{Priority, Queue, Signal};
 use async_trait::async_trait;
 use redis::{AsyncCommands, Client};
@@ -60,6 +62,7 @@ const BLOCK_TIMEOUT_SECS: f64 = 1.0;
 pub struct RedisQueue {
     client: Client,
     key: String,
+    clock: Arc<dyn Clock>,
 }
 
 impl RedisQueue {
@@ -73,6 +76,20 @@ impl RedisQueue {
     /// Returns [`RedisQueueError::Redis`] if the URL cannot be parsed or
     /// the initial connection check fails.
     pub async fn connect(url: &str, key: impl Into<String>) -> Result<Self, RedisQueueError> {
+        Self::connect_with_clock(url, key, Arc::new(SystemClock)).await
+    }
+
+    /// Connect to a Redis instance with an injected clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RedisQueueError::Redis`] if the URL cannot be parsed or
+    /// the initial connection check fails.
+    pub async fn connect_with_clock(
+        url: &str,
+        key: impl Into<String>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self, RedisQueueError> {
         let client = Client::open(url)?;
         // Eager round-trip so caller mistakes (bad URL, auth, etc.) surface
         // immediately rather than on the first enqueue.
@@ -81,6 +98,7 @@ impl RedisQueue {
         Ok(Self {
             client,
             key: key.into(),
+            clock,
         })
     }
 
@@ -126,8 +144,9 @@ impl RedisQueue {
 /// clock. Lower scores pop first, so higher priorities map to more
 /// negative values. `Duration::as_secs_f64` already produces an f64; the
 /// loss of fractional-nanosecond precision is acceptable for queue ordering.
-fn score_for(priority: Priority) -> f64 {
-    let secs_f = SystemTime::now()
+fn score_for(priority: Priority, clock: &dyn Clock) -> f64 {
+    let secs_f = clock
+        .system_time()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
@@ -152,7 +171,7 @@ impl RedisQueue {
         priority: Priority,
     ) -> Result<(), RedisQueueError> {
         let member = encode_member(&signal)?;
-        let score = score_for(priority);
+        let score = score_for(priority, self.clock.as_ref());
         let mut conn = self.client.get_multiplexed_async_connection().await?;
         let _: () = conn.zadd(&self.key, member, score).await?;
         Ok(())
@@ -233,7 +252,9 @@ mod tests {
             .expect("label present")
         {
             MetadataValue::String(s) => s.clone(),
-            other => panic!("unexpected metadata variant: {other:?}"),
+            other @ (MetadataValue::Integer(_) | MetadataValue::Bool(_) | MetadataValue::Null) => {
+                panic!("unexpected metadata variant: {other:?}")
+            }
         }
     }
 
@@ -246,8 +267,8 @@ mod tests {
         // Sanity-check the score function: the queue is ordered by
         // increasing score, so higher priorities must produce smaller
         // (more negative) scores.
-        let high = score_for(Priority::CRITICAL);
-        let low = score_for(Priority::LOW);
+        let high = score_for(Priority::CRITICAL, &SystemClock);
+        let low = score_for(Priority::LOW, &SystemClock);
         assert!(
             high < low,
             "expected CRITICAL score {high} < LOW score {low}"

@@ -5,8 +5,8 @@
 //! foreground record under `~/.iter/proc/<id>/`, wire stdio + observer
 //! side files, and finalise the record with a derived
 //! [`ProcessTerminationReason`] when the runner exits. This module
-//! collects the bootstrap, finalize-reason derivation, and best-effort
-//! finalize logging into one place so that compose-managed services
+//! collects bootstrap and finalize-reason derivation in one place so that
+//! compose-managed services
 //! show up in `iter ps` exactly the same way `iter run` records do.
 //!
 //! The adopted (`--process-id`) bootstrap is iterfile-specific and
@@ -18,28 +18,28 @@ use std::error::Error as StdError;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use chrono::Utc;
-use iter_core::process::registry::MetadataDraft;
-use iter_core::process::{
-    AdoptError, FinalizeReport, Interrupt, LifecycleObserver, ObserverError, OutputPolicy,
-    ProcessError, ProcessId, ProcessOutput, ProcessRegistry, ProcessRuntime, ProcessStatus,
-    RegisterError, ShutdownIntent, StartupError, adopt_from_argv, current_identity, open_output,
-    spawn_interrupt_listener,
+use crate::process::registry::MetadataDraft;
+use crate::process::{
+    AdoptError, LifecycleObserver, ObserverError, OutputPolicy, ProcessError, ProcessId,
+    ProcessOutput, ProcessRegistry, ProcessRuntime, ProcessStatus, RegisterError, ShutdownIntent,
+    StartupError, adopt_from_argv, current_identity, open_output,
 };
+use chrono::Utc;
+use iter_core::os_signal::{Interrupt, spawn_interrupt_listener};
 use thiserror::Error;
 use tracing::warn;
 
 /// Boxed error trait object carried inside
 /// [`ProcessTerminationReason::RunnerError`].
-pub type BoxError = Box<dyn StdError + Send + Sync + 'static>;
+pub(crate) type BoxError = Box<dyn StdError + Send + Sync + 'static>;
 
 /// Why the process exited its main run loop — the run record's
 /// termination classification.
 ///
 /// This taxonomy belongs to the run record (the operator's durable
 /// memory under `~/.iter/proc`), so it lives here with the record's
-/// finalisation rather than in core: core's `process::interrupt` records
-/// the *intent* to shut down ([`ShutdownIntent`]) and nothing else.
+/// finalisation rather than in core: `iter_core::os_signal` records the
+/// OS interrupt and [`ShutdownIntent`] records the local stop intent.
 ///
 /// Per rev17 §J1, this is the input [`terminal_status_for`] needs in
 /// order to pick a terminal [`ProcessStatus`]:
@@ -56,7 +56,7 @@ pub type BoxError = Box<dyn StdError + Send + Sync + 'static>;
 /// promoted to a terminal state by the registry reconciler
 /// (`refresh_status`) instead.
 #[derive(Debug)]
-pub enum ProcessTerminationReason {
+pub(crate) enum ProcessTerminationReason {
     /// Runner returned `Ok(_)` from its main loop.
     Completed,
     /// Runner returned `Err(_)` from its main loop.
@@ -70,7 +70,7 @@ pub enum ProcessTerminationReason {
 /// Map a [`ProcessTerminationReason`] to its terminal [`ProcessStatus`]
 /// per the rev17 §J1 table.
 #[must_use]
-pub fn terminal_status_for(reason: &ProcessTerminationReason) -> ProcessStatus {
+pub(crate) fn terminal_status_for(reason: &ProcessTerminationReason) -> ProcessStatus {
     match reason {
         ProcessTerminationReason::Completed => ProcessStatus::Stopped,
         ProcessTerminationReason::RunnerError(_) => ProcessStatus::Failed,
@@ -90,7 +90,7 @@ pub fn terminal_status_for(reason: &ProcessTerminationReason) -> ProcessStatus {
 /// what [`derive_finalize_reason`] feeds into [`terminal_status_for`]
 /// when the record is finalised.
 #[derive(Debug, Clone)]
-pub struct TerminationRecorder {
+pub(crate) struct TerminationRecorder {
     intent: ShutdownIntent,
     reason: Arc<Mutex<Option<ProcessTerminationReason>>>,
 }
@@ -99,7 +99,7 @@ impl TerminationRecorder {
     /// Create a recorder around a fresh [`ShutdownIntent`] and an empty
     /// reason slot.
     #[must_use]
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             intent: ShutdownIntent::new(),
             reason: Arc::new(Mutex::new(None)),
@@ -109,7 +109,7 @@ impl TerminationRecorder {
     /// Return a clone of the underlying [`ShutdownIntent`]. Cheap — the
     /// token internals are reference-counted and the clone shares them.
     #[must_use]
-    pub fn intent(&self) -> ShutdownIntent {
+    pub(crate) fn intent(&self) -> ShutdownIntent {
         self.intent.clone()
     }
 
@@ -118,7 +118,7 @@ impl TerminationRecorder {
     /// First call wins: subsequent invocations leave the recorded reason
     /// untouched and only ensure the underlying token is fired
     /// (idempotent).
-    pub fn cancel(&self, reason: ProcessTerminationReason) {
+    pub(crate) fn cancel(&self, reason: ProcessTerminationReason) {
         // `Mutex::lock` only fails if a previous holder panicked. Since
         // every code path here only takes the lock long enough to
         // `take`/`insert`, that should not happen — but if it does we
@@ -140,7 +140,7 @@ impl TerminationRecorder {
     /// Returns `None` until the first [`Self::cancel`] (or
     /// signal-handler trigger) records one.
     #[must_use]
-    pub fn reason_taken(&self) -> Option<ProcessTerminationReason> {
+    pub(crate) fn reason_taken(&self) -> Option<ProcessTerminationReason> {
         let mut slot = match self.reason.lock() {
             Ok(g) => g,
             Err(p) => p.into_inner(),
@@ -163,7 +163,7 @@ impl TerminationRecorder {
     ///
     /// [`SignalTerm`]: ProcessTerminationReason::SignalTerm
     /// [`SignalInt`]: ProcessTerminationReason::SignalInt
-    pub fn install_signal_handlers(&self) -> std::io::Result<()> {
+    pub(crate) fn install_signal_handlers(&self) -> std::io::Result<()> {
         let recorder = self.clone();
         spawn_interrupt_listener(self.intent.token(), move |which| {
             let reason = match which {
@@ -187,18 +187,18 @@ impl Default for TerminationRecorder {
 /// does not interpret them. The CLI dispatch layer is the source of
 /// truth for argv shape and flag semantics.
 #[derive(Clone)]
-pub struct RunRecordMetadata {
+pub(crate) struct RunRecordMetadata {
     /// CLI-shaped argv recorded for `iter inspect`.
-    pub argv: Vec<String>,
+    pub(crate) argv: Vec<String>,
     /// Subcommand verb (e.g. `"run"` or `"compose up"`).
-    pub subcommand: String,
+    pub(crate) subcommand: String,
     /// `--debug` flag value.
-    pub debug: bool,
+    pub(crate) debug: bool,
 }
 
 /// Errors produced by [`bootstrap_adopted`].
 #[derive(Debug, Error)]
-pub enum AdoptedBootstrapError {
+pub(crate) enum AdoptedProcessStartError {
     /// Opening the process registry failed.
     #[error("opening process registry: {0}")]
     RegistryOpen(#[source] ProcessError),
@@ -219,7 +219,7 @@ pub enum AdoptedBootstrapError {
 
 /// Errors produced by [`bootstrap_foreground`].
 #[derive(Debug, Error)]
-pub enum LifecycleError {
+pub(crate) enum LifecycleError {
     /// Installing shutdown signal handlers failed.
     #[error("installing shutdown signal handlers: {0}")]
     InstallSignalHandlers(#[source] std::io::Error),
@@ -389,14 +389,15 @@ pub(crate) async fn bootstrap_foreground(
 ///
 /// # Errors
 ///
-/// Any [`AdoptedBootstrapError`] variant.
-pub async fn bootstrap_adopted(
+/// Any [`AdoptedProcessStartError`] variant.
+pub(crate) async fn bootstrap_adopted(
     process_id: ProcessId,
-) -> Result<(ProcessRuntime, TerminationRecorder), AdoptedBootstrapError> {
-    let registry = ProcessRegistry::open_default().map_err(AdoptedBootstrapError::RegistryOpen)?;
+) -> Result<(ProcessRuntime, TerminationRecorder), AdoptedProcessStartError> {
+    let registry =
+        ProcessRegistry::open_default().map_err(AdoptedProcessStartError::RegistryOpen)?;
     let session = adopt_from_argv(registry.proc_root(), process_id)
         .await
-        .map_err(|source| AdoptedBootstrapError::Adopt {
+        .map_err(|source| AdoptedProcessStartError::Adopt {
             id: process_id,
             source,
         })?;
@@ -421,7 +422,7 @@ pub async fn bootstrap_adopted(
                     "failed to mark adopted process Failed after bootstrap error",
                 );
             }
-            Err(AdoptedBootstrapError::Lifecycle(err))
+            Err(AdoptedProcessStartError::Lifecycle(err))
         }
     }
 }
@@ -455,40 +456,6 @@ pub(crate) async fn wire_runtime_pieces(
     Ok((observer, output, termination))
 }
 
-/// Log non-clean entries from a [`FinalizeReport`].
-pub fn log_finalize_report(report: &FinalizeReport) {
-    if report.is_clean() {
-        return;
-    }
-    if let Some(err) = report.status_write_error.as_ref() {
-        warn!(error = %err, "finalize failed to write terminal status");
-    }
-    for err in &report.stdio_errors {
-        warn!(error = %err, "finalize stdio drain error");
-    }
-    for err in &report.observer_errors {
-        warn!(error = %err, "finalize observer drain error");
-    }
-}
-
-/// True if the finalize error means the on-disk record still needs a
-/// terminal status written. False for the `iter stop`/`iter kill` race:
-/// the operator's command writes `Killed` synchronously, then the
-/// runner reaches its own `finalize` and observes the record is already
-/// terminal. The on-disk state is correct in that case, so we do not
-/// want to flip the user-visible exit code on what is effectively a
-/// no-op.
-#[must_use]
-pub fn leaves_record_non_terminal(err: &ProcessError) -> bool {
-    !matches!(
-        err,
-        ProcessError::IllegalTransition {
-            observed: Some(observed),
-            ..
-        } if observed.is_terminal()
-    )
-}
-
 /// Derive a [`ProcessTerminationReason`] from a runner result and
 /// recorded shutdown state.
 ///
@@ -496,7 +463,7 @@ pub fn leaves_record_non_terminal(err: &ProcessError) -> bool {
 /// orchestrator already classified the exit). Otherwise `Completed` for
 /// clean returns and `RunnerError(msg)` for failures.
 #[must_use]
-pub fn derive_finalize_reason(
+pub(crate) fn derive_finalize_reason(
     runner_failure_message: Option<String>,
     termination: &TerminationRecorder,
 ) -> ProcessTerminationReason {

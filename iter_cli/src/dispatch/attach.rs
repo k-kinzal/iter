@@ -1,7 +1,7 @@
 //! Parent-side attach for `iter run` (no `--detach`).
 //!
 //! Foreground and detached runs both fork through
-//! [`iter_core::process::spawn_detached`]: the difference is what the
+//! [`crate::process::spawn_detached`]: the difference is what the
 //! parent does *after* the child is forked.
 //!
 //! - `--detach`: parent prints the new ULID and returns.
@@ -19,8 +19,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::process::{ProcessError, ProcessHandle, ProcessId, ProcessRegistry, ProcessStatus};
 use iter_core::log::{LogStream, NdjsonReader};
-use iter_core::process::{ProcessError, ProcessHandle, ProcessId, ProcessRegistry, ProcessStatus};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Notify;
@@ -34,7 +34,7 @@ use crate::output::{IntoExitCode, exit_codes};
 const STATUS_POLL_INTERVAL: Duration = Duration::from_millis(150);
 
 #[derive(Debug, Error)]
-pub enum AttachError {
+pub(crate) enum AttachError {
     #[error("opening process registry: {0}")]
     OpenRegistry(#[source] ProcessError),
     #[error("opening process handle: {0}")]
@@ -68,7 +68,7 @@ impl IntoExitCode for AttachError {
 ///
 /// Returns [`AttachError`] when the registry / record / log files cannot
 /// be opened, the status read fails, or signal forwarding fails.
-pub async fn attach(id: ProcessId) -> Result<ProcessStatus, AttachError> {
+pub(crate) async fn attach(id: ProcessId) -> Result<ProcessStatus, AttachError> {
     let registry = ProcessRegistry::open_default().map_err(AttachError::OpenRegistry)?;
     let handle = ProcessHandle::open(registry.proc_root(), id)
         .await
@@ -118,7 +118,7 @@ pub async fn attach(id: ProcessId) -> Result<ProcessStatus, AttachError> {
 /// `Stopped` → 0, `Failed` → `RUNTIME` (1 in the iter contract),
 /// `Killed` → 130 (POSIX SIGINT-equivalent termination).
 #[must_use]
-pub fn status_exit_code(status: ProcessStatus) -> i32 {
+pub(crate) fn status_exit_code(status: ProcessStatus) -> i32 {
     match status {
         ProcessStatus::Stopped => 0,
         ProcessStatus::Failed => exit_codes::RUNTIME,

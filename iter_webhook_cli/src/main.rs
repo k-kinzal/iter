@@ -8,7 +8,6 @@
 //! Startup and shutdown banners go to stderr; stdout is reserved.
 
 #![deny(rust_2018_idioms)]
-#![allow(unreachable_pub)]
 
 mod banner;
 mod error;
@@ -16,8 +15,6 @@ mod logging;
 mod signal_defaults;
 mod stream;
 mod termination;
-mod trigger_util;
-mod webhook;
 
 use std::env;
 use std::fs;
@@ -25,12 +22,12 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::webhook::{Subscription, WebhookConfig, WebhookTrigger, WebhookTriggerError};
 use clap::Parser;
 use iter_core::Priority;
-use iter_core::process::interrupt::install_signal_handlers;
+use iter_core::os_signal::install_signal_handlers;
 use iter_core::queue::{BudgetedQueue, ConnectError, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::defaults::MetadataPairError;
+use iter_webhook_cli::{Subscription, WebhookConfig, WebhookTrigger, WebhookTriggerError};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -96,7 +93,44 @@ impl IntoExitCode for WebhookCliError {
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput => {
                     exit_codes::USER_INPUT
                 }
-                _ => exit_codes::RUNTIME,
+                std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::HostUnreachable
+                | std::io::ErrorKind::NetworkUnreachable
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::AddrInUse
+                | std::io::ErrorKind::AddrNotAvailable
+                | std::io::ErrorKind::NetworkDown
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::AlreadyExists
+                | std::io::ErrorKind::WouldBlock
+                | std::io::ErrorKind::NotADirectory
+                | std::io::ErrorKind::IsADirectory
+                | std::io::ErrorKind::DirectoryNotEmpty
+                | std::io::ErrorKind::ReadOnlyFilesystem
+                | std::io::ErrorKind::StaleNetworkFileHandle
+                | std::io::ErrorKind::InvalidData
+                | std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::WriteZero
+                | std::io::ErrorKind::StorageFull
+                | std::io::ErrorKind::NotSeekable
+                | std::io::ErrorKind::QuotaExceeded
+                | std::io::ErrorKind::FileTooLarge
+                | std::io::ErrorKind::ResourceBusy
+                | std::io::ErrorKind::ExecutableFileBusy
+                | std::io::ErrorKind::Deadlock
+                | std::io::ErrorKind::CrossesDevices
+                | std::io::ErrorKind::TooManyLinks
+                | std::io::ErrorKind::InvalidFilename
+                | std::io::ErrorKind::ArgumentListTooLong
+                | std::io::ErrorKind::Interrupted
+                | std::io::ErrorKind::Unsupported
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::OutOfMemory
+                | std::io::ErrorKind::Other
+                | _ => exit_codes::RUNTIME,
             },
             Self::SecretConflict | Self::SecretEnvMissing { .. } | Self::RoutePriority(_) => {
                 exit_codes::USER_INPUT

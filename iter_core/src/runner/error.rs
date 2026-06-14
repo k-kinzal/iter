@@ -1,4 +1,4 @@
-//! [`ErrorSource`] and [`RunnerExitError`] — the failure diagnostics of one
+//! [`ErrorSource`] and [`RunnerError`] — the failure diagnostics of one
 //! iteration.
 
 use serde::{Deserialize, Serialize};
@@ -77,7 +77,7 @@ impl std::fmt::Display for ErrorSource {
 /// single diagnostic field now, not a taxonomy.)
 #[derive(Debug, thiserror::Error)]
 #[error("{error_source} failed: {message}")]
-pub struct RunnerExitError {
+pub struct RunnerError {
     /// Which of the iteration's operations produced the fatal error.
     pub error_source: ErrorSource,
     /// Stringified source error.
@@ -85,13 +85,9 @@ pub struct RunnerExitError {
     /// Boxed original source error.
     #[source]
     pub source: Box<dyn std::error::Error + Send + Sync + 'static>,
-    /// Running tally of event-action errors across the run.
-    pub event_handler_error_count: u32,
-    /// Running tally of observer errors across the run.
-    pub observer_error_count: u32,
 }
 
-impl RunnerExitError {
+impl RunnerError {
     /// Which of the iteration's operations produced this error.
     #[must_use]
     pub fn error_source(&self) -> ErrorSource {
@@ -100,15 +96,5 @@ impl RunnerExitError {
 
     pub(super) fn message(&self) -> &str {
         &self.message
-    }
-
-    pub(super) fn with_counters(
-        mut self,
-        event_handler_error_count: u32,
-        observer_error_count: u32,
-    ) -> Self {
-        self.event_handler_error_count = event_handler_error_count;
-        self.observer_error_count = observer_error_count;
-        self
     }
 }

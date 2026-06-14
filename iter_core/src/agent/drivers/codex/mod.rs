@@ -235,7 +235,6 @@ impl CodexAgent {
     /// [`drive_interactive_with_finalize`]; this method only handles the
     /// Codex-specific bits: bundle install, command construction, and
     /// stdio inheritance wiring.
-    #[allow(clippy::too_many_arguments)]
     async fn run_interactive(
         &self,
         path: &Path,

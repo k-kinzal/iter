@@ -14,7 +14,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Returns `true` only when the header parses, the hex decodes, and the MAC
 /// verifies. Constant-time comparison is delegated to [`hmac::Mac::verify_slice`].
 #[must_use]
-pub fn verify_github_signature(secret: &[u8], header: &str, body: &[u8]) -> bool {
+pub(crate) fn verify_github_signature(secret: &[u8], header: &str, body: &[u8]) -> bool {
     let Some(hex_part) = header.strip_prefix("sha256=") else {
         return false;
     };
@@ -39,7 +39,7 @@ pub fn verify_github_signature(secret: &[u8], header: &str, body: &[u8]) -> bool
 /// fail; the `expect` is unreachable.
 #[cfg(test)]
 #[must_use]
-pub fn sign_github(secret: &[u8], body: &[u8]) -> String {
+fn sign_github(secret: &[u8], body: &[u8]) -> String {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
     mac.update(body);
     let bytes = mac.finalize().into_bytes();

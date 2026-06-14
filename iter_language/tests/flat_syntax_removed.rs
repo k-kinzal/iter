@@ -1,9 +1,8 @@
 //! Regression coverage for the removal of flat Iterfile syntax.
 //!
 //! Flat top-level definitions used to desugar into a synthetic runner behind a
-//! deprecation warning. That path is gone: a flat Iterfile must now fail with
-//! an actionable error that names the named-definition + runner-binding
-//! replacement, and the replacement form itself must still validate.
+//! deprecation warning. That path is gone: a top-level prompt must still fail,
+//! while a runner may implicitly bind the single available agent/workspace.
 
 use iter_language::parse;
 
@@ -49,15 +48,13 @@ runner {
 "#;
 
 #[test]
-fn flat_iterfile_is_rejected_with_actionable_error() {
+fn single_agent_workspace_omission_is_not_flat_syntax_error() {
     let diags = parse(FLAT).expect_err("flat Iterfile must no longer validate");
     assert!(
-        diags.iter().any(|d| {
-            d.message
-                .contains("flat Iterfile syntax is no longer supported")
-                && d.message.contains("runner { agent = ... workspace = ... }")
-        }),
-        "expected the flat-syntax error naming the runner-binding replacement; got: {:?}",
+        diags.iter().all(|d| !d
+            .message
+            .contains("flat Iterfile syntax is no longer supported")),
+        "single-definition runner binding should not emit the old flat-syntax error; got: {:?}",
         diags.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
     );
 }

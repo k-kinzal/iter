@@ -310,6 +310,8 @@ mod tests {
         let mut r = SandboxProfile::new();
         r.pass_env("ITER_TEST_SANDBOX_ENV_*");
         let argv = render_argv(&desc(ws, &p, &r));
+        // SAFETY: same isolated test scope as above; remove the temporary
+        // process env key before returning.
         unsafe {
             std::env::remove_var("ITER_TEST_SANDBOX_ENV_FOO");
         }

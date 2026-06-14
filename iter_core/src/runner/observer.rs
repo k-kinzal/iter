@@ -12,11 +12,8 @@
 //! Runner stores `Arc<dyn DynRunnerObserver>` so observers can be plugged
 //! in dynamically.
 //!
-//! The canonical concrete implementation is
-//! [`LifecycleObserver`](crate::process::observer::LifecycleObserver),
-//! which lives in the process module because it is a process-runtime
-//! consumer — it re-emits lifecycle records as tracing events routed
-//! into `log.ndjson`.
+//! Concrete observers can live above core. The CLI process-record observer
+//! re-emits lifecycle records as tracing events routed into `log.ndjson`.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -70,7 +67,7 @@ where
 }
 
 /// Forwarding impl so an existing `Arc<T: RunnerObserver>` (e.g. the one
-/// owned by [`crate::process::ProcessRuntime`]) can be handed straight to
+/// owned by a process runtime) can be handed straight to
 /// [`RunnerBuilder::observer`](crate::RunnerBuilder::observer) without
 /// re-wrapping.
 impl<T> RunnerObserver for Arc<T>

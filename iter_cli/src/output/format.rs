@@ -39,12 +39,12 @@ pub(crate) enum ValidateFormat {
 #[derive(Debug, Serialize)]
 pub(crate) struct ValidateOk {
     pub(crate) ok: bool,
-    pub(crate) summary: ValidateSummary,
+    pub(crate) summary: ValidateCounts,
 }
 
 /// The `summary` block of [`ValidateOk`].
 #[derive(Debug, Serialize)]
-pub(crate) struct ValidateSummary {
+pub(crate) struct ValidateCounts {
     pub(crate) queues: usize,
     pub(crate) services: usize,
     pub(crate) triggers: usize,

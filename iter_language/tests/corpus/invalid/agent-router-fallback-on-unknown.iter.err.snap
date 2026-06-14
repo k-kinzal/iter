@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-router-fallback-on-unknown.iter
+---
+Error: unknown fallback trigger `network`
+   ╭─[agent-router-fallback-on-unknown.iter:3:31]
+   │
+ 3 │   fallback_on = [token_limit, network]
+   │                               ───┬───  
+   │                                  ╰───── unknown fallback trigger `network`
+   │ 
+   │ Help: valid fallback triggers: any, timeout, token_limit, errored, terminated_by_signal, failure
+───╯

@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, UNIX_EPOCH};
 
 use tokio_util::sync::CancellationToken;
 
@@ -27,7 +27,8 @@ use super::*;
 use crate::agent::{AgentInvocation, AgentRun};
 use crate::prompt::PromptTemplate;
 use crate::queue::{InMemoryQueue, Priority, QueueError};
-use crate::signal::{Metadata, Signal};
+use crate::signal::{Metadata, Signal, SignalId};
+use crate::time::{DeterministicIdSource, FixedClock};
 use crate::workspace::WorkspaceError;
 use async_trait::async_trait;
 
@@ -353,6 +354,81 @@ fn finished_reason(events: &[HookEvent]) -> RunnerTerminationReason {
     panic!("no RunnerFinished in events: {events:?}");
 }
 
+fn finished_iteration_count(events: &[HookEvent]) -> u32 {
+    for e in events {
+        if let HookEvent::RunnerFinished {
+            iteration_count, ..
+        } = e
+        {
+            return *iteration_count;
+        }
+    }
+    panic!("no RunnerFinished in events: {events:?}");
+}
+
+fn finished_handler_error_count(events: &[HookEvent]) -> u32 {
+    for e in events {
+        if let HookEvent::RunnerFinished {
+            event_handler_error_count,
+            ..
+        } = e
+        {
+            return *event_handler_error_count;
+        }
+    }
+    panic!("no RunnerFinished in events: {events:?}");
+}
+
+#[tokio::test]
+async fn synthesized_signal_uses_injected_clock_and_id_source() {
+    let pinned = UNIX_EPOCH + Duration::from_secs(1_700_000_123);
+    let handler = CapturingHandler::default();
+    let runner = Runner::builder()
+        .workspaces(make_provider())
+        .agent(Box::new(StubAgent))
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: true,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .clock(Arc::new(FixedClock::from_system_time(pinned)))
+        .id_source(Arc::new(DeterministicIdSource::new(42)))
+        .on_all(handler.clone())
+        .build()
+        .unwrap();
+
+    runner.run(CancellationToken::new()).await.unwrap();
+
+    let events = handler.events.lock().unwrap().clone();
+    let signal = events
+        .iter()
+        .find_map(|event| match event {
+            HookEvent::SignalReceived { signal } => Some(signal.clone()),
+            HookEvent::RunnerStarting { .. }
+            | HookEvent::RunnerFinished { .. }
+            | HookEvent::WorkspaceSetupStarting { .. }
+            | HookEvent::WorkspaceSetupFinished { .. }
+            | HookEvent::AgentStarting { .. }
+            | HookEvent::AgentFinished { .. }
+            | HookEvent::WorkspaceTeardownStarting { .. }
+            | HookEvent::WorkspaceTeardownFinished { .. }
+            | HookEvent::DequeueFailed { .. }
+            | HookEvent::RenderPromptFailed { .. }
+            | HookEvent::WorkspaceSetupFailed { .. }
+            | HookEvent::AgentRunFailed { .. }
+            | HookEvent::WorkspaceTeardownFailed { .. } => None,
+        })
+        .expect("signal received");
+
+    assert_eq!(signal.id(), SignalId::from_uuid(uuid::Uuid::from_u128(42)));
+    assert_eq!(
+        signal.created_at(),
+        chrono::DateTime::<chrono::Utc>::from(pinned)
+    );
+}
+
 #[tokio::test]
 async fn once_path_emits_runner_starting_and_finished_exactly_once() {
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
@@ -376,19 +452,15 @@ async fn once_path_emits_runner_starting_and_finished_exactly_once() {
         .build()
         .unwrap();
 
-    let summary = runner
+    runner
         .run(CancellationToken::new())
         .await
         .expect("once path returns Ok");
-    assert_eq!(summary.iteration_count, 1);
-    assert!(matches!(
-        summary.termination_reason,
-        RunnerTerminationReason::Once
-    ));
 
     let events = handler.events.lock().unwrap().clone();
     assert_eq!(count_runner_starting(&events), 1, "starting once");
     assert_eq!(count_runner_finished(&events), 1, "finished once");
+    assert_eq!(finished_iteration_count(&events), 1);
     assert!(matches!(
         finished_reason(&events),
         RunnerTerminationReason::Once
@@ -418,16 +490,12 @@ async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
         .build()
         .unwrap();
 
-    let summary = runner.run(cancel).await.expect("cancel returns Ok");
-    assert_eq!(summary.iteration_count, 0);
-    assert!(matches!(
-        summary.termination_reason,
-        RunnerTerminationReason::Cancelled
-    ));
+    runner.run(cancel).await.expect("cancel returns Ok");
 
     let events = handler.events.lock().unwrap().clone();
     assert_eq!(count_runner_starting(&events), 1);
     assert_eq!(count_runner_finished(&events), 1);
+    assert_eq!(finished_iteration_count(&events), 0);
     assert!(matches!(
         finished_reason(&events),
         RunnerTerminationReason::Cancelled
@@ -456,14 +524,10 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
         .build()
         .unwrap();
 
-    let summary = runner
+    runner
         .run(CancellationToken::new())
         .await
         .expect("drained returns Ok");
-    assert!(matches!(
-        summary.termination_reason,
-        RunnerTerminationReason::QueueDrained
-    ));
 
     let events = handler.events.lock().unwrap().clone();
     assert_eq!(count_runner_starting(&events), 1);
@@ -477,7 +541,7 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
 #[tokio::test]
 async fn error_path_emits_runner_starting_and_finished_exactly_once() {
     // Workspace teardown fails with continue_on_error=false →
-    // `RunnerExitError`. The post-loop block must
+    // `RunnerError`. The post-loop block must
     // still emit RunnerFinished with an Error reason.
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
@@ -508,7 +572,7 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
     assert!(
         matches!(
             &err,
-            RunnerExitError {
+            RunnerError {
                 error_source: ErrorSource::WorkspaceTeardown,
                 ..
             }
@@ -524,15 +588,19 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         RunnerTerminationReason::Error { error_source, .. } => {
             assert_eq!(error_source, ErrorSource::WorkspaceTeardown);
         }
-        other => panic!("expected Error reason, got {other:?}"),
+        other @ (RunnerTerminationReason::Cancelled
+        | RunnerTerminationReason::Once
+        | RunnerTerminationReason::QueueDrained
+        | RunnerTerminationReason::TerminateSignalReceived) => {
+            panic!("expected Error reason, got {other:?}")
+        }
     }
 }
 
 #[tokio::test]
-async fn error_path_carries_handler_counts_in_exit_error() {
-    // The `Err` exit path now propagates handler/observer counts
-    // via error variant fields, mirroring the `Ok` path's
-    // `RunnerSummary` fields. This test asserts the count survives.
+async fn error_path_carries_handler_counts_in_runner_finished() {
+    // The `Err` exit path propagates handler/observer counts through the
+    // terminal runner_finished event. This test asserts the count survives.
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
         .enqueue(Signal::new(Metadata::new()), Priority::default())
@@ -569,8 +637,9 @@ async fn error_path_carries_handler_counts_in_exit_error() {
         ErrorSource::WorkspaceTeardown,
         "expected workspace_teardown error source, got {err:?}"
     );
+    let events = events_buf.lock().unwrap().clone();
     assert!(
-        err.event_handler_error_count >= 1,
+        finished_handler_error_count(&events) >= 1,
         "the failing first handler invocation must be counted",
     );
 }
@@ -653,19 +722,32 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
         cancel_for_task.cancel();
     });
 
-    let summary = runner
+    runner
         .run(cancel)
         .await
         .expect("continue_on_error keeps the run going across teardown failure");
     cancel_task.await.unwrap();
 
-    assert!(
-        summary.iteration_count >= 2,
-        "both signals should have been processed; got {}",
-        summary.iteration_count
-    );
-
     let events = handler.events.lock().unwrap().clone();
+    let iteration_count = events
+        .iter()
+        .find_map(|(event, _)| {
+            if let HookEvent::RunnerFinished {
+                iteration_count, ..
+            } = event
+            {
+                Some(*iteration_count)
+            } else {
+                None
+            }
+        })
+        .expect("no RunnerFinished in events");
+
+    assert!(
+        iteration_count >= 2,
+        "both signals should have been processed; got {}",
+        iteration_count
+    );
 
     // Find the second iteration's `AgentStarting` snapshot. By then
     // turn 1's teardown has failed and `record_failure` must have
@@ -679,7 +761,7 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
         .expect("a second AgentStarting must have been emitted");
     assert_eq!(
         second_agent_starting.previous_result,
-        PreviousResult::Errored,
+        PriorIterationStatus::Errored,
         "the failed teardown of iter 1 must have flipped previous_result",
     );
     assert!(
@@ -728,15 +810,15 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
         .build()
         .unwrap();
 
-    let summary = runner
+    runner
         .run(CancellationToken::new())
         .await
         .expect("RunnerStarting handler error must not abort");
-    assert_eq!(summary.iteration_count, 1);
-    assert!(summary.event_handler_error_count >= 1);
     let events = events_buf.lock().unwrap().clone();
     assert_eq!(count_runner_starting(&events), 1);
     assert_eq!(count_runner_finished(&events), 1);
+    assert_eq!(finished_iteration_count(&events), 1);
+    assert!(finished_handler_error_count(&events) >= 1);
 }
 
 #[tokio::test]
@@ -767,23 +849,28 @@ async fn iteration_timeout_kills_long_running_agent() {
         .build()
         .unwrap();
 
-    let started = std::time::Instant::now();
-    let result = tokio::time::timeout(Duration::from_secs(5), runner.run(CancellationToken::new()))
+    let result = tokio::time::timeout(Duration::from_secs(2), runner.run(CancellationToken::new()))
         .await
         .expect("runner must return well before the agent's 60s sleep");
-    let elapsed = started.elapsed();
-
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "iteration_timeout should bound runtime; took {elapsed:?}",
-    );
     // continue_on_error = false → the timeout aborts the runner.
-    assert!(result.is_err(), "expected RunnerExitError on aborted run");
+    assert!(result.is_err(), "expected RunnerError on aborted run");
 
     let events = handler.events.lock().unwrap().clone();
     let saw_timeout = events.iter().any(|e| match e {
         HookEvent::AgentRunFailed { error, .. } => error.contains("iteration"),
-        _ => false,
+        HookEvent::RunnerStarting { .. }
+        | HookEvent::SignalReceived { .. }
+        | HookEvent::WorkspaceSetupStarting { .. }
+        | HookEvent::WorkspaceSetupFinished { .. }
+        | HookEvent::AgentStarting { .. }
+        | HookEvent::AgentFinished { .. }
+        | HookEvent::WorkspaceTeardownStarting { .. }
+        | HookEvent::WorkspaceTeardownFinished { .. }
+        | HookEvent::DequeueFailed { .. }
+        | HookEvent::RenderPromptFailed { .. }
+        | HookEvent::WorkspaceSetupFailed { .. }
+        | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::RunnerFinished { .. } => false,
     });
     assert!(
         saw_timeout,
@@ -816,17 +903,17 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
         .build()
         .unwrap();
 
-    let summary = runner
+    runner
         .run(CancellationToken::new())
         .await
         .expect("fast agent must not trip the timeout");
-    assert_eq!(summary.iteration_count, 1);
-    assert!(matches!(
-        summary.termination_reason,
-        RunnerTerminationReason::Once
-    ));
 
     let events = handler.events.lock().unwrap().clone();
+    assert_eq!(finished_iteration_count(&events), 1);
+    assert!(matches!(
+        finished_reason(&events),
+        RunnerTerminationReason::Once
+    ));
     let saw_runner_error = events.iter().any(|e| {
         matches!(
             e,
@@ -870,14 +957,13 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
         .build()
         .unwrap();
 
-    let summary =
-        tokio::time::timeout(Duration::from_secs(5), runner.run(CancellationToken::new()))
-            .await
-            .expect("runner returned before deadline")
-            .expect("continue_on_error should make a timed-out iter recoverable");
-    assert_eq!(summary.iteration_count, 1);
+    tokio::time::timeout(Duration::from_secs(5), runner.run(CancellationToken::new()))
+        .await
+        .expect("runner returned before deadline")
+        .expect("continue_on_error should make a timed-out iter recoverable");
 
     let events = handler.events.lock().unwrap().clone();
+    assert_eq!(finished_iteration_count(&events), 1);
     let saw_agent_run_failed = events
         .iter()
         .any(|e| matches!(e, HookEvent::AgentRunFailed { .. }));
@@ -976,20 +1062,10 @@ async fn iteration_timeout_drain_yields_to_parent_cancel() {
         canceller.cancel();
     });
 
-    let started = std::time::Instant::now();
     drop(
-        tokio::time::timeout(Duration::from_secs(5), runner.run(parent_cancel))
+        tokio::time::timeout(Duration::from_secs(2), runner.run(parent_cancel))
             .await
             .expect("runner must short-circuit drain on parent cancel"),
-    );
-    let elapsed = started.elapsed();
-
-    // DRAIN_GRACE is GRACE + 5s = 10s.  If the drain ignored the
-    // parent cancel, the test would not return until ~150ms (cancel
-    // fired) + ~10s (full drain) ≈ 10s+.  We bound at 2s.
-    assert!(
-        elapsed < Duration::from_secs(2),
-        "drain must yield to parent cancel; took {elapsed:?}",
     );
 }
 
@@ -1303,7 +1379,7 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
     assert!(
         matches!(
             err,
-            RunnerExitError {
+            RunnerError {
                 error_source: ErrorSource::Dequeue,
                 ..
             }
@@ -1322,19 +1398,37 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
         HookEvent::RunnerFinished {
             reason,
             iteration_count,
+            ..
         } => {
             match reason {
                 RunnerTerminationReason::Error { error_source, .. } => {
                     assert_eq!(error_source, &ErrorSource::Dequeue);
                 }
-                other => panic!("expected Error reason, got {other:?}"),
+                other @ (RunnerTerminationReason::Cancelled
+                | RunnerTerminationReason::Once
+                | RunnerTerminationReason::QueueDrained
+                | RunnerTerminationReason::TerminateSignalReceived) => {
+                    panic!("expected Error reason, got {other:?}")
+                }
             }
             assert_eq!(
                 *iteration_count, 0,
                 "dequeue failures must not bump iteration_count"
             );
         }
-        _ => unreachable!(),
+        HookEvent::RunnerStarting { .. }
+        | HookEvent::SignalReceived { .. }
+        | HookEvent::WorkspaceSetupStarting { .. }
+        | HookEvent::WorkspaceSetupFinished { .. }
+        | HookEvent::AgentStarting { .. }
+        | HookEvent::AgentFinished { .. }
+        | HookEvent::WorkspaceTeardownStarting { .. }
+        | HookEvent::WorkspaceTeardownFinished { .. }
+        | HookEvent::DequeueFailed { .. }
+        | HookEvent::RenderPromptFailed { .. }
+        | HookEvent::WorkspaceSetupFailed { .. }
+        | HookEvent::AgentRunFailed { .. }
+        | HookEvent::WorkspaceTeardownFailed { .. } => panic!("expected RunnerFinished event"),
     }
 }
 
@@ -1361,21 +1455,21 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
         .build()
         .unwrap();
 
-    let summary = runner
+    runner
         .run(CancellationToken::new())
         .await
         .expect("continue_on_error retries past dequeue failure");
 
+    let events = handler.events.lock().unwrap().clone();
     assert_eq!(
-        summary.iteration_count, 1,
+        finished_iteration_count(&events),
+        1,
         "dequeue failure must not count as an iteration"
     );
     assert!(matches!(
-        summary.termination_reason,
+        finished_reason(&events),
         RunnerTerminationReason::Once
     ));
-
-    let events = handler.events.lock().unwrap().clone();
     let dequeue_errors = events
         .iter()
         .filter(|e| matches!(e, HookEvent::DequeueFailed { .. }))
@@ -1405,15 +1499,11 @@ async fn terminate_signal_stops_runner_gracefully() {
         .on_all(handler.clone())
         .build()
         .unwrap();
-    let summary = runner.run(CancellationToken::new()).await.unwrap();
-    assert_eq!(
-        summary.termination_reason,
-        RunnerTerminationReason::TerminateSignalReceived,
-    );
-    assert_eq!(summary.iteration_count, 0);
+    runner.run(CancellationToken::new()).await.unwrap();
     let events = handler.events.lock().unwrap();
     assert_eq!(count_runner_starting(&events), 1);
     assert_eq!(count_runner_finished(&events), 1);
+    assert_eq!(finished_iteration_count(&events), 0);
     assert_eq!(
         finished_reason(&events),
         RunnerTerminationReason::TerminateSignalReceived,
@@ -1443,12 +1533,13 @@ async fn work_signals_before_terminate_are_all_processed() {
         .on_all(handler.clone())
         .build()
         .unwrap();
-    let summary = runner.run(CancellationToken::new()).await.unwrap();
+    runner.run(CancellationToken::new()).await.unwrap();
+    let events = handler.events.lock().unwrap();
     assert_eq!(
-        summary.termination_reason,
+        finished_reason(&events),
         RunnerTerminationReason::TerminateSignalReceived,
     );
-    assert_eq!(summary.iteration_count, 3);
+    assert_eq!(finished_iteration_count(&events), 3);
 }
 
 #[tokio::test]
@@ -1487,7 +1578,19 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
     let events = handler.events.lock().unwrap().clone();
     let teardown_path = events.iter().find_map(|e| match e {
         HookEvent::WorkspaceTeardownFinished { path, .. } => Some(path.clone()),
-        _ => None,
+        HookEvent::RunnerStarting { .. }
+        | HookEvent::SignalReceived { .. }
+        | HookEvent::WorkspaceSetupStarting { .. }
+        | HookEvent::WorkspaceSetupFinished { .. }
+        | HookEvent::AgentStarting { .. }
+        | HookEvent::AgentFinished { .. }
+        | HookEvent::WorkspaceTeardownStarting { .. }
+        | HookEvent::DequeueFailed { .. }
+        | HookEvent::RenderPromptFailed { .. }
+        | HookEvent::WorkspaceSetupFailed { .. }
+        | HookEvent::AgentRunFailed { .. }
+        | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::RunnerFinished { .. } => None,
     });
     assert_eq!(
         teardown_path.as_deref(),

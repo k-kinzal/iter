@@ -1,10 +1,10 @@
 use std::time::{Duration, Instant};
 
-use crate::{ProjectMember, build, find_active_orchestrator, list_project_members, load_compose};
-use iter_core::process::{
+use crate::process::{
     PidFileState, PosixSignal, ProcessError, ProcessHandle, ProcessRegistry,
     process_is_alive_with_start_time, signal_identity,
 };
+use crate::{ProjectMember, build, find_active_orchestrator, list_project_members, load_compose};
 use tokio::time::sleep;
 
 use crate::cli::ComposeDownArgs;
@@ -120,8 +120,7 @@ fn validate_targets_against_members(
 /// # Errors
 ///
 /// Forwarded from [`ComposeRuntimeError`].
-#[allow(clippy::too_many_lines)]
-pub async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRuntimeError> {
+pub(crate) async fn run_compose_down(args: &ComposeDownArgs) -> Result<(), ComposeRuntimeError> {
     let slug = runtime_project_slug(args.file.as_deref(), args.project_name.as_deref())?;
     let all_members = list_project_members(&slug)?;
     let targets = resolve_down_targets(args)?;
@@ -303,12 +302,12 @@ async fn sweep_late_members(
 }
 
 #[derive(Clone, Copy)]
-enum KillResult {
+enum KillDelivery {
     Delivered,
     AlreadyGone,
 }
 
-impl KillResult {
+impl KillDelivery {
     fn from_force_kill(delivered: bool) -> Self {
         if delivered {
             Self::Delivered
@@ -317,12 +316,10 @@ impl KillResult {
         }
     }
 }
-
-#[allow(clippy::too_many_lines)]
 async fn escalate_to_sigkill(
     slug: &str,
     still_alive: &[(String, String, ProcessHandle)],
-    orchestrator_identity: Option<&iter_core::process::ProcessIdentity>,
+    orchestrator_identity: Option<&crate::process::ProcessIdentity>,
     args: &ComposeDownArgs,
 ) -> Result<(), ComposeRuntimeError> {
     let mut first_error: Option<ComposeRuntimeError> = None;
@@ -370,19 +367,19 @@ async fn escalate_to_sigkill(
                 continue;
             }
         };
-        let kill_result: Result<KillResult, ComposeRuntimeError> = if status.is_terminal() {
+        let kill_result: Result<KillDelivery, ComposeRuntimeError> = if status.is_terminal() {
             handle
                 .force_kill()
-                .map(KillResult::from_force_kill)
+                .map(KillDelivery::from_force_kill)
                 .map_err(Into::into)
         } else {
             match handle.kill().await {
-                Ok(_) => Ok(KillResult::Delivered),
+                Ok(_) => Ok(KillDelivery::Delivered),
                 Err(ProcessError::IllegalTransition {
                     observed: Some(o), ..
                 }) if o.is_terminal() => handle
                     .force_kill()
-                    .map(KillResult::from_force_kill)
+                    .map(KillDelivery::from_force_kill)
                     .map_err(Into::into),
                 Err(err) => Err(err.into()),
             }
@@ -395,7 +392,7 @@ async fn escalate_to_sigkill(
                 );
                 record_error(err);
             }
-            Ok(KillResult::Delivered) => {
+            Ok(KillDelivery::Delivered) => {
                 if !args.quiet {
                     cli_eprintln!(
                         "project {slug:?}: SIGKILL service {service:?} ({id}) after {timeout_s}s",
@@ -404,7 +401,7 @@ async fn escalate_to_sigkill(
                     );
                 }
             }
-            Ok(KillResult::AlreadyGone) => {
+            Ok(KillDelivery::AlreadyGone) => {
                 if !args.quiet {
                     cli_eprintln!(
                         "project {slug:?}: service {service:?} ({id}) already exited before SIGKILL",

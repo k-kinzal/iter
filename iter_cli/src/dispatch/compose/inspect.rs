@@ -1,15 +1,15 @@
+use crate::process::{PidFileState, process_is_alive_with_start_time};
 use crate::{
     ComposePlan, ProjectMember, build, list_all_members_by_project, list_project_members,
     load_compose, read_trigger_status, trigger_state_root,
 };
 use chrono::{DateTime, Utc};
-use iter_core::process::{PidFileState, process_is_alive_with_start_time};
 use serde::Serialize;
 
 use crate::cli::{ComposeConfigArgs, ComposeLsArgs, ComposePsArgs, ComposeValidateArgs};
 use crate::output::{
-    OutputFormat, Table, ValidateFormat, ValidateOk, ValidateSummary, cli_println,
-    print_json_array, print_json_compact, print_ndjson_record, relative_time, trunc_id,
+    OutputFormat, Table, ValidateCounts, ValidateFormat, ValidateOk, cli_println, print_json_array,
+    print_json_compact, print_ndjson_record, relative_time, trunc_id,
 };
 
 use super::{ComposePlanError, ComposeRuntimeError, resolve_compose_path, runtime_project_slug};
@@ -20,7 +20,7 @@ use super::{ComposePlanError, ComposeRuntimeError, resolve_compose_path, runtime
 ///
 /// * The file does not exist or cannot be parsed.
 /// * `build` rejects the plan.
-pub fn run_compose_validate(args: &ComposeValidateArgs) -> Result<(), ComposePlanError> {
+pub(crate) fn run_compose_validate(args: &ComposeValidateArgs) -> Result<(), ComposePlanError> {
     let path = resolve_compose_path(args.file.as_deref());
     let root = load_compose(&path)?;
     let plan = build(&root, &path)?;
@@ -34,7 +34,7 @@ pub fn run_compose_validate(args: &ComposeValidateArgs) -> Result<(), ComposePla
         ValidateFormat::Json => {
             let envelope = ValidateOk {
                 ok: true,
-                summary: ValidateSummary {
+                summary: ValidateCounts {
                     queues: plan.queue_count(),
                     services: plan.service_count(),
                     triggers: plan.trigger_count(),
@@ -63,7 +63,7 @@ struct ComposeRow {
 /// # Errors
 ///
 /// Same as [`run_compose_validate`].
-pub fn run_compose_config(args: &ComposeConfigArgs) -> Result<(), ComposePlanError> {
+pub(crate) fn run_compose_config(args: &ComposeConfigArgs) -> Result<(), ComposePlanError> {
     let path = resolve_compose_path(args.file.as_deref());
     let root = load_compose(&path)?;
     let plan = build(&root, &path)?;
@@ -158,7 +158,7 @@ struct ComposeLsRow {
 ///
 /// Returns [`ComposeRuntimeError::Discovery`] if scanning the registry or
 /// reading runner labels fails.
-pub fn run_compose_ls(args: &ComposeLsArgs) -> Result<(), ComposeRuntimeError> {
+pub(crate) fn run_compose_ls(args: &ComposeLsArgs) -> Result<(), ComposeRuntimeError> {
     let by_project = list_all_members_by_project()?;
     let mut rows: Vec<ComposeLsRow> = Vec::with_capacity(by_project.len());
     for (project, members) in by_project {
@@ -260,7 +260,7 @@ struct ComposePsTriggerRow {
 /// Returns [`ComposeRuntimeError::ProjectSlug`] if the slug cannot be
 /// derived, or [`ComposeRuntimeError::Discovery`] if the registry scan
 /// fails.
-pub fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
+pub(crate) fn run_compose_ps(args: &ComposePsArgs) -> Result<(), ComposeRuntimeError> {
     let slug = runtime_project_slug(args.file.as_deref(), args.project_name.as_deref())?;
     let members = list_project_members(&slug)?;
     let mut rows: Vec<ComposePsRow> = Vec::with_capacity(members.len());

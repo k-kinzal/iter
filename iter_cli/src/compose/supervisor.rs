@@ -27,7 +27,7 @@ const BASE_BACKOFF: Duration = Duration::from_secs(1);
 /// Lifecycle state of a supervised trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TriggerLifecycleState {
+pub(crate) enum TriggerLifecycleState {
     /// Initial state before the trigger's first run.
     Starting,
     /// The trigger is actively executing.
@@ -58,36 +58,36 @@ impl std::fmt::Display for TriggerLifecycleState {
 
 /// Persisted status snapshot for a supervised trigger.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TriggerStatus {
+pub(crate) struct TriggerStatus {
     /// Trigger name as declared in the compose file.
-    pub name: String,
+    pub(crate) name: String,
     /// Current lifecycle state.
-    pub state: TriggerLifecycleState,
+    pub(crate) state: TriggerLifecycleState,
     /// Trigger kind (e.g. `"cron"`, `"watch"`, `"files"`).
-    pub kind: String,
+    pub(crate) kind: String,
     /// Number of supervisor-initiated restarts since the orchestrator booted.
-    pub restart_count: u32,
+    pub(crate) restart_count: u32,
     /// Human-readable description of the most recent error, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
+    pub(crate) last_error: Option<String>,
     /// Wall-clock time of the most recent state transition.
-    pub last_state_change: DateTime<Utc>,
+    pub(crate) last_state_change: DateTime<Utc>,
     /// Whether this trigger may complete normally without restart.
-    pub is_finite: bool,
+    pub(crate) is_finite: bool,
 }
 
 /// Result of a supervised trigger run, returned as part of
 /// [`super::service::CompletedTask::Trigger`].
 #[derive(Debug)]
-pub(crate) struct TriggerSupervisorResult {
-    pub name: String,
-    pub status: TriggerStatus,
-    pub result: Result<(), TriggerRunError>,
+pub(crate) struct TriggerSupervisorRun {
+    pub(crate) name: String,
+    pub(crate) status: TriggerStatus,
+    pub(crate) result: Result<(), TriggerRunError>,
 }
 
 /// Root directory for trigger state, sibling to `~/.iter/proc/`.
 #[must_use]
-pub fn trigger_state_root() -> Option<PathBuf> {
+pub(crate) fn trigger_state_root() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|h| !h.is_empty())
         .map(|h| PathBuf::from(h).join(".iter").join("trigger-state"))
@@ -95,7 +95,7 @@ pub fn trigger_state_root() -> Option<PathBuf> {
 
 /// Per-trigger state directory.
 #[must_use]
-pub fn trigger_state_dir(base: &Path, project: &str, trigger_name: &str) -> PathBuf {
+pub(crate) fn trigger_state_dir(base: &Path, project: &str, trigger_name: &str) -> PathBuf {
     base.join(project).join(trigger_name)
 }
 
@@ -140,7 +140,7 @@ fn write_status(dir: &Path, status: &TriggerStatus) {
 
 /// Read a previously-persisted trigger status from disk.
 #[must_use]
-pub fn read_status(dir: &Path) -> Option<TriggerStatus> {
+pub(crate) fn read_status(dir: &Path) -> Option<TriggerStatus> {
     let path = dir.join("status.json");
     let data = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&data).ok()
@@ -157,8 +157,8 @@ fn make_result(
     name: String,
     status: TriggerStatus,
     result: Result<(), TriggerRunError>,
-) -> TriggerSupervisorResult {
-    TriggerSupervisorResult {
+) -> TriggerSupervisorRun {
+    TriggerSupervisorRun {
         name,
         status,
         result,
@@ -183,7 +183,7 @@ pub(crate) async fn supervise_trigger(
     trigger: ComposeTrigger,
     cancel: CancellationToken,
     state_dir: PathBuf,
-) -> TriggerSupervisorResult {
+) -> TriggerSupervisorRun {
     let name = trigger.name.clone();
     let finite = trigger.is_finite();
     let kind = trigger.kind_name().to_owned();
@@ -253,8 +253,6 @@ pub(crate) async fn supervise_trigger(
         status.restart_count += 1;
         let backoff = compute_backoff(status.restart_count);
         transition(&mut status, TriggerLifecycleState::Restarting, &state_dir);
-
-        #[allow(clippy::cast_possible_truncation)]
         let backoff_ms = backoff.as_millis() as u64;
         warn!(trigger = %name, backoff_ms, restart_count = status.restart_count, "waiting before restart");
 

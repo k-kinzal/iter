@@ -19,10 +19,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use iter_core::process::{
-    AdoptError, ProcessError, ProcessId, ProcessRuntime, install_signal_handlers,
-};
-use iter_core::{BuilderError, RunnerExitError, RunnerSummary};
+use crate::process::{AdoptError, ProcessError, ProcessId, ProcessRuntime};
+use iter_core::os_signal::install_signal_handlers;
+use iter_core::{BuilderError, RunnerError};
 use iter_language::{Diagnostic, Iterfile, parse};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -31,17 +30,17 @@ use tracing::{error, info};
 use crate::arg::{ArgError, resolve_args};
 use crate::compose::{ComposeError, build_single_service, load_compose};
 use crate::process_lifecycle::{
-    self, AdoptedBootstrapError, LifecycleError, TerminationRecorder, derive_finalize_reason,
-    leaves_record_non_terminal, log_finalize_report, terminal_status_for,
+    self, AdoptedProcessStartError, LifecycleError, TerminationRecorder, derive_finalize_reason,
+    terminal_status_for,
 };
 use crate::queue::QueueBuildError;
 use crate::source::{ActiveSource, SourceBuildError};
 use crate::start::{self, StartError};
 
-pub use crate::process_lifecycle::RunRecordMetadata;
+pub(crate) use crate::process_lifecycle::RunRecordMetadata;
 
 /// Input passed to [`handle`].
-pub struct RunInput {
+pub(crate) struct RunInput {
     /// Path to the Iterfile (may be relative; the handler canonicalises
     /// it after adoption so a missing/invalid path on the adopted path
     /// still flips the record to a terminal state).
@@ -49,21 +48,21 @@ pub struct RunInput {
     /// For [`RunSource::ComposeService`] this points at the compose file
     /// instead of an Iterfile; the handler will parse it as compose and
     /// extract the named service.
-    pub iterfile_path: PathBuf,
+    pub(crate) iterfile_path: PathBuf,
     /// What kind of source [`iterfile_path`] is.
-    pub source: RunSource,
+    pub(crate) source: RunSource,
     /// `--once` semantics: exit after one signal has been processed.
-    pub once: bool,
+    pub(crate) once: bool,
     /// Foreground vs adopted mode.
-    pub mode: RunMode,
+    pub(crate) mode: RunMode,
     /// Bookkeeping recorded into the process registry entry.
-    pub metadata: RunRecordMetadata,
+    pub(crate) metadata: RunRecordMetadata,
     /// CLI `--arg key=value` overrides for Iterfile arg declarations.
-    pub arg_overrides: BTreeMap<String, String>,
+    pub(crate) arg_overrides: BTreeMap<String, String>,
 }
 
 /// What [`RunInput::iterfile_path`] points at.
-pub enum RunSource {
+pub(crate) enum RunSource {
     /// A plain Iterfile (default). The handler parses it directly and
     /// builds a single Runner from the queue/workspace/agent/runner
     /// declarations at the top level.
@@ -81,7 +80,7 @@ pub enum RunSource {
 }
 
 /// How [`handle`] integrates with the on-disk process registry.
-pub enum RunMode {
+pub(crate) enum RunMode {
     /// Brand-new run; if registration succeeds, the run is recorded as a
     /// foreground process. Registry failures (e.g. read-only `$HOME`)
     /// are tolerated and yield a record-less run.
@@ -102,7 +101,7 @@ pub enum RunMode {
 /// Errors produced by [`handle`] / `run_inner` while loading and running
 /// an Iterfile.
 #[derive(Debug, Error)]
-pub enum IterfileError {
+pub(crate) enum IterfileError {
     /// Canonicalising the iterfile path failed.
     #[error("canonicalising iterfile path {}: {source}", path.display())]
     Canonicalise {
@@ -149,7 +148,7 @@ pub enum IterfileError {
     Builder(#[from] BuilderError),
     /// The runner exited with an error.
     #[error(transparent)]
-    Runner(#[from] RunnerExitError),
+    Runner(#[from] RunnerError),
     /// Opening the process registry for the adopted child failed.
     #[error("opening process registry: {0}")]
     RegistryOpen(#[source] ProcessError),
@@ -203,7 +202,7 @@ pub enum IterfileError {
 /// cannot be read or parsed, when a required section is missing, when
 /// runner construction fails, or when the runner itself exits with an
 /// error.
-pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
+pub(crate) async fn handle(input: RunInput) -> Result<(), IterfileError> {
     let mut runtime: Option<(ProcessRuntime, TerminationRecorder)> = match &input.mode {
         RunMode::Adopted { process_id } => Some(bootstrap_adopted(*process_id).await?),
         RunMode::Foreground { .. } => None,
@@ -214,9 +213,7 @@ pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
     let finalize_err = if let Some((rt, termination)) = runtime {
         let failure_msg = run_result.as_ref().err().map(ToString::to_string);
         let reason = derive_finalize_reason(failure_msg, &termination);
-        let report = rt.finalize(terminal_status_for(&reason)).await;
-        log_finalize_report(&report);
-        report.status_write_error.filter(leaves_record_non_terminal)
+        rt.finalize(terminal_status_for(&reason)).await.err()
     } else {
         None
     };
@@ -235,7 +232,7 @@ pub async fn handle(input: RunInput) -> Result<(), IterfileError> {
 async fn run_inner(
     input: &RunInput,
     runtime: &mut Option<(ProcessRuntime, TerminationRecorder)>,
-) -> Result<RunnerSummary, IterfileError> {
+) -> Result<(), IterfileError> {
     let canonical_path =
         input
             .iterfile_path
@@ -270,7 +267,7 @@ async fn run_inner(
     if let Some((rt, _)) = runtime.as_ref() {
         builder = start::wire_builder_runtime(builder, rt);
         if let Some(sender) = rt.log_sender() {
-            iter_core::process::install_global_log_sender(sender);
+            crate::process::install_global_log_sender(sender);
         }
     }
     let runner = builder.build()?;
@@ -293,24 +290,16 @@ async fn run_inner(
         runner.run(cancel).await
     };
 
-    let summary = match runner_result {
-        Ok(summary) => {
-            info!(
-                iterations = summary.iteration_count,
-                last = ?summary.last_signal_id,
-                reason = ?summary.termination_reason,
-                "runner exited"
-            );
-            summary
-        }
+    match runner_result {
+        Ok(()) => {}
         Err(err) => {
             error!(error = %err, "runner exited with error");
             return Err(IterfileError::Runner(err));
         }
-    };
+    }
 
     dispose_active_source(active_source, runtime.as_ref()).await?;
-    Ok(summary)
+    Ok(())
 }
 
 /// Build a [`RunnerBuilder`](iter_core::RunnerBuilder)-shaped value from
@@ -466,8 +455,8 @@ async fn bootstrap_adopted(
     process_lifecycle::bootstrap_adopted(process_id)
         .await
         .map_err(|err| match err {
-            AdoptedBootstrapError::RegistryOpen(source) => IterfileError::RegistryOpen(source),
-            AdoptedBootstrapError::Adopt { id, source } => IterfileError::Adopt { id, source },
-            AdoptedBootstrapError::Lifecycle(source) => IterfileError::Lifecycle(source),
+            AdoptedProcessStartError::RegistryOpen(source) => IterfileError::RegistryOpen(source),
+            AdoptedProcessStartError::Adopt { id, source } => IterfileError::Adopt { id, source },
+            AdoptedProcessStartError::Lifecycle(source) => IterfileError::Lifecycle(source),
         })
 }

@@ -10,7 +10,6 @@
 //! expansion to `std::io::_print(...)`.
 
 #![feature(rustc_private)]
-#![warn(unused_extern_crates)]
 
 // `dylint_linting::declare_pre_expansion_lint!` already injects
 // `extern crate rustc_lint;` and `extern crate rustc_session;`, so we
@@ -67,9 +66,7 @@ impl EarlyLintPass for NoStdPrint {
         // bypass we hit with `::std::println!("absolute")` in the
         // fixture.
         let segs: &[_] = match mac.path.segments.first() {
-            Some(first) if first.ident.name.as_str() == "{{root}}" => {
-                &mac.path.segments[1..]
-            }
+            Some(first) if first.ident.name.as_str() == "{{root}}" => &mac.path.segments[1..],
             _ => &mac.path.segments[..],
         };
         let Some(last) = segs.last() else {
@@ -116,8 +113,8 @@ impl EarlyLintPass for NoStdPrint {
         // would not catch the wrapper-macro case at all. We accept
         // the gap and rely on code review for these unusual shapes.
         let is_unqualified = segs.len() == 1;
-        let is_std_or_core = segs.len() == 2
-            && matches!(segs[0].ident.name.as_str(), "std" | "core");
+        let is_std_or_core =
+            segs.len() == 2 && matches!(segs[0].ident.name.as_str(), "std" | "core");
         if !is_unqualified && !is_std_or_core {
             return;
         }

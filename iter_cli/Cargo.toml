@@ -37,14 +37,60 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 chrono = { workspace = true }
 async-trait.workspace = true
+bytes.workspace = true
 globset.workspace = true
+hex.workspace = true
 libc.workspace = true
+rand.workspace = true
+ulid.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 pretty_assertions.workspace = true
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
-nix = { workspace = true }
 
-[lints]
-workspace = true
+# NOTE: do not use `[lints] workspace = true` here — cargo forbids mixing
+# workspace inheritance with per-package overrides. iter_cli owns the current
+# process registry implementation, including low-level libc calls, so the root
+# lint table is duplicated with only `unsafe_code` opted down centrally.
+[lints.rust]
+# iter_cli currently owns the low-level process registry and env-test boundaries.
+unsafe_code = "allow"
+unreachable_pub = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+trivial_numeric_casts = "deny"
+let_underscore_drop = "deny"
+# Shared trigger/CLI modules intentionally keep some feature- and mode-specific helpers.
+dead_code = "allow"
+# Macro re-exports in trigger crates are only used by binary targets.
+unused_imports = "allow"
+# Some trigger crates export paired stdout/stderr macros but only use one side per target.
+unused_macros = "allow"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Every unsafe block must carry a local justification, and those comments must
+# stay attached to actual unsafe code.
+undocumented_unsafe_blocks = "deny"
+unnecessary_safety_comment = "deny"
+# Numeric narrowing is permitted at explicit protocol and display boundaries.
+cast_possible_truncation = "allow"
+# Unit matches keep some command/trigger control-flow branches visually uniform.
+ignored_unit_patterns = "allow"
+# Module names mirror domain nouns even when a type shares the same noun.
+module_inception = "allow"
+# Several APIs take owned values to match builder and async boundary ergonomics.
+needless_pass_by_value = "allow"
+# CLI and runtime assembly functions are clearer kept as single workflows.
+too_many_arguments = "allow"
+# Parser, CLI, and runtime workflows are sometimes clearer in one function.
+too_many_lines = "allow"
+# Existing formatting style intentionally supports pre-captured format values.
+uninlined_format_args = "allow"
+# Async trait implementations keep uniform signatures across sync/async drivers.
+unused_async = "allow"

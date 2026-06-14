@@ -19,8 +19,8 @@
 //! * a stderr layer for terminal/console visibility, and
 //! * a `log.ndjson` layer that funnels every formatted record into the
 //!   per-process [`crate::process::ProcessRuntime`]'s `log.ndjson` via
-//!   [`iter_core::process::install_global_log_sender`]. The runtime
-//!   publishes its [`LogSender`](iter_core::process::LogSender)
+//!   [`crate::process::install_global_log_sender`]. The runtime
+//!   publishes its [`LogSender`](crate::process::LogSender)
 //!   as soon as it is constructed; lines emitted before that — typically
 //!   CLI startup — only land on stderr.
 //!
@@ -57,8 +57,8 @@
 
 use std::io::{self, Write};
 
+use crate::process::{LIFECYCLE_TARGET, global_log_sender};
 use iter_core::log::LogStream;
-use iter_core::process::{LIFECYCLE_TARGET, global_log_sender};
 use iter_language::{TelemetryDef, TelemetryProtocol};
 
 use crate::tracing_preferences::{LogLevel, TracingPreferences};
@@ -94,7 +94,7 @@ fn env_otel_config() -> Option<iter_tracing::OtelRuntimeConfig> {
 ///
 /// Returns a guard that keeps any configured OpenTelemetry provider alive and
 /// shuts it down when the caller finishes.
-pub fn init(debug: bool, prefs: &TracingPreferences) -> TelemetryGuard {
+pub(crate) fn init(debug: bool, prefs: &TracingPreferences) -> TelemetryGuard {
     init_inner(debug, prefs, env_otel_config())
 }
 
@@ -102,7 +102,7 @@ pub fn init(debug: bool, prefs: &TracingPreferences) -> TelemetryGuard {
 /// `compose.iter` telemetry block. Environment variables still win when the
 /// compose file omits a field, so detached service subprocesses and manually
 /// launched services share the same path.
-pub fn init_for_compose(
+pub(crate) fn init_for_compose(
     debug: bool,
     prefs: &TracingPreferences,
     telemetry: Option<&TelemetryDef>,
@@ -132,7 +132,7 @@ fn init_inner(
     let stderr_layer = fmt::layer().with_target(false).with_writer(io::stderr);
     // The `iter::lifecycle` target is delivered to `log.ndjson`
     // directly by the lifecycle writer task via the back-pressured
-    // [`LogSender::send_line`](iter_core::process::LogSender::send_line)
+    // [`LogSender::send_line`](crate::process::LogSender::send_line)
     // path. Filtering it out here keeps the on-disk record
     // duplicate-free; the stderr layer above is unfiltered so
     // foreground attach still shows the lifecycle stream.
@@ -157,13 +157,13 @@ fn init_inner(
     let tracer_provider = match iter_tracing::build_tracer_provider(&otel_config) {
         Ok(provider) => provider,
         Err(err) => {
-            eprintln!("warning: failed to initialize OpenTelemetry trace exporter: {err}");
             let _installed = tracing_subscriber::registry()
                 .with(env_filter)
                 .with(stderr_layer)
                 .with(log_layer)
                 .try_init()
                 .is_ok();
+            tracing::warn!(error = %err, "failed to initialize OpenTelemetry trace exporter");
             return TelemetryGuard {
                 _inner: iter_tracing::TelemetryGuard::noop(),
             };
@@ -172,13 +172,13 @@ fn init_inner(
     let logger_provider = match iter_tracing::build_logger_provider(&otel_config) {
         Ok(provider) => provider,
         Err(err) => {
-            eprintln!("warning: failed to initialize OpenTelemetry log exporter: {err}");
             let _installed = tracing_subscriber::registry()
                 .with(env_filter)
                 .with(stderr_layer)
                 .with(log_layer)
                 .try_init()
                 .is_ok();
+            tracing::warn!(error = %err, "failed to initialize OpenTelemetry log exporter");
             return TelemetryGuard {
                 _inner: iter_tracing::TelemetryGuard::noop(),
             };
@@ -206,7 +206,7 @@ fn init_inner(
 
 /// Compute the effective log level. Public for tests.
 #[must_use]
-pub fn resolve_level(debug: bool, prefs: &TracingPreferences) -> Level {
+pub(crate) fn resolve_level(debug: bool, prefs: &TracingPreferences) -> Level {
     if debug {
         return Level::DEBUG;
     }
@@ -216,7 +216,7 @@ pub fn resolve_level(debug: bool, prefs: &TracingPreferences) -> Level {
 }
 
 /// Keeps process-global telemetry resources alive until shutdown.
-pub struct TelemetryGuard {
+pub(crate) struct TelemetryGuard {
     _inner: iter_tracing::TelemetryGuard,
 }
 
@@ -276,7 +276,7 @@ fn otel_config_from_compose(
 /// Build the environment variables a compose-managed service subprocess needs
 /// to initialise OpenTelemetry before it reparses the compose file.
 #[must_use]
-pub fn service_env(
+pub(crate) fn service_env(
     telemetry: Option<&TelemetryDef>,
     project: &str,
     service_name: &str,
@@ -316,7 +316,11 @@ pub fn service_env(
 
 /// Build the resource attribute string for environment-driven SDK setup.
 #[must_use]
-pub fn resource_attributes(decl: &TelemetryDef, project: &str, component: Option<&str>) -> String {
+pub(crate) fn resource_attributes(
+    decl: &TelemetryDef,
+    project: &str,
+    component: Option<&str>,
+) -> String {
     let mut attrs = decl.resource_attributes.clone();
     attrs
         .entry("iter.compose.project".to_string())
@@ -340,7 +344,11 @@ pub fn resource_attributes(decl: &TelemetryDef, project: &str, component: Option
 
 /// Derive a concrete `OTel` service name from a project-level declaration.
 #[must_use]
-pub fn component_service_name(decl: &TelemetryDef, project: &str, component: &str) -> String {
+pub(crate) fn component_service_name(
+    decl: &TelemetryDef,
+    project: &str,
+    component: &str,
+) -> String {
     let base = decl
         .service_name
         .as_deref()
@@ -351,12 +359,12 @@ pub fn component_service_name(decl: &TelemetryDef, project: &str, component: &st
 
 /// `MakeWriter` implementation that pushes each formatted tracing record
 /// into the per-process `log.ndjson` via the global
-/// [`LogSender`](iter_core::process::LogSender).
+/// [`LogSender`](crate::process::LogSender).
 ///
 /// Returns a writer that no-ops until
-/// [`install_global_log_sender`](iter_core::process::install_global_log_sender)
+/// [`install_global_log_sender`](crate::process::install_global_log_sender)
 /// publishes a sender — typically when a
-/// [`ProcessRuntime`](iter_core::process::ProcessRuntime) is constructed.
+/// [`ProcessRuntime`](crate::process::ProcessRuntime) is constructed.
 struct LogJsonMakeWriter;
 
 impl<'a> MakeWriter<'a> for LogJsonMakeWriter {
@@ -413,7 +421,6 @@ impl Drop for LogJsonRecordWriter {
 }
 
 #[cfg(test)]
-#[allow(unsafe_code)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;

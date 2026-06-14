@@ -6,7 +6,7 @@
 //!
 //! The CLI-shaped argv construction and output/exit classification live at
 //! the **Command level** in [`command`]; this module is the
-//! **Driver/Adapter** that projects [`HermesResult`](command::HermesResult) /
+//! **Driver/Adapter** that projects [`HermesRun`](command::HermesRun) /
 //! [`HermesError`](command::HermesError) onto iter's domain
 //! [`AgentRun`](crate::AgentRun) / [`AgentError`].
 //!

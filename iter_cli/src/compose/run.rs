@@ -1,11 +1,10 @@
 //! Async execution of a [`ComposePlan`]: spawn services as tasks or
-//! subprocesses, join them, and produce a [`ComposeReport`].
+//! subprocesses, join them, and produce completed service state.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use iter_core::RunnerSummary;
-use iter_core::process::{
+use crate::process::{
     DetachedSpec, ProcessHandle, ProcessId, ProcessRegistry, ProcessRuntime, ProcessStatus,
     spawn_detached,
 };
@@ -16,11 +15,11 @@ use tracing::{info, warn};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
 use super::plan::{ComposePlan, ComposeService};
-use super::service::{CompletedTask, ComposeReport, FailurePolicy, OrchestratorContext};
+use super::service::{CompletedServices, CompletedTask, FailurePolicy, OrchestratorContext};
 use super::supervisor;
 use crate::process_lifecycle::{
     self, ProcessTerminationReason, RunRecordMetadata, TerminationRecorder, derive_finalize_reason,
-    leaves_record_non_terminal, log_finalize_report, terminal_status_for,
+    terminal_status_for,
 };
 use crate::queue::queue_address;
 use crate::telemetry;
@@ -44,15 +43,14 @@ use crate::telemetry;
 ///
 /// On return every queue declared in the plan is closed best-effort;
 /// errors are logged at `warn!` level but do not affect the returned
-/// [`ComposeReport`].
-pub async fn run(
+pub(crate) async fn run(
     plan: ComposePlan,
     cancel: CancellationToken,
     policy: FailurePolicy,
     metadata: RunRecordMetadata,
     parent_id: Option<ProcessId>,
     orchestrator: OrchestratorContext,
-) -> ComposeReport {
+) -> CompletedServices {
     let ComposePlan {
         queues,
         services,
@@ -129,10 +127,8 @@ pub async fn run(
         }
     }
 
-    ComposeReport { results }
+    CompletedServices { results }
 }
-
-#[allow(clippy::too_many_arguments)]
 async fn spawn_service_task(
     set: &mut JoinSet<CompletedTask>,
     service: ComposeService,
@@ -339,7 +335,7 @@ async fn run_one_service(
     parent_cancel: CancellationToken,
     metadata: RunRecordMetadata,
     labels: BTreeMap<String, String>,
-) -> Result<RunnerSummary, ServiceRunError> {
+) -> Result<(), ServiceRunError> {
     let runtime = process_lifecycle::bootstrap_foreground(
         &service.name,
         &service.iterfile_path,
@@ -353,15 +349,13 @@ async fn run_one_service(
     let finalize_err = if let Some((rt, termination)) = runtime {
         let failure_msg = run_result.as_ref().err().map(ToString::to_string);
         let reason = derive_finalize_reason(failure_msg, &termination);
-        let report = rt.finalize(terminal_status_for(&reason)).await;
-        log_finalize_report(&report);
-        report.status_write_error.filter(leaves_record_non_terminal)
+        rt.finalize(terminal_status_for(&reason)).await.err()
     } else {
         None
     };
 
     match (run_result, finalize_err) {
-        (Ok(summary), None) => Ok(summary),
+        (Ok(()), None) => Ok(()),
         (Err(runner_err), _) => Err(runner_err),
         (Ok(_), Some(finalize_err)) => Err(ServiceRunError::FinalizeStatus(finalize_err)),
     }
@@ -371,7 +365,7 @@ async fn run_one_service_inner(
     service: ComposeService,
     parent_cancel: &CancellationToken,
     runtime: Option<&(ProcessRuntime, TerminationRecorder)>,
-) -> Result<RunnerSummary, ServiceRunError> {
+) -> Result<(), ServiceRunError> {
     let ComposeService {
         name,
         iterfile_path,
@@ -409,15 +403,8 @@ async fn run_one_service_inner(
 
     info!(service = %name, iterfile = %iterfile_path.display(), "starting compose service runner");
 
-    let summary = runner.run(run_token).await?;
-    info!(
-        service = %name,
-        iterations = summary.iteration_count,
-        last = ?summary.last_signal_id,
-        reason = ?summary.termination_reason,
-        "compose service runner exited",
-    );
-    Ok(summary)
+    runner.run(run_token).await?;
+    Ok(())
 }
 
 /// Spawn a single named service from a built compose plan as a detached
@@ -439,7 +426,7 @@ async fn run_one_service_inner(
 /// * The service's queue is not URL-addressable.
 /// * Opening the process registry, locating the binary, or spawning
 ///   the child fails.
-pub async fn spawn_targeted_service(
+pub(crate) async fn spawn_targeted_service(
     plan: &ComposePlan,
     service_name: &str,
     compose_path: &Path,

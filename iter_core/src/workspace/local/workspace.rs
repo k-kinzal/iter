@@ -95,7 +95,6 @@ impl LocalWorkspace {
     /// Infallible today (always returns `Ok`); the `Result` and `async` are
     /// kept to match the [`Workspace`] trait so the trait impl can delegate
     /// uniformly.
-    #[allow(clippy::unused_async)]
     pub async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), LocalWorkspaceError> {
         // The target directory is the source of truth; there is nothing to
         // clean up. We only flip the set_up flag so that

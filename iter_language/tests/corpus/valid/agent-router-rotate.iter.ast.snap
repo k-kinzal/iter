@@ -63,6 +63,7 @@ Iterfile {
                         ),
                     ],
                     strategy: Rotate,
+                    fallback_on: Any,
                 },
             },
             span: 48..313,

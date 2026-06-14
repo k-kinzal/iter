@@ -36,7 +36,9 @@ pub(super) fn canonicalize(value: &Value) -> String {
             s.push(']');
             s
         }
-        other => other.to_string(),
+        other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)) => {
+            other.to_string()
+        }
     }
 }
 

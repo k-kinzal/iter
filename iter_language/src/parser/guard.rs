@@ -85,7 +85,30 @@ impl Parser<'_> {
                 value: s,
                 span,
             }),
-            other => {
+            other @ (Token::LBrace
+            | Token::RBrace
+            | Token::LBracket
+            | Token::RBracket
+            | Token::LParen
+            | Token::RParen
+            | Token::Comma
+            | Token::Equals
+            | Token::Lt
+            | Token::LtEq
+            | Token::Gt
+            | Token::GtEq
+            | Token::Percent
+            | Token::AmpAmp
+            | Token::PipePipe
+            | Token::Dot
+            | Token::FatArrow
+            | Token::String(_)
+            | Token::Integer(_)
+            | Token::Duration(_)
+            | Token::True
+            | Token::False
+            | Token::Null
+            | Token::Ident(_)) => {
                 self.errors.push(Diagnostic::error(
                     op.span,
                     format!("expected `==` or `!=` in guard, found {}", other.describe()),
@@ -111,7 +134,31 @@ impl Parser<'_> {
             let modulus_tok = self.bump()?.clone();
             let m = match &modulus_tok.token {
                 Token::Integer(n) => *n,
-                other => {
+                other @ (Token::LBrace
+                | Token::RBrace
+                | Token::LBracket
+                | Token::RBracket
+                | Token::LParen
+                | Token::RParen
+                | Token::Comma
+                | Token::Equals
+                | Token::EqEq
+                | Token::BangEq
+                | Token::Lt
+                | Token::LtEq
+                | Token::Gt
+                | Token::GtEq
+                | Token::Percent
+                | Token::AmpAmp
+                | Token::PipePipe
+                | Token::Dot
+                | Token::FatArrow
+                | Token::String(_)
+                | Token::Duration(_)
+                | Token::True
+                | Token::False
+                | Token::Null
+                | Token::Ident(_)) => {
                     self.errors.push(Diagnostic::error(
                         modulus_tok.span.clone(),
                         format!(
@@ -135,7 +182,26 @@ impl Parser<'_> {
             Token::LtEq => CstCmpOp::Le,
             Token::Gt => CstCmpOp::Gt,
             Token::GtEq => CstCmpOp::Ge,
-            ref other => {
+            other @ (Token::LBrace
+            | Token::RBrace
+            | Token::LBracket
+            | Token::RBracket
+            | Token::LParen
+            | Token::RParen
+            | Token::Comma
+            | Token::Equals
+            | Token::Percent
+            | Token::AmpAmp
+            | Token::PipePipe
+            | Token::Dot
+            | Token::FatArrow
+            | Token::String(_)
+            | Token::Integer(_)
+            | Token::Duration(_)
+            | Token::True
+            | Token::False
+            | Token::Null
+            | Token::Ident(_)) => {
                 self.errors.push(Diagnostic::error(
                     op_tok.span.clone(),
                     format!(
@@ -171,7 +237,30 @@ impl Parser<'_> {
                 rhs_span: rhs_tok.span,
                 span,
             }),
-            ref other => {
+            other @ (Token::LBrace
+            | Token::RBrace
+            | Token::LBracket
+            | Token::RBracket
+            | Token::LParen
+            | Token::RParen
+            | Token::Comma
+            | Token::Equals
+            | Token::EqEq
+            | Token::BangEq
+            | Token::Lt
+            | Token::LtEq
+            | Token::Gt
+            | Token::GtEq
+            | Token::Percent
+            | Token::AmpAmp
+            | Token::PipePipe
+            | Token::Dot
+            | Token::FatArrow
+            | Token::Duration(_)
+            | Token::True
+            | Token::False
+            | Token::Null
+            | Token::Ident(_)) => {
                 self.errors.push(Diagnostic::error(
                     rhs_tok.span.clone(),
                     format!(

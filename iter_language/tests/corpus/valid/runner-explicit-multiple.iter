@@ -1,0 +1,19 @@
+workspace local as main {
+  base = "."
+}
+
+workspace local as scratch {
+  base = "/tmp"
+}
+
+agent noop as codex {}
+
+agent noop as claude {}
+
+runner {
+  agent = codex
+  workspace = main
+  continue_on_error = false
+  behavior = loop
+  prompt = "Explicit binding remains valid."
+}

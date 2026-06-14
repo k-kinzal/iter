@@ -27,6 +27,8 @@ resolver = "3"
 members = [
     "iter_lint_no_std_print",
     "iter_lint_no_lint_suppression",
+    "iter_lint_meaningful_type_names",
+    "iter_lint_return_type_shape",
 ]
 
 [workspace.package]

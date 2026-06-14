@@ -52,7 +52,6 @@ pub(super) struct ComposeSectionParts {
 }
 
 impl Analyzer {
-    #[allow(clippy::too_many_lines)]
     fn lower_compose(&mut self, file: CstFile) -> Compose {
         let mut root = Compose::default();
         let mut names = ComposeNameSets::default();
@@ -68,90 +67,19 @@ impl Analyzer {
                     body,
                     span,
                 } => {
-                    if let Some(ref a) = alias {
-                        self.errors.push(Diagnostic::error(
-                            a.span.clone(),
-                            format!("`as {}` naming is not valid in compose.iter", a.name),
-                        ).with_hint("compose.iter uses `<keyword> <name> [<kind>] {{ ... }}` — the first identifier is the name."));
-                    }
-                    match keyword.as_str() {
-                        "queue" => {
-                            self.lower_compose_queue(
-                                &mut root,
-                                &mut names.queues,
-                                ComposeSectionParts {
-                                    kind,
-                                    kind2,
-                                    body,
-                                    keyword_span,
-                                    span,
-                                },
-                            );
-                        }
-                        "service" => {
-                            self.lower_compose_service_section(
-                                &mut root,
-                                &mut names.services,
-                                ComposeSectionParts {
-                                    kind,
-                                    kind2,
-                                    body,
-                                    keyword_span,
-                                    span,
-                                },
-                            );
-                        }
-                        "trigger" => {
-                            self.lower_compose_trigger(
-                                &mut root,
-                                &mut names.triggers,
-                                ComposeSectionParts {
-                                    kind,
-                                    kind2,
-                                    body,
-                                    keyword_span,
-                                    span,
-                                },
-                            );
-                        }
-                        "compose" => {
-                            self.lower_compose_compose(
-                                &mut root,
-                                &mut names.composes,
-                                ComposeSectionParts {
-                                    kind,
-                                    kind2,
-                                    body,
-                                    keyword_span,
-                                    span,
-                                },
-                            );
-                        }
-                        "telemetry" => {
-                            self.lower_compose_telemetry(
-                                &mut root,
-                                &mut names.telemetry,
-                                ComposeSectionParts {
-                                    kind,
-                                    kind2,
-                                    body,
-                                    keyword_span,
-                                    span,
-                                },
-                            );
-                        }
-                        other => {
-                            self.errors.push(
-                                Diagnostic::error(
-                                    keyword_span,
-                                    format!("unknown compose.iter top-level keyword `{other}`"),
-                                )
-                                .with_hint(
-                                    "expected one of: queue, service, trigger, compose, telemetry.",
-                                ),
-                            );
-                        }
-                    }
+                    self.lower_compose_block_section(
+                        &mut root,
+                        &mut names,
+                        &keyword,
+                        alias.as_ref(),
+                        ComposeSectionParts {
+                            kind,
+                            kind2,
+                            body,
+                            keyword_span,
+                            span,
+                        },
+                    );
                 }
                 CstSection::Prompt { span, .. } => {
                     self.errors.push(
@@ -181,6 +109,38 @@ impl Analyzer {
         }
 
         root
+    }
+
+    fn lower_compose_block_section(
+        &mut self,
+        root: &mut Compose,
+        names: &mut ComposeNameSets,
+        keyword: &str,
+        alias: Option<&CstIdent>,
+        parts: ComposeSectionParts,
+    ) {
+        if let Some(a) = alias {
+            self.errors.push(Diagnostic::error(
+                a.span.clone(),
+                format!("`as {}` naming is not valid in compose.iter", a.name),
+            ).with_hint("compose.iter uses `<keyword> <name> [<kind>] {{ ... }}` — the first identifier is the name."));
+        }
+        match keyword {
+            "queue" => self.lower_compose_queue(root, &mut names.queues, parts),
+            "service" => self.lower_compose_service_section(root, &mut names.services, parts),
+            "trigger" => self.lower_compose_trigger(root, &mut names.triggers, parts),
+            "compose" => self.lower_compose_compose(root, &mut names.composes, parts),
+            "telemetry" => self.lower_compose_telemetry(root, &mut names.telemetry, parts),
+            other => {
+                self.errors.push(
+                    Diagnostic::error(
+                        parts.keyword_span,
+                        format!("unknown compose.iter top-level keyword `{other}`"),
+                    )
+                    .with_hint("expected one of: queue, service, trigger, compose, telemetry."),
+                );
+            }
+        }
     }
 
     fn lower_compose_queue(
@@ -334,7 +294,14 @@ impl Analyzer {
                         CstValue::String(value, _) => {
                             out.insert(attr.name.name, value);
                         }
-                        other => {
+                        other @ (CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Block(_)
+                        | CstValue::Call { .. }) => {
                             self.errors.push(Diagnostic::error(
                                 other.span(),
                                 format!("`{name}` values must be strings"),
@@ -344,7 +311,14 @@ impl Analyzer {
                 }
                 Some(out)
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a block of string values"),

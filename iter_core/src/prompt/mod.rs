@@ -18,7 +18,6 @@
 pub mod error;
 pub mod guard;
 // Defining module named for the concept it defines — the path echo is deliberate.
-#[allow(clippy::module_inception)]
 pub mod prompt;
 pub mod selector;
 pub mod template;

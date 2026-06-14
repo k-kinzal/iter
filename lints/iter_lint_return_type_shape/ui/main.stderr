@@ -1,0 +1,35 @@
+error: nested `Result` in return type
+  --> $DIR/main.rs:3:19
+   |
+LL | fn nested_ok() -> Result<Result<u8, String>, String> {
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: flatten to a single `Result<T, E>` — one operation has one failure axis; merge with `?` / `.and_then(...)` / `.map_err(...)`.
+   = note: `#[deny(return_type_shape)]` on by default
+
+error: nested `Result` in return type
+  --> $DIR/main.rs:7:20
+   |
+LL | fn nested_err() -> Result<u8, Result<String, String>> {
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: flatten to a single `Result<T, E>` — one operation has one failure axis; merge with `?` / `.and_then(...)` / `.map_err(...)`.
+
+error: `Option<Result<…>>` puts absence above failure
+  --> $DIR/main.rs:11:23
+   |
+LL | fn option_result() -> Option<Result<u8, String>> {
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: make failure outermost: return `Result<Option<T>, E>`. If `None` is really an error, fold it into `E`; if it is a benign third state, model it inside `Ok`.
+
+error: `Option<Result<…>>` puts absence above failure
+  --> $DIR/main.rs:18:25
+   |
+LL |     fn method(&self) -> Option<Result<(), String>> {
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: make failure outermost: return `Result<Option<T>, E>`. If `None` is really an error, fold it into `E`; if it is a benign third state, model it inside `Ok`.
+
+error: aborting due to 4 previous errors
+

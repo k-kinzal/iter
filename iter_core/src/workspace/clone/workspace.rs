@@ -3,8 +3,10 @@
 //! conceptual model.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::Workspace;
+use crate::time::{Clock, SystemClock};
 use crate::workspace::WorkspaceError;
 use async_trait::async_trait;
 use tokio::fs;
@@ -50,6 +52,7 @@ pub struct CloneWorkspace {
     settings: CloneSettings,
     mirror: Option<Mirror>,
     set_up: bool,
+    clock: Arc<dyn Clock>,
 }
 
 impl CloneWorkspace {
@@ -64,6 +67,23 @@ impl CloneWorkspace {
             settings,
             mirror: None,
             set_up: false,
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    /// Create a new [`CloneWorkspace`] with an injected clock.
+    #[must_use]
+    pub fn with_clock(
+        base: impl Into<PathBuf>,
+        settings: CloneSettings,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            base: base.into(),
+            settings,
+            mirror: None,
+            set_up: false,
+            clock,
         }
     }
 
@@ -119,11 +139,12 @@ impl CloneWorkspace {
 
         let clone_filter = CloneFilter::compile(&self.settings.excludes, &self.settings.includes)?;
         let apply_back_filter = self.settings.apply_back_filter()?;
-        let mirror = Mirror::materialize(
+        let mirror = Mirror::materialize_with_clock(
             self.base.clone(),
             &clone_filter,
             apply_back_filter,
             self.settings.preserve_mtime,
+            Arc::clone(&self.clock),
         )
         .await?;
 
@@ -205,6 +226,7 @@ impl Workspace for CloneWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::time::{Clock, SystemClock};
     use std::time::{Duration, SystemTime};
     use tempfile::TempDir;
     use tokio::time::sleep;
@@ -581,7 +603,7 @@ mod tests {
             .await
             .expect("stamp");
 
-        let before = SystemTime::now();
+        let before = SystemClock.system_time();
         let mut s = settings();
         s.preserve_mtime = false;
         let mut ws = CloneWorkspace::new(base.path(), s);

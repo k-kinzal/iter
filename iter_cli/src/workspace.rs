@@ -138,7 +138,7 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
 /// to [`Workspace::setup`] on the produced workspace, which is why this
 /// function is infallible.
 #[must_use = "the returned workspace supply closure is not useful unless called"]
-pub fn workspaces_from_def(
+pub(crate) fn workspaces_from_def(
     decl: &WorkspaceDef,
     profile: SandboxProfile,
 ) -> impl Fn() -> Box<dyn Workspace> + Send + Sync + use<> {
@@ -204,7 +204,7 @@ mod tests {
     use iter_language::{SandboxNetworkDef, SandboxPolicyDef, WorkspaceDef};
 
     #[test]
-    fn factory_yields_distinct_local_instances() {
+    fn workspaces_from_def_yields_distinct_local_instances() {
         let decl = WorkspaceDef::Local {
             base: "/tmp/iter-cli-test".into(),
             source: None,
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn factory_handles_clone_decl() {
+    fn workspaces_from_def_handles_clone_decl() {
         let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
             source: None,
@@ -243,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn factory_handles_clone_with_remote() {
+    fn workspaces_from_def_handles_clone_with_remote() {
         let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
             source: None,
@@ -259,7 +259,7 @@ mod tests {
     }
 
     #[test]
-    fn factory_handles_sandbox_decl() {
+    fn workspaces_from_def_handles_sandbox_decl() {
         let decl = WorkspaceDef::Sandbox {
             base: "/tmp/iter-cli-test".into(),
             source: None,

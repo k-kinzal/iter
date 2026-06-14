@@ -13,7 +13,7 @@ use thiserror::Error;
 
 /// Errors from arg resolution.
 #[derive(Debug, Error)]
-pub enum ArgError {
+pub(crate) enum ArgError {
     /// A required arg (no default) was not supplied via override.
     #[error("missing required arg `{name}`")]
     MissingRequired {
@@ -46,7 +46,7 @@ pub enum ArgError {
 /// and no override, [`ArgError::UnknownOverride`] when an override names an
 /// arg not declared in the Iterfile, or [`ArgError::UnknownReference`] when a
 /// `{{arg.<name>}}` reference names an undeclared arg.
-pub fn resolve_args(
+pub(crate) fn resolve_args(
     root: &mut Iterfile,
     overrides: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {

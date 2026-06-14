@@ -7,7 +7,6 @@
 //! Startup and shutdown banners go to stderr; stdout is reserved.
 
 #![deny(rust_2018_idioms)]
-#![allow(unreachable_pub)]
 
 mod banner;
 mod error;
@@ -15,18 +14,17 @@ mod logging;
 mod signal_defaults;
 mod stream;
 mod termination;
-mod watch;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::watch::{ChangeKind, WatchConfig, WatchTrigger, WatchTriggerError};
 use clap::Parser;
-use iter_core::process::interrupt::install_signal_handlers;
+use iter_core::os_signal::install_signal_handlers;
 use iter_core::queue::{BudgetedQueue, ConnectError, QueueAddressError, QueueDescriptor, connect};
 use iter_core::signal::defaults::MetadataPairError;
+use iter_watch_cli::{ChangeKind, WatchConfig, WatchTrigger, WatchTriggerError};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 use tracing::error;

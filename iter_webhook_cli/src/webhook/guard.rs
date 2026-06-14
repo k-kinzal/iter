@@ -7,7 +7,7 @@ use serde_json::json;
 use iter_core::template::TemplateError;
 use iter_core::{Metadata, MetadataValue};
 
-use super::config::CompiledSubscription;
+use super::settings::CompiledSubscription;
 
 /// Render the compiled metadata templates of `subscription` against the
 /// webhook `event` body.
@@ -105,7 +105,7 @@ fn lookup<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
                 let idx: usize = segment.parse().ok()?;
                 arr.get(idx)?
             }
-            _ => return None,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => return None,
         };
     }
     Some(cur)
@@ -118,7 +118,7 @@ fn value_to_string(v: &Value) -> String {
         Value::Null => String::new(),
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
-        other => other.to_string(),
+        other @ (Value::Array(_) | Value::Object(_)) => other.to_string(),
     }
 }
 

@@ -35,7 +35,14 @@ fn true_with_suffix_is_ident() {
     };
     match &body.fields[0].value {
         CstValue::Ident(name, _) => assert_eq!(name, "truest"),
-        other => panic!("expected ident truest, got {other:?}"),
+        other @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Duration(..)
+        | CstValue::Bool(..)
+        | CstValue::Null(_)
+        | CstValue::List(..)
+        | CstValue::Block(_)
+        | CstValue::Call { .. }) => panic!("expected ident truest, got {other:?}"),
     }
 }
 
@@ -49,7 +56,14 @@ fn false_with_suffix_is_ident() {
     };
     match &body.fields[0].value {
         CstValue::Ident(name, _) => assert_eq!(name, "falsehood"),
-        other => panic!("expected ident falsehood, got {other:?}"),
+        other @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Duration(..)
+        | CstValue::Bool(..)
+        | CstValue::Null(_)
+        | CstValue::List(..)
+        | CstValue::Block(_)
+        | CstValue::Call { .. }) => panic!("expected ident falsehood, got {other:?}"),
     }
 }
 
@@ -63,7 +77,14 @@ fn null_with_suffix_is_ident() {
     };
     match &body.fields[0].value {
         CstValue::Ident(name, _) => assert_eq!(name, "nullish"),
-        other => panic!("expected ident nullish, got {other:?}"),
+        other @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Duration(..)
+        | CstValue::Bool(..)
+        | CstValue::Null(_)
+        | CstValue::List(..)
+        | CstValue::Block(_)
+        | CstValue::Call { .. }) => panic!("expected ident nullish, got {other:?}"),
     }
 }
 
@@ -77,7 +98,14 @@ fn exact_null_is_null() {
     };
     match &body.fields[0].value {
         CstValue::Null(_) => {}
-        other => panic!("expected null, got {other:?}"),
+        other @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Duration(..)
+        | CstValue::Bool(..)
+        | CstValue::Ident(..)
+        | CstValue::List(..)
+        | CstValue::Block(_)
+        | CstValue::Call { .. }) => panic!("expected null, got {other:?}"),
     }
 }
 
@@ -91,7 +119,15 @@ fn exact_true_is_bool() {
     };
     match &body.fields[0].value {
         CstValue::Bool(true, _) => {}
-        other => panic!("expected bool true, got {other:?}"),
+        other @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Duration(..)
+        | CstValue::Bool(..)
+        | CstValue::Null(_)
+        | CstValue::Ident(..)
+        | CstValue::List(..)
+        | CstValue::Block(_)
+        | CstValue::Call { .. }) => panic!("expected bool true, got {other:?}"),
     }
 }
 

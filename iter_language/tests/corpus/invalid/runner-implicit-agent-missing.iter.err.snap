@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-implicit-agent-missing.iter
+---
+Error: runner omits `agent` and no `agent` definition was found
+    ╭─[runner-implicit-agent-missing.iter:5:1]
+    │
+  5 │ ╭─▶ runner {
+    ┆ ┆   
+ 10 │ ├─▶ }
+    │ │       
+    │ ╰─────── runner omits `agent` and no `agent` definition was found
+────╯

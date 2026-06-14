@@ -1,46 +1,138 @@
-error: suppressing `clippy::needless_return` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:14:9
+error: suppressing `clippy::needless_return` inline is not allowed
+  --> $DIR/main.rs:7:9
    |
 LL | #[allow(clippy::needless_return)]
    |         ^^^^^^^^^^^^^^^^^^^^^^^
    |
-   = note: `#[deny(no_lint_suppression)]` on by default
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
 
-error: suppressing `clippy::all` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:19:9
+error: suppressing `clippy::all` inline is not allowed
+  --> $DIR/main.rs:12:9
    |
 LL | #[allow(clippy::all)]
    |         ^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
 
-error: suppressing `clippy::pedantic` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:22:9
+error: suppressing `clippy::pedantic` inline is not allowed
+  --> $DIR/main.rs:15:9
    |
 LL | #[allow(clippy::pedantic)]
    |         ^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
 
-error: suppressing `clippy::needless_return` via `#[expect(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:27:10
+error: suppressing `clippy::needless_return` inline is not allowed
+  --> $DIR/main.rs:20:10
    |
 LL | #[expect(clippy::needless_return)]
    |          ^^^^^^^^^^^^^^^^^^^^^^^
-
-error: suppressing `no_std_print` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:34:9
    |
-LL | #[allow(no_std_print)]
-   |         ^^^^^^^^^^^^
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
 
-error: suppressing `no_std_print` via `#[expect(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:37:10
+error: suppressing `clippy::needless_return` inline is not allowed
+  --> $DIR/main.rs:27:8
    |
-LL | #[expect(no_std_print)]
-   |          ^^^^^^^^^^^^
+LL | #[warn(clippy::needless_return)]
+   |        ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
 
-error: suppressing `clippy::needless_return` via `#[allow(...)]` is not allowed; fix the underlying diagnostic instead
-  --> $DIR/main.rs:45:20
+error: suppressing `unsafe_code` inline is not allowed
+  --> $DIR/main.rs:32:8
+   |
+LL | #[warn(unsafe_code)]
+   |        ^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `unsafe_code` inline is not allowed
+  --> $DIR/main.rs:37:9
+   |
+LL | #[allow(unsafe_code)]
+   |         ^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `no_lint_suppression` inline is not allowed
+  --> $DIR/main.rs:42:9
+   |
+LL | #[allow(no_lint_suppression)]
+   |         ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `no_lint_suppression` inline is not allowed
+  --> $DIR/main.rs:45:10
+   |
+LL | #[expect(no_lint_suppression)]
+   |          ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `no_lint_suppression` inline is not allowed
+  --> $DIR/main.rs:48:8
+   |
+LL | #[warn(no_lint_suppression)]
+   |        ^^^^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `meaningful_type_names` inline is not allowed
+  --> $DIR/main.rs:51:9
+   |
+LL | #[allow(meaningful_type_names)]
+   |         ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `dead_code` inline is not allowed
+  --> $DIR/main.rs:56:9
+   |
+LL | #[allow(dead_code, clippy::needless_return, unused_variables)]
+   |         ^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `clippy::needless_return` inline is not allowed
+  --> $DIR/main.rs:56:20
    |
 LL | #[allow(dead_code, clippy::needless_return, unused_variables)]
    |                    ^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
 
-error: aborting due to 7 previous errors
+error: suppressing `unused_variables` inline is not allowed
+  --> $DIR/main.rs:56:45
+   |
+LL | #[allow(dead_code, clippy::needless_return, unused_variables)]
+   |                                             ^^^^^^^^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `dead_code` inline is not allowed
+  --> $DIR/main.rs:63:10
+   |
+LL | #[expect(dead_code, reason = "exercise non-lint expect metadata")]
+   |          ^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+error: suppressing `dead_code` inline is not allowed
+  --> $DIR/main.rs:68:25
+   |
+LL | #[cfg_attr(all(), allow(dead_code))]
+   |                         ^^^^^^^^^
+   |
+   = help: fix the underlying diagnostic; if the lint is wrong for this project, set it to `allow` once in `[workspace.lints]` (or the `iter_core` table) with a reason — never inline.
+
+warning: unknown lint: `meaningful_type_names`
+  --> $DIR/main.rs:51:9
+   |
+LL | #[allow(meaningful_type_names)]
+   |         ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unknown_lints)]` on by default
+
+error: aborting due to 16 previous errors; 1 warning emitted
 

@@ -42,7 +42,6 @@
 //!   [`QueueDescriptor`].
 
 // Defining module named for the concept it defines — the path echo is deliberate.
-#[allow(clippy::module_inception)]
 pub mod queue;
 
 pub use queue::Queue;

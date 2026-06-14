@@ -2,10 +2,10 @@
 //!
 //! This is the error half of the **Agent level** (see [`AgentRun`]). It is
 //! deliberately minimal: it enumerates only the failure classes iter
-//! actually consumes — either by branching on the variant (today only the
-//! [`AgentRouter`] matches [`AgentError::TokenLimit`]) or by reading it into
-//! a Factor (the runner reads the exit code off [`AgentError::Failed`] for
-//! the `iteration.previous_exit_code` template field).
+//! actually consumes — either by classifying router fallback eligibility or
+//! by reading it into a Factor (the runner reads the exit code off
+//! [`AgentError::Failed`] for the `iteration.previous_exit_code` template
+//! field).
 //!
 //! The rich, CLI-shaped error hierarchy — auth/quota/rate/context/network
 //! classes, HTTP status codes, retry flags — lives at the **Command level**
@@ -20,6 +20,38 @@
 use std::io;
 
 use thiserror::Error;
+
+/// Failure classes the router can be configured to fall back on.
+///
+/// [`AgentError::Cancelled`] has no class: cancellation is cooperative
+/// shutdown, never a fallback trigger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FallbackClass {
+    /// [`AgentError::IterationTimeout`].
+    Timeout,
+    /// [`AgentError::TokenLimit`].
+    TokenLimit,
+    /// [`AgentError::Launch`].
+    Launch,
+    /// [`AgentError::TerminatedBySignal`].
+    TerminatedBySignal,
+    /// [`AgentError::Failed`].
+    Failure,
+}
+
+impl FallbackClass {
+    /// Stable token shared with [`AgentError::label`].
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Timeout => "timeout",
+            Self::TokenLimit => "token_limit",
+            Self::Launch => "errored",
+            Self::TerminatedBySignal => "terminated_by_signal",
+            Self::Failure => "failure",
+        }
+    }
+}
 
 /// Errors produced while driving a CLI-backed agent for one run.
 ///
@@ -43,8 +75,8 @@ pub enum AgentError {
 
     /// The agent hit the model's context-window or token limit. The
     /// contained string is an informational excerpt around the detected
-    /// pattern — not machine-parseable. The router matches on the *variant*
-    /// (not the payload) to trigger fallback to the next agent.
+    /// pattern — not machine-parseable. CLI drivers use the shared
+    /// token-limit detector before projecting command errors to this variant.
     #[error("agent token limit exceeded: {0}")]
     TokenLimit(String),
 
@@ -91,6 +123,22 @@ impl AgentError {
         }
     }
 
+    /// Fallback class for this error, or `None` for cancellation.
+    ///
+    /// Cancellation is iter's cooperative shutdown path and must always
+    /// propagate instead of starting another agent attempt.
+    #[must_use]
+    pub fn fallback_class(&self) -> Option<FallbackClass> {
+        match self {
+            Self::Cancelled => None,
+            Self::IterationTimeout(_) => Some(FallbackClass::Timeout),
+            Self::TokenLimit(_) => Some(FallbackClass::TokenLimit),
+            Self::Launch(_) => Some(FallbackClass::Launch),
+            Self::TerminatedBySignal(_) => Some(FallbackClass::TerminatedBySignal),
+            Self::Failed { .. } => Some(FallbackClass::Failure),
+        }
+    }
+
     /// Process exit code associated with this error, when one is meaningful.
     /// `None` for cancellation, timeout, token-limit, launch failure, and
     /// signal termination (a signal is not an exit code).
@@ -98,7 +146,11 @@ impl AgentError {
     pub fn exit_code(&self) -> Option<i32> {
         match self {
             Self::Failed { code, .. } => *code,
-            _ => None,
+            Self::Cancelled
+            | Self::IterationTimeout(_)
+            | Self::TokenLimit(_)
+            | Self::Launch(_)
+            | Self::TerminatedBySignal(_) => None,
         }
     }
 }
@@ -110,5 +162,72 @@ impl From<io::Error> for AgentError {
     /// [`Launch`]: AgentError::Launch
     fn from(err: io::Error) -> Self {
         Self::Launch(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fallback_class_excludes_cancelled_and_classifies_failures() {
+        assert_eq!(AgentError::Cancelled.fallback_class(), None);
+        assert_eq!(
+            AgentError::IterationTimeout(std::time::Duration::from_secs(1)).fallback_class(),
+            Some(FallbackClass::Timeout),
+        );
+        assert_eq!(
+            AgentError::TokenLimit("limit".to_owned()).fallback_class(),
+            Some(FallbackClass::TokenLimit),
+        );
+        assert_eq!(
+            AgentError::Launch("spawn".to_owned()).fallback_class(),
+            Some(FallbackClass::Launch),
+        );
+        assert_eq!(
+            AgentError::TerminatedBySignal(9).fallback_class(),
+            Some(FallbackClass::TerminatedBySignal),
+        );
+        assert_eq!(
+            AgentError::Failed {
+                code: Some(1),
+                message: "failed".to_owned(),
+            }
+            .fallback_class(),
+            Some(FallbackClass::Failure),
+        );
+    }
+
+    #[test]
+    fn fallback_class_labels_match_error_labels() {
+        let cases = [
+            (
+                AgentError::IterationTimeout(std::time::Duration::from_secs(1)),
+                FallbackClass::Timeout,
+            ),
+            (
+                AgentError::TokenLimit("limit".to_owned()),
+                FallbackClass::TokenLimit,
+            ),
+            (
+                AgentError::Launch("spawn".to_owned()),
+                FallbackClass::Launch,
+            ),
+            (
+                AgentError::TerminatedBySignal(9),
+                FallbackClass::TerminatedBySignal,
+            ),
+            (
+                AgentError::Failed {
+                    code: Some(1),
+                    message: "failed".to_owned(),
+                },
+                FallbackClass::Failure,
+            ),
+        ];
+
+        for (error, class) in cases {
+            assert_eq!(error.label(), class.label());
+        }
     }
 }

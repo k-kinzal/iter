@@ -106,6 +106,8 @@ mod tests {
             std::env::set_var("PATH", bin_dir.as_os_str());
         }
         let cp = CommandPath::resolve("command-path-probe").expect("resolve");
+        // SAFETY: same serialized test scope as above; restore PATH to the
+        // exact prior state before returning.
         unsafe {
             match saved {
                 Some(v) => std::env::set_var("PATH", v),

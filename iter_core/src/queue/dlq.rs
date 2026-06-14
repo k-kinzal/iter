@@ -100,7 +100,9 @@ mod tests {
             DlqPolicy::IterRepublish {
                 max_receive_count, ..
             } => assert_eq!(max_receive_count, 5),
-            other => panic!("unexpected variant: {other:?}"),
+            other @ (DlqPolicy::None | DlqPolicy::Native) => {
+                panic!("unexpected variant: {other:?}")
+            }
         }
     }
 }

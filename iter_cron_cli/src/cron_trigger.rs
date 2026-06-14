@@ -129,7 +129,6 @@ impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     }
 
     /// Interpret the cron schedule against `tz` instead of UTC.
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_timezone(mut self, tz: Tz) -> Self {
         self.timezone = tz;
@@ -169,7 +168,6 @@ impl<Q: Queue + ?Sized + 'static> CronTrigger<Q> {
     }
 
     /// Seed the jitter RNG for deterministic tests.
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_rng_seed(mut self, seed: u64) -> Self {
         self.rng_seed = Some(seed);

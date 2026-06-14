@@ -1,0 +1,53 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-implicit-single.iter
+---
+Iterfile {
+    args: [],
+    queues: [],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                    source: None,
+                },
+            },
+            span: 0..32,
+        },
+    ],
+    sources: [],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "noop",
+                decl: Noop,
+            },
+            span: 34..47,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDef {
+                name: None,
+                agent: "noop",
+                workspace: "local",
+                queue: None,
+                continue_on_error: false,
+                behavior: Synthesize {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Implicit single binding.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 49..143,
+        },
+    ],
+}

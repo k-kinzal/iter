@@ -1,7 +1,7 @@
 //! `ClineCommand` — the **Command level** for the Cline CLI's oneshot mode.
 //!
 //! Owns the oneshot argv (requesting `--json`) and parses the CLI's complete
-//! output into a CLI-shaped [`ClineResult`] or a CLI-shaped [`ClineError`]
+//! output into a CLI-shaped [`ClineRun`] or a CLI-shaped [`ClineError`]
 //! hierarchy. Nothing here is iter-domain — projecting these onto
 //! [`AgentRun`](crate::agent::AgentRun) / [`AgentError`](crate::agent::AgentError)
 //! is the driver's job (see the `From` impls in `mod.rs`).
@@ -87,8 +87,7 @@ impl ClineFinishReason {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct ClineResult {
+pub(crate) struct ClineRun {
     /// `sessionId` from the terminal record, when present (feeds iter's
     /// session Factors).
     pub(crate) session_id: Option<String>,
@@ -136,7 +135,7 @@ pub(crate) enum ClineError {
 
 /// Raw terminal `run_result` record, deserialized.
 #[derive(Debug, Deserialize)]
-struct RunResult {
+struct ClineCommandRun {
     #[serde(default, rename = "finishReason")]
     finish_reason: Option<String>,
     #[serde(default, rename = "sessionId")]
@@ -174,7 +173,7 @@ fn event_message(value: &Value) -> String {
 }
 
 /// Parse Cline's complete oneshot output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<ClineResult, ClineError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<ClineRun, ClineError> {
     let stdout = output.stdout_str();
 
     let exit_code = match output.exit {
@@ -184,14 +183,14 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<ClineResult, ClineErro
 
     // The terminal `run_result` record is authoritative for *did it run*.
     if let Some(value) = cli_json::last_event_of_type(&stdout, "run_result") {
-        let record: RunResult = serde_json::from_value(value).unwrap_or(RunResult {
+        let record: ClineCommandRun = serde_json::from_value(value).unwrap_or(ClineCommandRun {
             finish_reason: None,
             session_id: None,
             message: None,
         });
         let finish_reason = ClineFinishReason::parse(record.finish_reason.as_deref());
         if finish_reason == ClineFinishReason::Completed {
-            return Ok(ClineResult {
+            return Ok(ClineRun {
                 session_id: record.session_id,
                 finish_reason,
                 final_message: record.message,

@@ -1,7 +1,7 @@
 //! `ClaudeCodeCommand` — the **Command level** for Claude Code's print mode.
 //!
 //! Owns the print-mode argv (requesting `--output-format json`) and parses
-//! the CLI's complete output into a CLI-shaped [`ClaudeCodeResult`] or a
+//! the CLI's complete output into a CLI-shaped [`ClaudeCodeRun`] or a
 //! CLI-shaped [`ClaudeCodeError`] hierarchy. Nothing here is iter-domain —
 //! projecting these onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -97,8 +97,7 @@ impl ClaudeStopReason {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct ClaudeCodeResult {
+pub(crate) struct ClaudeCodeRun {
     /// `session_id` from the terminal record (feeds iter's session Factors).
     pub(crate) session_id: Option<String>,
     /// Parsed `subtype`.
@@ -137,7 +136,7 @@ pub(crate) enum ClaudeCodeError {
 }
 
 /// Parse Claude Code's complete print-mode output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<ClaudeCodeResult, ClaudeCodeError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<ClaudeCodeRun, ClaudeCodeError> {
     let stdout = output.stdout_str();
     let terminal = cli_json::single_object(&stdout)
         .or_else(|| cli_json::last_event_of_type(&stdout, "result"));
@@ -204,7 +203,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<ClaudeCodeResult, Clau
         });
     }
 
-    Ok(ClaudeCodeResult {
+    Ok(ClaudeCodeRun {
         session_id,
         stop_reason: ClaudeStopReason::parse(subtype.as_deref()),
         final_message,

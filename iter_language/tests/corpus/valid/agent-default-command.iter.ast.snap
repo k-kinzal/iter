@@ -1,0 +1,104 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-default-command.iter
+---
+Iterfile {
+    args: [],
+    queues: [
+        Spanned {
+            node: NamedDef {
+                name: "memory",
+                decl: Memory,
+            },
+            span: 0..12,
+        },
+    ],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                    source: None,
+                },
+            },
+            span: 14..46,
+        },
+    ],
+    sources: [],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "default_claude",
+                decl: Claude {
+                    mode: Headless,
+                    command: "claude",
+                    args: [],
+                    session_id_file: None,
+                    env: {},
+                },
+            },
+            span: 48..97,
+        },
+        Spanned {
+            node: NamedDef {
+                name: "default_codex",
+                decl: Codex {
+                    mode: Headless,
+                    command: "codex",
+                    args: [],
+                    env: {},
+                },
+            },
+            span: 99..146,
+        },
+        Spanned {
+            node: NamedDef {
+                name: "default_antigravity",
+                decl: Antigravity {
+                    mode: Headless,
+                    command: "agy",
+                    args: [],
+                    conversation_id: None,
+                    env: {},
+                },
+            },
+            span: 148..207,
+        },
+        Spanned {
+            node: NamedDef {
+                name: "pinned_codex",
+                decl: Codex {
+                    mode: Headless,
+                    command: "/opt/bin/codex",
+                    args: [],
+                    env: {},
+                },
+            },
+            span: 209..287,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDef {
+                name: None,
+                agent: "default_codex",
+                workspace: "local",
+                queue: Some(
+                    "memory",
+                ),
+                continue_on_error: false,
+                behavior: Wait,
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Default command test.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 289..441,
+        },
+    ],
+}

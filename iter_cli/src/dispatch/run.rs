@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::iterfile::{self, IterfileError, RunInput, RunMode, RunRecordMetadata, RunSource};
-use iter_core::process::ProcessId;
+use crate::process::ProcessId;
 use thiserror::Error;
 
 use crate::cli::RunArgs;
@@ -29,7 +29,7 @@ use crate::tracing_preferences::TracingPreferences;
 
 /// Errors produced by [`run_run`].
 #[derive(Debug, Error)]
-pub enum RunCmdError {
+pub(crate) enum RunCmdError {
     /// `--process-id` could not be parsed as a [`ProcessId`].
     #[error("parsing --process-id {raw}: {detail}")]
     ParseProcessId {
@@ -129,7 +129,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
 /// # Errors
 ///
 /// Returns the error surfaced by [`crate::iterfile::handle`].
-pub async fn run_run(args: RunArgs, prefs: TracingPreferences) -> Result<(), RunCmdError> {
+pub(crate) async fn run_run(args: RunArgs, prefs: TracingPreferences) -> Result<(), RunCmdError> {
     let iterfile_path: PathBuf = args
         .iterfile
         .clone()

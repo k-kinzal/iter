@@ -1,0 +1,59 @@
+error: `RunnerSummary` names a generic container, not the value's content
+  --> $DIR/main.rs:3:8
+   |
+LL | struct RunnerSummary;
+   |        ^^^^^^^^^^^^^
+   |
+   = help: rename it to the domain noun for what it holds. If you cannot, the type is usually a grab-bag (split it) or duplicates state emitted elsewhere (drop it).
+   = note: `#[deny(meaningful_type_names)]` on by default
+
+error: `TaskOutcome` names a generic container, not the value's content
+  --> $DIR/main.rs:4:6
+   |
+LL | enum TaskOutcome {}
+   |      ^^^^^^^^^^^
+   |
+   = help: rename it to the domain noun for what it holds. If you cannot, the type is usually a grab-bag (split it) or duplicates state emitted elsewhere (drop it).
+
+error: `EmitReport` names a generic container, not the value's content
+  --> $DIR/main.rs:5:6
+   |
+LL | type EmitReport = ();
+   |      ^^^^^^^^^^
+   |
+   = help: rename it to the domain noun for what it holds. If you cannot, the type is usually a grab-bag (split it) or duplicates state emitted elsewhere (drop it).
+
+error: `TransitionResult` ends in `Result` but is not the `Result` monad
+  --> $DIR/main.rs:6:8
+   |
+LL | struct TransitionResult;
+   |        ^^^^^^^^^^^^^^^^
+   |
+   = help: rename to what it is so `Result<TransitionResult, E>` does not read as a nested Result — e.g. `TransitionResult` -> `StatusTransition`.
+
+error: `QueueEngine` uses banned iter vocabulary `engine`
+  --> $DIR/main.rs:7:8
+   |
+LL | struct QueueEngine;
+   |        ^^^^^^^^^^^
+   |
+   = help: say instead: name the actual noun doing the work: runner / queue / trigger / agent
+
+error: `construct_runner` uses banned iter vocabulary `construct`
+  --> $DIR/main.rs:8:4
+   |
+LL | fn construct_runner() {}
+   |    ^^^^^^^^^^^^^^^^
+   |
+   = help: say instead: `new` constructors are fine; otherwise name the direct conversion, e.g. `*_from_def` or `*_from_plan`
+
+error: source file `config.rs` uses a banned dumping-ground name
+  --> $DIR/auxiliary/config.rs:1:1
+   |
+LL | pub fn layout() {}
+   | ^^^^^^^^^^^^^^^^^^
+   |
+   = help: name the file for the concept it defines; `inner.rs` / `assembly.rs` / `util.rs` / `utils.rs` / `helpers.rs` / `common.rs` / `misc.rs` / `config.rs` are dumping-ground names. For on-disk layout, use `layout.rs`.
+
+error: aborting due to 7 previous errors
+

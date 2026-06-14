@@ -2,12 +2,12 @@
 source: iter_language/tests/conformance.rs
 description: agent-without-command.iter
 ---
-Error: agent claude requires `command`
+Error: agent generic requires `command`
    ╭─[agent-without-command.iter:1:7]
    │
- 1 │ agent claude {
-   │       ───┬──  
-   │          ╰──── agent claude requires `command`
+ 1 │ agent generic {}
+   │       ───┬───  
+   │          ╰───── agent generic requires `command`
    │ 
-   │ Help: iter no longer resolves agent binaries from `PATH` by default — set `command = "..."` to the binary name (e.g. `"claude"`) or an absolute path to pin it.
+   │ Help: add `command = ["prog", "--flag"]`; generic agents have no default binary
 ───╯

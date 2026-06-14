@@ -1,11 +1,11 @@
 //! [`WebhookTrigger`] — receives HTTP webhooks (e.g., GitHub) and emits
 //! signals matching configured subscriptions.
 
-mod config;
 mod guard;
 mod router;
+mod settings;
 
-pub use config::{Subscription, WebhookConfig, WebhookTriggerError};
+pub use settings::{Subscription, WebhookConfig, WebhookTriggerError};
 
 use std::sync::Arc;
 
@@ -14,8 +14,8 @@ use axum::routing::post;
 use iter_core::Queue;
 use tokio_util::sync::CancellationToken;
 
-use config::CompiledSubscription;
 use router::{WebhookState, handle_webhook};
+use settings::CompiledSubscription;
 
 /// HTTP webhook trigger.
 ///

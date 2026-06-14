@@ -22,8 +22,8 @@ pub(crate) mod time;
 
 pub(crate) use error::{IntoExitCode, exit_codes, run_main};
 pub(crate) use format::{
-    OutputFormat, ValidateFormat, ValidateOk, ValidateSummary, print_json_array,
-    print_json_compact, print_json_pretty, print_ndjson_record,
+    OutputFormat, ValidateCounts, ValidateFormat, ValidateOk, print_json_array, print_json_compact,
+    print_json_pretty, print_ndjson_record,
 };
 pub(crate) use id::trunc_id;
 pub(crate) use listing::ListingArgs;

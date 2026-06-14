@@ -102,7 +102,14 @@ fn take_target_field(body: Option<&CstBlock>, errors: &mut Vec<Diagnostic>) -> Q
         if field.name.name == "target" {
             match &field.value {
                 CstValue::Ident(name, _) => return QueueRef::Named(name.clone()),
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     errors.push(Diagnostic::error(
                         other.span(),
                         "`target` must be a queue name",
@@ -123,7 +130,14 @@ fn take_bool_field(body: Option<&CstBlock>, name: &str, errors: &mut Vec<Diagnos
         if field.name.name == name {
             match &field.value {
                 CstValue::Bool(val, _) => return *val,
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     errors.push(Diagnostic::error(
                         other.span(),
                         format!("`{name}` must be a boolean"),

@@ -43,7 +43,7 @@ mod trigger;
 mod value;
 mod workspace;
 
-pub use agent::{AgentDef, AgentMode, RouterStrategy};
+pub use agent::{AgentDef, AgentMode, RouterFallbackClass, RouterFallbackTriggers, RouterStrategy};
 pub use arg::ArgDef;
 pub use compose::{
     Compose, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,

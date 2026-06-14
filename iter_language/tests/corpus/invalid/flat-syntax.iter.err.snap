@@ -2,12 +2,14 @@
 source: iter_language/tests/conformance.rs
 description: flat-syntax.iter
 ---
-Error: flat Iterfile syntax is no longer supported; define named `agent`/`workspace`/`queue` definitions and bind them in a `runner { agent = ... workspace = ... }` block
+Error: runner requires `prompt`
     ╭─[flat-syntax.iter:15:1]
     │
  15 │ runner {
     │ ───┬──  
-    │    ╰──── flat Iterfile syntax is no longer supported; define named `agent`/`workspace`/`queue` definitions and bind them in a `runner { agent = ... workspace = ... }` block
+    │    ╰──── runner requires `prompt`
+    │ 
+    │ Help: add `prompt = "..."` or a prompt match block
 ────╯
 
 Error: top-level `prompt "..."` is no longer supported; define a named prompt with `prompt as <name> "..."` and reference it, or write the prompt inside the runner block (`prompt = "..."` or a `prompt { <guard> => ..., _ => ... }` match)

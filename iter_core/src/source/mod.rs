@@ -8,7 +8,8 @@ use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ use thiserror::Error;
 use tokio::fs;
 use tokio::process::Command;
 
+use crate::time::{Clock, SystemClock};
 use crate::workspace::mirror::filter::{ApplyBackFilter, CloneFilter};
 use crate::workspace::mirror::materialize::copy_dir_recursive;
 use crate::workspace::mirror::reconcile::{merge_back_impl, sync_back_impl};
@@ -222,9 +224,15 @@ pub enum SourceError {
 /// Build a boxed source runtime from a spec.
 #[must_use]
 pub fn source_from_spec(spec: SourceSpec) -> Box<dyn Source> {
+    source_from_spec_with_clock(spec, Arc::new(SystemClock))
+}
+
+/// Build a boxed source runtime from a spec with an injected clock.
+#[must_use]
+pub fn source_from_spec_with_clock(spec: SourceSpec, clock: Arc<dyn Clock>) -> Box<dyn Source> {
     match spec {
-        SourceSpec::Directory(spec) => Box::new(DirectorySource { spec }),
-        SourceSpec::Git(spec) => Box::new(GitSource { spec }),
+        SourceSpec::Directory(spec) => Box::new(DirectorySource { spec, clock }),
+        SourceSpec::Git(spec) => Box::new(GitSource { spec, clock }),
     }
 }
 
@@ -249,6 +257,7 @@ pub async fn discard_pending(decision: PendingSourceDecision) -> Result<(), Sour
 
 struct DirectorySource {
     spec: DirectorySourceSpec,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -269,7 +278,14 @@ impl Source for DirectorySource {
             } => {
                 let base_path = durable_temp_path("iter-source-dir").await?;
                 let filter = CloneFilter::compile(excludes, &[])?;
-                copy_dir_recursive(&self.spec.path, &base_path, &filter, *preserve_mtime).await?;
+                copy_dir_recursive(
+                    &self.spec.path,
+                    &base_path,
+                    &filter,
+                    *preserve_mtime,
+                    self.clock.as_ref(),
+                )
+                .await?;
                 Ok(ProvisionedSource {
                     spec: SourceSpec::Directory(self.spec.clone()),
                     base_path,
@@ -295,6 +311,7 @@ impl Source for DirectorySource {
 
 struct GitSource {
     spec: GitSourceSpec,
+    clock: Arc<dyn Clock>,
 }
 
 #[async_trait]
@@ -310,7 +327,9 @@ impl Source for GitSource {
                 let base_path = durable_temp_path("iter-source-git-worktree").await?;
                 fs::remove_dir_all(&base_path).await?;
                 let derived_from = ref_name.clone().unwrap_or_else(|| "HEAD".to_string());
-                let branch = branch.clone().unwrap_or_else(auto_branch_name);
+                let branch = branch
+                    .clone()
+                    .unwrap_or_else(|| auto_branch_name(self.clock.as_ref()));
                 run_git(
                     repo,
                     [
@@ -354,7 +373,9 @@ impl Source for GitSource {
                 run_cmd("git", &args, None).await?;
 
                 let derived_from = ref_name.clone().unwrap_or_else(|| "HEAD".to_string());
-                let branch = branch.clone().unwrap_or_else(auto_branch_name);
+                let branch = branch
+                    .clone()
+                    .unwrap_or_else(|| auto_branch_name(self.clock.as_ref()));
                 run_git(
                     &base_path,
                     [
@@ -591,8 +612,9 @@ async fn run_cmd(program: &str, args: &[String], cwd: Option<&Path>) -> Result<(
     })
 }
 
-fn auto_branch_name() -> String {
-    let millis = SystemTime::now()
+fn auto_branch_name(clock: &dyn Clock) -> String {
+    let millis = clock
+        .system_time()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
         .unwrap_or(0);
@@ -656,6 +678,7 @@ mod tests {
                     includes: Vec::new(),
                 }),
             },
+            clock: Arc::new(SystemClock),
         };
 
         let provisioned = source.provision().await.expect("provision");
@@ -687,6 +710,7 @@ mod tests {
                 },
                 disposition: Some(SourceDispositionSpec::Discard),
             },
+            clock: Arc::new(SystemClock),
         };
 
         let provisioned = source.provision().await.expect("provision");
@@ -715,6 +739,7 @@ mod tests {
                 },
                 disposition: SourceDispositionSpec::Discard,
             },
+            clock: Arc::new(SystemClock),
         };
 
         let provisioned = source.provision().await.expect("provision");
@@ -752,6 +777,7 @@ mod tests {
                     ff: Some(GitFastForwardSpec::Only),
                 },
             },
+            clock: Arc::new(SystemClock),
         };
 
         let provisioned = source.provision().await.expect("provision");
@@ -787,6 +813,7 @@ mod tests {
                     }),
                 }),
             },
+            clock: Arc::new(SystemClock),
         };
 
         let provisioned = source.provision().await.expect("provision");

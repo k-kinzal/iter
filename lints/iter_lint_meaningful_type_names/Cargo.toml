@@ -1,0 +1,21 @@
+[package]
+name = "iter_lint_meaningful_type_names"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish.workspace = true
+description = "Require type names to state content rather than generic container shape."
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+dylint_linting = { workspace = true }
+
+[dev-dependencies]
+dylint_testing = { workspace = true }
+
+[package.metadata.rust-analyzer]
+rustc_private = true

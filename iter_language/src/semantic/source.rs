@@ -168,7 +168,13 @@ impl Analyzer {
                 let kind = self.take_required_kind_field(&mut fields, &span, "derive")?;
                 self.parse_source_derive_kind(&kind.0, kind.1, Some(fields))
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "`derive` must be an identifier or tagged block",
@@ -259,7 +265,13 @@ impl Analyzer {
                 let kind = self.take_required_kind_field(&mut fields, &span, "disposition")?;
                 self.parse_source_disposition_kind(&kind.0, kind.1, Some(fields))
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "`disposition` must be an identifier or tagged block",
@@ -358,7 +370,14 @@ impl Analyzer {
         };
         match field.value {
             CstValue::Ident(name, span) => Some((name, span)),
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{context}.kind` must be an identifier"),
@@ -404,7 +423,14 @@ impl Analyzer {
                     None
                 }
             },
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "`ff` must be one of allow, only, no",

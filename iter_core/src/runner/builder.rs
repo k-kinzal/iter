@@ -12,6 +12,7 @@ use crate::queue::Queue;
 use crate::runner::event::EventName;
 use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
 use crate::runner::{EventAction, EventDispatcher, Runner, RunnerPolicy, SignalAcquisition};
+use crate::time::{Clock, IdSource, SystemClock, SystemIdSource};
 use crate::workspace::Workspace;
 
 /// Errors emitted by [`RunnerBuilder::build`].
@@ -47,6 +48,8 @@ pub struct RunnerBuilder {
     observers: Vec<Arc<dyn DynRunnerObserver>>,
     config: RunnerPolicy,
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
+    clock: Arc<dyn Clock>,
+    id_source: Arc<dyn IdSource>,
 }
 
 impl Default for RunnerBuilder {
@@ -60,6 +63,8 @@ impl Default for RunnerBuilder {
             observers: Vec::new(),
             config: RunnerPolicy::default(),
             stdio_sink: None,
+            clock: Arc::new(SystemClock),
+            id_source: Arc::new(SystemIdSource),
         }
     }
 }
@@ -148,7 +153,6 @@ impl RunnerBuilder {
     /// The handler must be [`Clone`] because it is registered once per
     /// event name. Useful for test capture handlers and cross-cutting
     /// concerns like logging.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn on_all<H>(self, handler: H) -> Self
     where
         H: EventAction + Clone + 'static,
@@ -172,9 +176,9 @@ impl RunnerBuilder {
     /// at every runner step (rev17 §F3) so a user-installed
     /// `on workspace_teardown_finished { shell "..." }` cannot mask the system
     /// observer contract that backs the per-process log sink. Failures are
-    /// best-effort — they are tallied into
-    /// [`RunnerSummary::observer_error_count`](crate::RunnerSummary::observer_error_count)
-    /// and logged via `tracing` at `warn` level, but do not halt the loop.
+    /// best-effort — they are tallied into the terminal `runner_finished`
+    /// event and logged via `tracing` at `warn` level, but do not halt the
+    /// loop.
     pub fn observer<O>(mut self, observer: O) -> Self
     where
         O: RunnerObserver + 'static,
@@ -192,6 +196,19 @@ impl RunnerBuilder {
     /// falls back to a [`NoopSink`](crate::log::NoopSink) in that case.
     pub fn stdio_sink(mut self, sink: Arc<dyn crate::log::OutputSink>) -> Self {
         self.stdio_sink = Some(sink);
+        self
+    }
+
+    /// Supply the [`Clock`] used for runner lifecycle timestamps and
+    /// synthesized signals.
+    pub fn clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Supply the [`IdSource`] used for synthesized signal identifiers.
+    pub fn id_source(mut self, id_source: Arc<dyn IdSource>) -> Self {
+        self.id_source = id_source;
         self
     }
 
@@ -245,6 +262,8 @@ impl RunnerBuilder {
             stdio_sink: self
                 .stdio_sink
                 .unwrap_or_else(|| Arc::new(crate::log::NoopSink)),
+            clock: self.clock,
+            id_source: self.id_source,
         })
     }
 }

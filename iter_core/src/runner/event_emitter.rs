@@ -42,37 +42,6 @@ impl<H: EventAction> DynEventAction for DynAdapter<H> {
     }
 }
 
-/// Report from a single [`EventDispatcher::emit`] call.
-///
-/// The emitter's contract is **best effort** — a failing handler is logged
-/// and the remaining handlers still run — but silence is a hostile default
-/// for workflow-critical handlers (e.g. a project-supplied
-/// `on workspace_teardown_finished { shell "./scripts/persist-run.sh" }` that
-/// persists results after teardown). This struct carries the observations
-/// back to the caller so silence becomes visible:
-/// the [`Runner`](crate::Runner) tallies `error_count` into
-/// [`RunnerSummary::event_handler_error_count`](crate::RunnerSummary::event_handler_error_count)
-/// and callers of [`EventDispatcher::emit`] outside the runner can inspect
-/// the count to decide whether to halt.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct EmitReport {
-    /// Number of handlers that returned `Err` while dispatching the event.
-    ///
-    /// Each error is also written to `tracing` at `warn` level with the
-    /// handler index and error message, so downstream observers can
-    /// reconstruct the detail even though only the count propagates here.
-    pub error_count: usize,
-}
-
-impl EmitReport {
-    /// `true` when every handler returned `Ok(())` (or no handlers were
-    /// registered).
-    #[must_use]
-    pub fn is_clean(&self) -> bool {
-        self.error_count == 0
-    }
-}
-
 /// Event dispatcher that routes [`HookEvent`]s to registered
 /// [`EventAction`](crate::runner::EventAction)s by [`EventName`].
 ///
@@ -81,10 +50,7 @@ impl EmitReport {
 /// for the event's name are invoked, in registration order.
 ///
 /// Failing handlers are logged via [`tracing`] at `warn` level and the
-/// remaining handlers still run; callers read back the per-call error
-/// count via [`EmitReport`] so a failing
-/// `on workspace_teardown_finished { shell "..." }` can no longer vanish into the
-/// void.
+/// remaining handlers still run.
 #[derive(Default, Clone)]
 pub struct EventDispatcher {
     routes: HashMap<EventName, Vec<Arc<dyn DynEventAction>>>,
@@ -141,12 +107,15 @@ impl EventDispatcher {
     /// `{{iteration.*}}` resolves consistently from `runner_starting`
     /// through `runner_finished`.
     ///
-    /// Returns an [`EmitReport`] describing how many handlers returned
-    /// `Err`. The report is cheap to ignore when the caller does not
-    /// care about observability, but the [`Runner`](crate::Runner) uses
-    /// it to populate
-    /// [`RunnerSummary::event_handler_error_count`](crate::RunnerSummary::event_handler_error_count).
-    pub async fn emit(&self, event: &HookEvent, iteration: &IterationContext) -> EmitReport {
+    pub async fn emit(&self, event: &HookEvent, iteration: &IterationContext) {
+        self.emit_counted(event, iteration).await;
+    }
+
+    pub(crate) async fn emit_counted(
+        &self,
+        event: &HookEvent,
+        iteration: &IterationContext,
+    ) -> usize {
         let name = event.name();
         let mut error_count = 0usize;
         if let Some(handlers) = self.routes.get(&name) {
@@ -162,7 +131,7 @@ impl EventDispatcher {
                 }
             }
         }
-        EmitReport { error_count }
+        error_count
     }
 }
 
@@ -239,9 +208,9 @@ mod tests {
     #[tokio::test]
     async fn empty_emitter_is_a_noop() {
         let emitter = EventDispatcher::new();
-        let report = emitter.emit(&sample_event(), &iter_ctx()).await;
-        assert!(report.is_clean());
-        assert_eq!(report.error_count, 0);
+        let error_count = emitter.emit_counted(&sample_event(), &iter_ctx()).await;
+        assert_eq!(error_count, 0);
+        assert_eq!(error_count, 0);
     }
 
     #[tokio::test]
@@ -261,10 +230,10 @@ mod tests {
             },
         );
 
-        let report = emitter.emit(&sample_event(), &iter_ctx()).await;
+        let error_count = emitter.emit_counted(&sample_event(), &iter_ctx()).await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 2);
-        assert_eq!(report.error_count, 0);
+        assert_eq!(error_count, 0);
     }
 
     #[tokio::test]
@@ -278,10 +247,10 @@ mod tests {
             },
         );
 
-        let report = emitter.emit(&sample_event(), &iter_ctx()).await;
+        let error_count = emitter.emit_counted(&sample_event(), &iter_ctx()).await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 0);
-        assert!(report.is_clean());
+        assert_eq!(error_count, 0);
     }
 
     #[tokio::test]
@@ -296,11 +265,11 @@ mod tests {
             },
         );
 
-        let report = emitter.emit(&sample_event(), &iter_ctx()).await;
+        let error_count = emitter.emit_counted(&sample_event(), &iter_ctx()).await;
 
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        assert_eq!(report.error_count, 1);
-        assert!(!report.is_clean());
+        assert_eq!(error_count, 1);
+        assert!(error_count > 0);
     }
 
     #[tokio::test]
@@ -310,9 +279,9 @@ mod tests {
         emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
         emitter.on(EventName::WorkspaceTeardownFinished, FailingHandler);
 
-        let report = emitter.emit(&sample_event(), &iter_ctx()).await;
+        let error_count = emitter.emit_counted(&sample_event(), &iter_ctx()).await;
 
-        assert_eq!(report.error_count, 3);
+        assert_eq!(error_count, 3);
     }
 
     #[tokio::test]

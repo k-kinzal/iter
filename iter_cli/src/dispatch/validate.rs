@@ -15,13 +15,13 @@ use crate::cli::ComposeValidateArgs;
 use crate::dispatch::compose::{ComposePlanError, run_compose_validate};
 use crate::dispatch::load::{DEFAULT_ITERFILE, LoadError, load_iterfile};
 use crate::output::{
-    IntoExitCode, ValidateFormat, ValidateOk, ValidateSummary, cli_eprintln, cli_println,
+    IntoExitCode, ValidateCounts, ValidateFormat, ValidateOk, cli_eprintln, cli_println,
     exit_codes, print_json_compact,
 };
 
 /// Errors produced by [`run_validate`].
 #[derive(Debug, Error)]
-pub enum ValidateCmdError {
+pub(crate) enum ValidateCmdError {
     /// Validating an Iterfile failed.
     #[error(transparent)]
     Load(#[from] LoadError),
@@ -62,7 +62,10 @@ impl IntoExitCode for ValidateCmdError {
 /// Returns the rendered diagnostics on failure. When the leading
 /// diagnostic reports a compose-only construct, a hint pointing at
 /// `iter compose validate -f` is appended.
-pub fn run_validate(path: Option<&Path>, format: ValidateFormat) -> Result<(), ValidateCmdError> {
+pub(crate) fn run_validate(
+    path: Option<&Path>,
+    format: ValidateFormat,
+) -> Result<(), ValidateCmdError> {
     let resolved = match path {
         Some(p) => p.to_path_buf(),
         None => PathBuf::from(DEFAULT_ITERFILE),
@@ -85,7 +88,7 @@ pub fn run_validate(path: Option<&Path>, format: ValidateFormat) -> Result<(), V
         ValidateFormat::Json => {
             let envelope = ValidateOk {
                 ok: true,
-                summary: ValidateSummary {
+                summary: ValidateCounts {
                     queues: loaded.iterfile.queues.len(),
                     services: 1,
                     triggers: 0,

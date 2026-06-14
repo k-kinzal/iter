@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use iter_core::process::ProcessRecord;
+use crate::process::ProcessRecord;
 use iter_core::source::{
     DirectorySourceSpec, GitFastForwardSpec, GitLocatorSpec, GitSourceSpec, PendingSourceDecision,
     SourceDeriveSpec, SourceDispositionSpec, SourceError, SourceSpec,
@@ -14,11 +14,11 @@ use iter_language::{
 use thiserror::Error;
 
 /// File storing a deferred source decision under a proc record.
-pub const PENDING_SOURCE_FILE: &str = "pending-source.json";
+pub(crate) const PENDING_SOURCE_FILE: &str = "pending-source.json";
 
 /// Source adapter errors.
 #[derive(Debug, Error)]
-pub enum SourceBuildError {
+pub(crate) enum SourceBuildError {
     /// Workspace references a named source that does not exist.
     #[error("workspace references source `{name}` which is not defined")]
     UnknownSource {
@@ -46,14 +46,14 @@ pub enum SourceBuildError {
 }
 
 /// A provisioned source attached to a runner.
-pub struct ActiveSource {
+pub(crate) struct ActiveSource {
     source: Box<dyn iter_core::source::Source>,
     provisioned: iter_core::source::ProvisionedSource,
 }
 
 impl ActiveSource {
     /// Dispose after runner finish.
-    pub async fn dispose(self) -> Result<Option<PendingSourceDecision>, SourceBuildError> {
+    pub(crate) async fn dispose(self) -> Result<Option<PendingSourceDecision>, SourceBuildError> {
         self.source
             .dispose(self.provisioned)
             .await
@@ -63,7 +63,7 @@ impl ActiveSource {
 
 /// Return the workspace source reference, if any.
 #[must_use]
-pub fn workspace_source_ref(workspace: &WorkspaceDef) -> Option<&WorkspaceSourceRef> {
+pub(crate) fn workspace_source_ref(workspace: &WorkspaceDef) -> Option<&WorkspaceSourceRef> {
     match workspace {
         WorkspaceDef::Local { source, .. }
         | WorkspaceDef::Clone { source, .. }
@@ -73,7 +73,7 @@ pub fn workspace_source_ref(workspace: &WorkspaceDef) -> Option<&WorkspaceSource
 
 /// Return a clone of `workspace` with a concrete base path and no source reference.
 #[must_use]
-pub fn workspace_with_base(workspace: &WorkspaceDef, base: &Path) -> WorkspaceDef {
+pub(crate) fn workspace_with_base(workspace: &WorkspaceDef, base: &Path) -> WorkspaceDef {
     let base = base.display().to_string();
     match workspace {
         WorkspaceDef::Local { .. } => WorkspaceDef::Local { base, source: None },
@@ -113,7 +113,7 @@ pub fn workspace_with_base(workspace: &WorkspaceDef, base: &Path) -> WorkspaceDe
 }
 
 /// Provision the source referenced by a workspace, returning a concrete workspace def.
-pub async fn provision_for_workspace(
+pub(crate) async fn provision_for_workspace(
     workspace: &WorkspaceDef,
     sources: &[iter_language::Spanned<iter_language::NamedDef<SourceDef>>],
 ) -> Result<(WorkspaceDef, Option<ActiveSource>), SourceBuildError> {
@@ -147,7 +147,7 @@ pub async fn provision_for_workspace(
 
 /// Convert a language source declaration to a core runtime source spec.
 #[must_use]
-pub fn source_spec_from_def(def: &SourceDef) -> SourceSpec {
+pub(crate) fn source_spec_from_def(def: &SourceDef) -> SourceSpec {
     match def {
         SourceDef::Directory {
             path,
@@ -232,7 +232,7 @@ fn ff_spec_from_def(def: GitFastForward) -> GitFastForwardSpec {
 }
 
 /// Persist a pending source decision under a process directory.
-pub fn write_pending_source(
+pub(crate) fn write_pending_source(
     record_dir: &Path,
     pending: &PendingSourceDecision,
 ) -> Result<(), SourceBuildError> {
@@ -242,7 +242,7 @@ pub fn write_pending_source(
 }
 
 /// Read a pending source decision from a process record.
-pub fn read_pending_source(
+pub(crate) fn read_pending_source(
     record: &ProcessRecord,
 ) -> Result<PendingSourceDecision, SourceBuildError> {
     let path = record.dir().join(PENDING_SOURCE_FILE);
@@ -257,7 +257,7 @@ pub fn read_pending_source(
 }
 
 /// Remove a pending source decision from a process record.
-pub fn clear_pending_source(record: &ProcessRecord) -> Result<(), SourceBuildError> {
+pub(crate) fn clear_pending_source(record: &ProcessRecord) -> Result<(), SourceBuildError> {
     let path = record.dir().join(PENDING_SOURCE_FILE);
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),

@@ -1,0 +1,14 @@
+workspace local {
+  base = "."
+}
+
+agent noop as codex {}
+
+agent noop as claude {}
+
+runner {
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "Ambiguous agent."
+}

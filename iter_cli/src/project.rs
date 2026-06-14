@@ -41,11 +41,11 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// Environment variable consulted when no explicit override is passed.
-pub const ENV_PROJECT_NAME: &str = "COMPOSE_PROJECT_NAME";
+pub(crate) const ENV_PROJECT_NAME: &str = "COMPOSE_PROJECT_NAME";
 
 /// Errors returned by [`project_slug`].
 #[derive(Debug, Error)]
-pub enum ProjectSlugError {
+pub(crate) enum ProjectSlugError {
     /// The compose file path has no parent directory we can use as a
     /// fallback (e.g. it was a bare filename with no on-disk presence).
     #[error("cannot derive project name: {compose_path:?} has no parent directory")]
@@ -87,7 +87,7 @@ pub enum ProjectSlugError {
 /// (e.g. length caps) without bumping the major version.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum SlugValidationError {
+pub(crate) enum SlugValidationError {
     /// Empty input.
     #[error("project name is empty")]
     Empty,
@@ -128,7 +128,7 @@ pub enum SlugValidationError {
 ///
 /// Returns [`ProjectSlugError`] when no slug source is available or the
 /// derived candidate fails docker-compose validation.
-pub fn project_slug(
+pub(crate) fn project_slug(
     compose_path: &Path,
     override_name: Option<&str>,
 ) -> Result<String, ProjectSlugError> {
@@ -190,7 +190,7 @@ fn normalise(raw: &str) -> String {
 ///
 /// Returns [`ProjectSlugError::Invalid`] when the input violates the
 /// docker-compose slug rule.
-pub fn validate(name: &str) -> Result<String, ProjectSlugError> {
+pub(crate) fn validate(name: &str) -> Result<String, ProjectSlugError> {
     let mut chars = name.chars();
     let first = chars.next().ok_or(ProjectSlugError::Invalid {
         source: SlugValidationError::Empty,

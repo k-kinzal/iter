@@ -1,0 +1,11 @@
+workspace local as dev {
+  base = "."
+}
+
+agent noop as primary {}
+
+runner {
+  continue_on_error = false
+  behavior = loop
+  prompt = "Implicit aliased binding."
+}

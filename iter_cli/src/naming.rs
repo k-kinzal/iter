@@ -2,17 +2,17 @@
 //!
 //! The registry validates names tightly (no leading dot, ASCII only, no
 //! control or path characters, ≤128 bytes — see
-//! `iter_core::process::name_lock::name::validate_name`). When the user
+//! `crate::process::name_lock::name::validate_name`). When the user
 //! does not pass `--name`, we synthesise a default from the iterfile
 //! stem; this module is what makes that default safe to feed straight
 //! into the registry.
 
 use std::path::Path;
 
-use iter_core::process::ProcessId;
+use crate::process::ProcessId;
 
 /// Soft upper bound on a generated default name. Mirrors
-/// `iter_core::process::name_lock::name::NAME_MAX_BYTES`; kept in lockstep
+/// `crate::process::name_lock::name::NAME_MAX_BYTES`; kept in lockstep
 /// because the registry rejects longer values with `InvalidName`.
 const MAX_NAME_BYTES: usize = 128;
 
@@ -21,7 +21,7 @@ const MAX_NAME_BYTES: usize = 128;
 /// The basename is sanitised to satisfy `validate_name` (ASCII-only, no
 /// leading dot, no path/control characters); the suffix is a ULID, which
 /// is both collision-resistant and inside the allowed character set.
-pub fn default_process_name(iterfile: &Path) -> String {
+pub(crate) fn default_process_name(iterfile: &Path) -> String {
     let stem = iterfile
         .file_stem()
         .and_then(|s| s.to_str())

@@ -22,16 +22,18 @@ use thiserror::Error;
 
 use crate::output::{IntoExitCode, exit_codes};
 
-pub use down::run_compose_down;
-pub use inspect::{run_compose_config, run_compose_ls, run_compose_ps, run_compose_validate};
-pub use up::run_compose_up;
+pub(crate) use down::run_compose_down;
+pub(crate) use inspect::{
+    run_compose_config, run_compose_ls, run_compose_ps, run_compose_validate,
+};
+pub(crate) use up::run_compose_up;
 
 /// Errors produced by `iter compose up`.
 ///
 /// Heavy underlying error types (`ProcessError`, `ComposeError`) are boxed
 /// so the enum stays inside clippy's `result_large_err` budget.
 #[derive(Debug, Error)]
-pub enum ComposeUpError {
+pub(crate) enum ComposeUpError {
     /// Loading or building the compose file failed.
     #[error(transparent)]
     Compose(Box<ComposeError>),
@@ -59,11 +61,11 @@ pub enum ComposeUpError {
     /// Deriving the docker-compose-style project slug failed.
     #[error(transparent)]
     ProjectSlug(Box<ProjectSlugError>),
-    /// Capturing the orchestrator's own [`ProcessIdentity`](iter_core::process::ProcessIdentity)
+    /// Capturing the orchestrator's own [`ProcessIdentity`](crate::process::ProcessIdentity)
     /// at startup failed; without it we cannot stamp orchestrator-discovery
     /// labels onto child runners.
     #[error("collecting orchestrator identity: {0}")]
-    OrchestratorIdentity(#[source] Box<iter_core::process::ProcessError>),
+    OrchestratorIdentity(#[source] Box<crate::process::ProcessError>),
     /// Scanning the registry for an existing project orchestrator failed.
     #[error("scanning registry for active project: {0}")]
     Discovery(#[source] Box<crate::DiscoveryError>),
@@ -200,7 +202,7 @@ impl IntoExitCode for ComposeUpError {
 
 /// Errors produced by `iter compose validate` / `iter compose config`.
 #[derive(Debug, Error)]
-pub enum ComposePlanError {
+pub(crate) enum ComposePlanError {
     /// Loading or building the compose file failed.
     #[error(transparent)]
     Compose(#[from] ComposeError),
@@ -224,7 +226,7 @@ impl IntoExitCode for ComposePlanError {
 /// These commands work against the runtime registry rather than a
 /// `compose.iter` plan, so their failures live in their own enum.
 #[derive(Debug, Error)]
-pub enum ComposeRuntimeError {
+pub(crate) enum ComposeRuntimeError {
     /// Walking the local registry to discover compose-tagged runners failed.
     #[error(transparent)]
     Discovery(#[from] crate::DiscoveryError),
@@ -233,7 +235,7 @@ pub enum ComposeRuntimeError {
     ProjectSlug(Box<ProjectSlugError>),
     /// Opening a runner handle to deliver `SIGTERM`/`SIGKILL` failed.
     #[error(transparent)]
-    Process(#[from] iter_core::process::ProcessError),
+    Process(#[from] crate::process::ProcessError),
     /// Serialising the listing to JSON failed.
     #[error("serializing compose listing: {0}")]
     JsonSerialize(#[source] serde_json::Error),
@@ -336,7 +338,7 @@ pub(crate) fn compose_error_exit_code(e: &ComposeError) -> i32 {
 
 /// Aggregate compose-subcommand error.
 #[derive(Debug, Error)]
-pub enum ComposeCmdError {
+pub(crate) enum ComposeCmdError {
     /// `iter compose up` failure.
     #[error(transparent)]
     Up(#[from] ComposeUpError),

@@ -9,11 +9,10 @@
 //! Workspace implementations are core — not drivers.
 //!
 //! The [`EventAction`] sink trait lives alongside the runner that emits
-//! into it ([`runner`]). The [`process`] module provides OS-level
-//! process lifecycle, registry, and shutdown management used by the operator
-//! surface (the CLI). [`process_group`] owns a spawned process tree by its
+//! into it ([`runner`]). [`os_signal`] mirrors process-level interrupts onto
+//! cancellation tokens. [`process_group`] owns a spawned process tree by its
 //! OS process-group id so a cancel can SIGTERM/SIGKILL the whole tree; it is
-//! a primitive, distinct from the run-record concepts under [`process`].
+//! a primitive, distinct from the CLI-owned iter process run records.
 //!
 //! Signal sources (triggers) live in the per-trigger CLI crates
 //! (`iter-cron`, `iter-watch`, etc.); they connect to runners through the
@@ -23,13 +22,12 @@
 //! queues carry them across a boundary, and runners apply each signal to an
 //! agent inside a workspace.
 
-#![warn(missing_docs)]
 #![deny(rust_2018_idioms)]
 
 pub mod agent;
 pub mod home;
 pub mod log;
-pub mod process;
+pub mod os_signal;
 pub mod process_group;
 pub mod prompt;
 pub mod queue;
@@ -38,6 +36,7 @@ pub mod signal;
 pub mod source;
 pub mod telemetry;
 pub mod template;
+pub mod time;
 pub mod workspace;
 
 pub use agent::{Agent, AgentInvocation, AgentRun};
@@ -47,8 +46,8 @@ pub use prompt::{
 pub use queue::{Priority, Queue};
 pub use runner::{
     BoxError, BuilderError, ErrorSource, EventAction, EventDispatcher, EventName, HookEvent,
-    IterationContext, IterationState, PreviousResult, Runner, RunnerBuilder, RunnerExitError,
-    RunnerPolicy, RunnerSummary, RunnerTerminationReason, SharedSignal, SignalAcquisition,
+    IterationContext, IterationState, PriorIterationStatus, Runner, RunnerBuilder, RunnerError,
+    RunnerPolicy, RunnerTerminationReason, SharedSignal, SignalAcquisition,
 };
 pub use signal::{
     Metadata, MetadataError, MetadataKey, MetadataValue, Signal, SignalId, SignalKind,
@@ -56,4 +55,5 @@ pub use signal::{
 pub use template::{
     IterationRenderContext, RunnerRenderContext, SignalContext, Template, TemplateError,
 };
+pub use time::{Clock, DeterministicIdSource, FixedClock, IdSource, SystemClock, SystemIdSource};
 pub use workspace::{SandboxProfile, Workspace, match_env_pattern};

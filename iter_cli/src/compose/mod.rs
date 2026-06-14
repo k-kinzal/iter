@@ -24,27 +24,27 @@ use std::path::Path;
 
 use iter_language::{Compose, parse_compose};
 
-pub use error::{ComposeError, TargetedSpawnError};
-pub use plan::{ComposePlan, build, build_single_service};
-pub use run::{run, spawn_targeted_service};
-pub use service::{
-    CompletedTask, ComposeReport, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID,
+pub(crate) use error::{ComposeError, TargetedSpawnError};
+pub(crate) use plan::{ComposePlan, build, build_single_service};
+pub(crate) use run::{run, spawn_targeted_service};
+pub(crate) use service::{
+    CompletedServices, CompletedTask, FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID,
     LABEL_ORCHESTRATOR_PID, LABEL_ORCHESTRATOR_START_TIME, LABEL_PROJECT, LABEL_SERVICE,
     OrchestratorContext,
 };
-pub use supervisor::{
+pub(crate) use supervisor::{
     TriggerLifecycleState, TriggerStatus, read_status as read_trigger_status, trigger_state_dir,
     trigger_state_root,
 };
-pub use trigger::TriggerRunError;
+pub(crate) use trigger::TriggerRunError;
 
 /// Default basename used by `iter compose` when no `-f` flag is supplied.
-pub const DEFAULT_COMPOSE_FILE: &str = "compose.iter";
+pub(crate) const DEFAULT_COMPOSE_FILE: &str = "compose.iter";
 
 /// Return `true` when `path`'s basename identifies a compose file
 /// (`compose.iter` or any `*.compose.iter`).
 #[must_use]
-pub fn is_compose_filename(path: &Path) -> bool {
+pub(crate) fn is_compose_filename(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(|n| n == DEFAULT_COMPOSE_FILE || n.ends_with(".compose.iter"))
@@ -56,7 +56,7 @@ pub fn is_compose_filename(path: &Path) -> bool {
 ///
 /// * The file does not exist or cannot be read.
 /// * The parser produced one or more error-severity diagnostics.
-pub fn load_compose(path: &Path) -> Result<Compose, ComposeError> {
+pub(crate) fn load_compose(path: &Path) -> Result<Compose, ComposeError> {
     let source = std::fs::read_to_string(path).map_err(|e| ComposeError::io(path, e))?;
     parse_compose(&source).map_err(|diags| ComposeError::parse(path, &source, &diags))
 }

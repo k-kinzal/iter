@@ -13,11 +13,20 @@ fn duration_field(source: &str) -> i64 {
     let file = cst.expect("cst");
     let body = match &file.sections[0] {
         CstSection::Block { body, .. } => body.as_ref().expect("body"),
-        _ => panic!("expected block section"),
+        CstSection::Prompt { .. } | CstSection::On { .. } => {
+            panic!("expected block section")
+        }
     };
     match &body.fields[0].value {
         CstValue::Duration(secs, _) => *secs,
-        other => panic!("expected duration, got {other:?}"),
+        other @ (CstValue::String(..)
+        | CstValue::Integer(..)
+        | CstValue::Bool(..)
+        | CstValue::Null(_)
+        | CstValue::Ident(..)
+        | CstValue::List(..)
+        | CstValue::Block(_)
+        | CstValue::Call { .. }) => panic!("expected duration, got {other:?}"),
     }
 }
 

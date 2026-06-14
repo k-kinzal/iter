@@ -188,7 +188,30 @@ impl<'a> Parser<'a> {
                 {
                     return;
                 }
-                _ => {
+                Token::LBracket
+                | Token::RBracket
+                | Token::LParen
+                | Token::RParen
+                | Token::Comma
+                | Token::Equals
+                | Token::EqEq
+                | Token::BangEq
+                | Token::Lt
+                | Token::LtEq
+                | Token::Gt
+                | Token::GtEq
+                | Token::Percent
+                | Token::AmpAmp
+                | Token::PipePipe
+                | Token::Dot
+                | Token::FatArrow
+                | Token::String(_)
+                | Token::Integer(_)
+                | Token::Duration(_)
+                | Token::True
+                | Token::False
+                | Token::Null
+                | Token::Ident(_) => {
                     self.bump();
                 }
             }

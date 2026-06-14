@@ -270,7 +270,14 @@ impl Analyzer {
                     None
                 }
             },
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "`extract` must be `regex(\"...\")`",
@@ -385,7 +392,14 @@ impl Analyzer {
                 }
                 (items, span)
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(
                     Diagnostic::error(other.span(), "`kinds` must be a list of strings")
                         .with_hint("e.g. kinds = [\"created\", \"modified\"]"),
@@ -399,15 +413,29 @@ impl Analyzer {
         for item in items {
             match item {
                 CstValue::String(s, span) => match s.as_str() {
-                    "created" | "modified" | "removed" => {
-                        let kind = match s.as_str() {
-                            "created" => WatchEventKind::Created,
-                            "modified" => WatchEventKind::Modified,
-                            "removed" => WatchEventKind::Removed,
-                            _ => unreachable!(),
-                        };
-                        if seen.insert(kind) {
-                            out.push(kind);
+                    "created" => {
+                        if seen.insert(WatchEventKind::Created) {
+                            out.push(WatchEventKind::Created);
+                        } else {
+                            self.errors.push(Diagnostic::warning(
+                                span,
+                                format!("duplicate kind `{s}` in `kinds` list"),
+                            ));
+                        }
+                    }
+                    "modified" => {
+                        if seen.insert(WatchEventKind::Modified) {
+                            out.push(WatchEventKind::Modified);
+                        } else {
+                            self.errors.push(Diagnostic::warning(
+                                span,
+                                format!("duplicate kind `{s}` in `kinds` list"),
+                            ));
+                        }
+                    }
+                    "removed" => {
+                        if seen.insert(WatchEventKind::Removed) {
+                            out.push(WatchEventKind::Removed);
                         } else {
                             self.errors.push(Diagnostic::warning(
                                 span,
@@ -423,7 +451,14 @@ impl Analyzer {
                         );
                     }
                 },
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     had_error = true;
                     self.errors.push(Diagnostic::error(
                         other.span(),
@@ -494,7 +529,14 @@ impl Analyzer {
                                     ),
                                 );
                             }
-                            other => {
+                            other @ (CstValue::Integer(..)
+                            | CstValue::Duration(..)
+                            | CstValue::Bool(..)
+                            | CstValue::Null(_)
+                            | CstValue::Ident(..)
+                            | CstValue::List(..)
+                            | CstValue::Block(_)
+                            | CstValue::Call { .. }) => {
                                 self.errors.push(Diagnostic::error(
                                     other.span(),
                                     "`from` list elements must be strings",
@@ -504,7 +546,13 @@ impl Analyzer {
                     }
                     if out.is_empty() { None } else { Some(out) }
                 }
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         "`from` must be `stdin`, a string path, or a list of path strings",
@@ -515,7 +563,14 @@ impl Analyzer {
         } else if let Some(field) = fields.remove("path") {
             match field.value {
                 CstValue::String(s, _) => Some(vec![FilesSource::Path(s)]),
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors
                         .push(Diagnostic::error(other.span(), "`path` must be a string"));
                     None

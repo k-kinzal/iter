@@ -32,24 +32,25 @@ use crate::ast::{
     WorkspaceSourceRef,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{CstBlock, CstFile, CstIdent, CstSection};
+use crate::parser::{CstBlock, CstFile, CstGuard, CstIdent, CstSection};
 
-// Hint strings for diagnostics about removed project-shaped defaults. The
-// text is intentionally verbose because each explains *why* iter no longer
-// picks the value — the user should not have to read the source to
-// understand.
+// Hint strings for semantic diagnostics. Most explain removed project-shaped
+// defaults; the command hint is scoped to generic agents, which have no
+// conventional binary to infer.
 const EXCLUDES_HINT: &str = "iter no longer ships a default exclude list — `[\"target\", \"node_modules\", \".venv\"]` is a project-shaped decision. Use `excludes = []` for \"no exclusions\" or list the directories you want skipped.";
 const PRESERVE_MTIME_HINT: &str = "iter no longer picks a default — set `preserve_mtime = true` to copy source mtimes into the clone, or `preserve_mtime = false` to let them bump to \"now\".";
 const APPLY_BACK_HINT: &str = "iter no longer picks a default — add an `apply_back { mode = sync | merge | discard; excludes = [...]; includes = [...] }` block. `mode` is required; `excludes` and `includes` default to `[]` (and must stay empty when `mode = discard`).";
 const APPLY_BACK_MODE_HINT: &str = "iter no longer picks a default — set `mode = sync` (copy back and delete orphans), `mode = merge` (copy back without deleting), or `mode = discard` (drop the clone on teardown).";
 const APPLY_BACK_DISCARD_FILTER_HINT: &str = "remove the field, or change `mode` from `discard` to `sync` or `merge` so the filter has somewhere to apply.";
-const COMMAND_HINT: &str = "iter no longer resolves agent binaries from `PATH` by default — set `command = \"...\"` to the binary name (e.g. `\"claude\"`) or an absolute path to pin it.";
+const COMMAND_HINT: &str =
+    "add `command = [\"prog\", \"--flag\"]`; generic agents have no default binary";
 const MODE_HINT: &str = "iter no longer picks a default — set `mode = print` for non-interactive batch output or `mode = interactive` for TTY-attached sessions.";
 const NETWORK_HINT: &str = "iter no longer defaults sandbox network access — set `network = off`, `network = all`, or `network = [ \"host1\", ... ]`. Agent-required hosts are merged in automatically; list only project-additional hosts.";
 const POLICY_HINT: &str = "add `policy { network = off }` (or the network rule your project needs). The agent's declared lower-bound requirements are merged in automatically.";
 const CONTINUE_ON_ERROR_HINT: &str = "iter no longer picks a default — set `continue_on_error = true` to keep the loop running after a failed signal, or `continue_on_error = false` to abort.";
 const RUNNER_BEHAVIOR_HINT: &str = "iter no longer picks a default — set `behavior = wait` to park on the queue (queue required) or `behavior = loop { delay_secs = N }` to synthesise an empty signal each iteration.";
 const TRIGGER_IN_ITERFILE_HINT: &str = "trigger declarations belong in `compose.iter`, not in an Iterfile. Run `iter compose up` against a `compose.iter` that wires this trigger to a service.";
+const IMPLICIT_RUNNER_BINDING: &str = "\0implicit-runner-binding";
 
 pub(crate) fn lower_and_check(file: CstFile) -> (Option<Iterfile>, Vec<Diagnostic>) {
     let mut analyzer = Analyzer::default();
@@ -94,18 +95,40 @@ impl Analyzer {
     /// Lower an Iterfile into the typed [`Iterfile`] AST.
     ///
     /// The Iterfile grammar is named definitions (`agent`/`workspace`/`queue`
-    /// and `prompt as <name>`) bound by a `runner { agent = ... workspace = ... }`
-    /// block. The legacy flat form — top-level definitions desugared into a
-    /// synthetic runner — is no longer supported; its constructs are reported
-    /// as semantic errors that name the replacement.
-    #[allow(clippy::too_many_lines)]
+    /// and `prompt as <name>`) bound by a `runner` block. `agent` and
+    /// `workspace` references may be omitted only when the file has exactly
+    /// one definition of that kind. The legacy flat form — top-level prompt
+    /// and events desugared into a synthetic runner — is no longer supported;
+    /// its constructs are reported as semantic errors that name the replacement.
     fn lower(&mut self, file: CstFile) -> Iterfile {
         let mut root = Iterfile::default();
         let mut seen = SectionSeen::default();
 
         for section in file.sections {
-            match section {
-                CstSection::Block {
+            self.lower_section(&mut root, &mut seen, section);
+        }
+
+        self.validate_workspace_source_refs(&root);
+        self.resolve_implicit_runner_bindings(&mut root);
+        self.validate_runner_refs(&root);
+
+        root
+    }
+
+    fn lower_section(&mut self, root: &mut Iterfile, seen: &mut SectionSeen, section: CstSection) {
+        match section {
+            CstSection::Block {
+                keyword,
+                keyword_span,
+                kind,
+                kind2,
+                alias,
+                body,
+                span,
+            } => self.lower_iter_block_section(
+                root,
+                seen,
+                IterBlockSection {
                     keyword,
                     keyword_span,
                     kind,
@@ -113,198 +136,224 @@ impl Analyzer {
                     alias,
                     body,
                     span,
-                } => {
-                    if let Some(extra) = &kind2 {
-                        self.errors.push(Diagnostic::error(
-                            extra.span.clone(),
-                            format!(
-                                "unexpected second identifier `{}` after `{}` section",
-                                extra.name, keyword,
-                            ),
-                        ).with_hint("Iterfile sections take a single kind identifier; named sections (`queue main file { ... }`) belong in `compose.iter`."));
-                    }
-                    match keyword.as_str() {
-                        "arg" => {
-                            self.lower_arg_section(
-                                &mut root,
-                                &mut seen,
-                                kind,
-                                keyword_span,
-                                body,
-                                span,
-                            );
-                        }
-                        "queue" => {
-                            let def_name = alias
-                                .as_ref()
-                                .map(|a| a.name.clone())
-                                .or_else(|| kind.as_ref().map(|k| k.name.clone()));
-                            let Some(name) = def_name else {
-                                self.errors.push(Diagnostic::error(
-                                    keyword_span.clone(),
-                                    "`queue` requires a kind (and optionally `as <name>`)",
-                                ));
-                                continue;
-                            };
-                            if self.reject_duplicate_name(&seen.queue_names, &name, &span, "queue")
-                            {
-                                continue;
-                            }
-                            seen.queue_names.insert(name.clone(), span.clone());
-                            if let Some(decl) = self.lower_queue(kind, body, &keyword_span) {
-                                root.queues
-                                    .push(Spanned::new(NamedDef { name, decl }, span));
-                            }
-                        }
-                        "workspace" => {
-                            let def_name = alias
-                                .as_ref()
-                                .map(|a| a.name.clone())
-                                .or_else(|| kind.as_ref().map(|k| k.name.clone()));
-                            let Some(name) = def_name else {
-                                self.errors.push(Diagnostic::error(
-                                    keyword_span.clone(),
-                                    "`workspace` requires a kind (and optionally `as <name>`)",
-                                ));
-                                continue;
-                            };
-                            if self.reject_duplicate_name(
-                                &seen.workspace_names,
-                                &name,
-                                &span,
-                                "workspace",
-                            ) {
-                                continue;
-                            }
-                            seen.workspace_names.insert(name.clone(), span.clone());
-                            if let Some(decl) = self.lower_workspace(kind, body, &keyword_span) {
-                                root.workspaces
-                                    .push(Spanned::new(NamedDef { name, decl }, span));
-                            }
-                        }
-                        "source" => {
-                            let def_name = alias
-                                .as_ref()
-                                .map(|a| a.name.clone())
-                                .or_else(|| kind.as_ref().map(|k| k.name.clone()));
-                            let Some(name) = def_name else {
-                                self.errors.push(Diagnostic::error(
-                                    keyword_span.clone(),
-                                    "`source` requires a kind (and optionally `as <name>`)",
-                                ));
-                                continue;
-                            };
-                            if self.reject_duplicate_name(
-                                &seen.source_names,
-                                &name,
-                                &span,
-                                "source",
-                            ) {
-                                continue;
-                            }
-                            seen.source_names.insert(name.clone(), span.clone());
-                            if let Some(decl) = self.lower_source(kind, body, &keyword_span) {
-                                root.sources
-                                    .push(Spanned::new(NamedDef { name, decl }, span));
-                            }
-                        }
-                        "agent" => {
-                            let def_name = alias
-                                .as_ref()
-                                .map(|a| a.name.clone())
-                                .or_else(|| kind.as_ref().map(|k| k.name.clone()));
-                            let Some(name) = def_name else {
-                                self.errors.push(Diagnostic::error(
-                                    keyword_span.clone(),
-                                    "`agent` requires a kind (and optionally `as <name>`)",
-                                ));
-                                continue;
-                            };
-                            if self.reject_duplicate_name(&seen.agent_names, &name, &span, "agent")
-                            {
-                                continue;
-                            }
-                            seen.agent_names.insert(name.clone(), span.clone());
-                            if let Some(decl) = self.lower_agent(kind, body, &keyword_span) {
-                                root.agents
-                                    .push(Spanned::new(NamedDef { name, decl }, span));
-                            }
-                        }
-                        "trigger" => {
-                            drop((kind, body));
-                            self.errors.push(
-                                Diagnostic::error(
-                                    span,
-                                    "`trigger` is no longer a valid top-level section in an Iterfile",
-                                )
-                                .with_hint(TRIGGER_IN_ITERFILE_HINT),
-                            );
-                        }
-                        "runner" => {
-                            if let Some(decl) =
-                                self.lower_runner_new(kind.as_ref(), alias, body, &keyword_span)
-                            {
-                                root.runners.push(Spanned::new(decl, span));
-                            }
-                        }
-                        other => {
-                            self.errors.push(Diagnostic::error(
-                                keyword_span,
-                                format!("unknown top-level keyword `{other}`"),
-                            ));
-                        }
-                    }
-                }
-                CstSection::Prompt {
+                },
+            ),
+            CstSection::Prompt {
+                name,
+                guard,
+                body,
+                span,
+                body_span,
+                ..
+            } => self.lower_prompt_section(
+                root,
+                seen,
+                IterPromptSection {
                     name,
                     guard,
                     body,
                     span,
                     body_span,
-                    ..
-                } => {
-                    if let Some(name_ident) = name {
-                        if guard.is_some() {
-                            self.errors.push(Diagnostic::error(
-                                span.clone(),
-                                "named prompt definitions (`prompt as <name>`) cannot have `when` guards",
-                            ));
-                        }
-                        self.validate_template(&body, &body_span, TemplatePosition::Prompt);
-                        if self.reject_duplicate_name(
-                            &seen.prompt_names,
-                            &name_ident.name,
-                            &span,
-                            "prompt",
-                        ) {
-                            continue;
-                        }
-                        seen.prompt_names
-                            .insert(name_ident.name.clone(), span.clone());
-                        root.prompts.push(Spanned::new(
-                            NamedPrompt {
-                                name: name_ident.name,
-                                body,
-                            },
-                            span,
-                        ));
-                    } else {
-                        self.errors.push(Diagnostic::error(
-                            span,
-                            "top-level `prompt \"...\"` is no longer supported; define a named prompt with `prompt as <name> \"...\"` and reference it, or write the prompt inside the runner block (`prompt = \"...\"` or a `prompt { <guard> => ..., _ => ... }` match)",
-                        ));
-                    }
-                }
-                CstSection::On { span, .. } => {
-                    self.errors.push(Diagnostic::error(
-                        span,
-                        "top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`",
-                    ));
-                }
+                },
+            ),
+            CstSection::On { span, .. } => {
+                self.errors.push(Diagnostic::error(
+                    span,
+                    "top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`",
+                ));
             }
         }
+    }
 
-        // Validate runner references.
+    fn lower_iter_block_section(
+        &mut self,
+        root: &mut Iterfile,
+        seen: &mut SectionSeen,
+        section: IterBlockSection,
+    ) {
+        if let Some(extra) = &section.kind2 {
+            self.errors.push(Diagnostic::error(
+                extra.span.clone(),
+                format!(
+                    "unexpected second identifier `{}` after `{}` section",
+                    extra.name, section.keyword,
+                ),
+            ).with_hint("Iterfile sections take a single kind identifier; named sections (`queue main file { ... }`) belong in `compose.iter`."));
+        }
+        match section.keyword.as_str() {
+            "arg" => self.lower_arg_section(
+                root,
+                seen,
+                section.kind,
+                section.keyword_span,
+                section.body,
+                section.span,
+            ),
+            "queue" => self.lower_queue_section(root, seen, section),
+            "workspace" => self.lower_workspace_section(root, seen, section),
+            "source" => self.lower_source_section(root, seen, section),
+            "agent" => self.lower_agent_section(root, seen, section),
+            "trigger" => {
+                self.errors.push(
+                    Diagnostic::error(
+                        section.span,
+                        "`trigger` is no longer a valid top-level section in an Iterfile",
+                    )
+                    .with_hint(TRIGGER_IN_ITERFILE_HINT),
+                );
+            }
+            "runner" => {
+                if let Some(decl) = self.lower_runner_new(
+                    section.kind.as_ref(),
+                    section.alias,
+                    section.body,
+                    &section.keyword_span,
+                ) {
+                    root.runners.push(Spanned::new(decl, section.span));
+                }
+            }
+            other => {
+                self.errors.push(Diagnostic::error(
+                    section.keyword_span,
+                    format!("unknown top-level keyword `{other}`"),
+                ));
+            }
+        }
+    }
+
+    fn lower_prompt_section(
+        &mut self,
+        root: &mut Iterfile,
+        seen: &mut SectionSeen,
+        section: IterPromptSection,
+    ) {
+        if let Some(name_ident) = section.name {
+            if section.guard.is_some() {
+                self.errors.push(Diagnostic::error(
+                    section.span.clone(),
+                    "named prompt definitions (`prompt as <name>`) cannot have `when` guards",
+                ));
+            }
+            self.validate_template(&section.body, &section.body_span, TemplatePosition::Prompt);
+            if self.reject_duplicate_name(
+                &seen.prompt_names,
+                &name_ident.name,
+                &section.span,
+                "prompt",
+            ) {
+                return;
+            }
+            seen.prompt_names
+                .insert(name_ident.name.clone(), section.span.clone());
+            root.prompts.push(Spanned::new(
+                NamedPrompt {
+                    name: name_ident.name,
+                    body: section.body,
+                },
+                section.span,
+            ));
+        } else {
+            self.errors.push(Diagnostic::error(
+                section.span,
+                "top-level `prompt \"...\"` is no longer supported; define a named prompt with `prompt as <name> \"...\"` and reference it, or write the prompt inside the runner block (`prompt = \"...\"` or a `prompt { <guard> => ..., _ => ... }` match)",
+            ));
+        }
+    }
+
+    fn section_name(&mut self, section: &IterBlockSection, label: &str) -> Option<String> {
+        let name = section
+            .alias
+            .as_ref()
+            .map(|a| a.name.clone())
+            .or_else(|| section.kind.as_ref().map(|k| k.name.clone()));
+        if name.is_none() {
+            self.errors.push(Diagnostic::error(
+                section.keyword_span.clone(),
+                format!("`{label}` requires a kind (and optionally `as <name>`)"),
+            ));
+        }
+        name
+    }
+
+    fn lower_queue_section(
+        &mut self,
+        root: &mut Iterfile,
+        seen: &mut SectionSeen,
+        section: IterBlockSection,
+    ) {
+        let Some(name) = self.section_name(&section, "queue") else {
+            return;
+        };
+        if self.reject_duplicate_name(&seen.queue_names, &name, &section.span, "queue") {
+            return;
+        }
+        seen.queue_names.insert(name.clone(), section.span.clone());
+        if let Some(decl) = self.lower_queue(section.kind, section.body, &section.keyword_span) {
+            root.queues
+                .push(Spanned::new(NamedDef { name, decl }, section.span));
+        }
+    }
+
+    fn lower_workspace_section(
+        &mut self,
+        root: &mut Iterfile,
+        seen: &mut SectionSeen,
+        section: IterBlockSection,
+    ) {
+        let Some(name) = self.section_name(&section, "workspace") else {
+            return;
+        };
+        if self.reject_duplicate_name(&seen.workspace_names, &name, &section.span, "workspace") {
+            return;
+        }
+        seen.workspace_names
+            .insert(name.clone(), section.span.clone());
+        if let Some(decl) = self.lower_workspace(section.kind, section.body, &section.keyword_span)
+        {
+            root.workspaces
+                .push(Spanned::new(NamedDef { name, decl }, section.span));
+        }
+    }
+
+    fn lower_source_section(
+        &mut self,
+        root: &mut Iterfile,
+        seen: &mut SectionSeen,
+        section: IterBlockSection,
+    ) {
+        let Some(name) = self.section_name(&section, "source") else {
+            return;
+        };
+        if self.reject_duplicate_name(&seen.source_names, &name, &section.span, "source") {
+            return;
+        }
+        seen.source_names.insert(name.clone(), section.span.clone());
+        if let Some(decl) = self.lower_source(section.kind, section.body, &section.keyword_span) {
+            root.sources
+                .push(Spanned::new(NamedDef { name, decl }, section.span));
+        }
+    }
+
+    fn lower_agent_section(
+        &mut self,
+        root: &mut Iterfile,
+        seen: &mut SectionSeen,
+        section: IterBlockSection,
+    ) {
+        let Some(name) = self.section_name(&section, "agent") else {
+            return;
+        };
+        if self.reject_duplicate_name(&seen.agent_names, &name, &section.span, "agent") {
+            return;
+        }
+        seen.agent_names.insert(name.clone(), section.span.clone());
+        if let Some(decl) = self.lower_agent(section.kind, section.body, &section.keyword_span) {
+            root.agents
+                .push(Spanned::new(NamedDef { name, decl }, section.span));
+        }
+    }
+
+    fn validate_workspace_source_refs(&mut self, root: &Iterfile) {
         for workspace in &root.workspaces {
             if let Some(WorkspaceSourceRef::Named(name)) =
                 workspace_source_ref(&workspace.node.decl)
@@ -316,10 +365,32 @@ impl Analyzer {
                 ));
             }
         }
+    }
 
-        // Validate runner references.
+    fn resolve_implicit_runner_bindings(&mut self, root: &mut Iterfile) {
+        for runner in &mut root.runners {
+            Self::resolve_runner_binding(
+                &mut runner.node.agent,
+                "agent",
+                root.agents.iter().map(|a| a.node.name.as_str()),
+                &runner.span,
+                &mut self.errors,
+            );
+            Self::resolve_runner_binding(
+                &mut runner.node.workspace,
+                "workspace",
+                root.workspaces.iter().map(|w| w.node.name.as_str()),
+                &runner.span,
+                &mut self.errors,
+            );
+        }
+    }
+
+    fn validate_runner_refs(&mut self, root: &Iterfile) {
         for runner in &root.runners {
-            if !root.agents.iter().any(|a| a.node.name == runner.node.agent) {
+            if runner.node.agent != IMPLICIT_RUNNER_BINDING
+                && !root.agents.iter().any(|a| a.node.name == runner.node.agent)
+            {
                 self.errors.push(Diagnostic::error(
                     runner.span.clone(),
                     format!(
@@ -332,6 +403,7 @@ impl Analyzer {
                 .workspaces
                 .iter()
                 .any(|w| w.node.name == runner.node.workspace)
+                && runner.node.workspace != IMPLICIT_RUNNER_BINDING
             {
                 self.errors.push(Diagnostic::error(
                     runner.span.clone(),
@@ -341,15 +413,14 @@ impl Analyzer {
                     ),
                 ));
             }
-            if let Some(ref q) = runner.node.queue {
-                if !root.queues.iter().any(|qd| qd.node.name == *q) {
-                    self.errors.push(Diagnostic::error(
-                        runner.span.clone(),
-                        format!("runner references queue `{q}` which is not defined"),
-                    ));
-                }
+            if let Some(ref q) = runner.node.queue
+                && !root.queues.iter().any(|qd| qd.node.name == *q)
+            {
+                self.errors.push(Diagnostic::error(
+                    runner.span.clone(),
+                    format!("runner references queue `{q}` which is not defined"),
+                ));
             }
-            // Validate prompt references.
             Self::validate_prompt_refs(
                 &runner.node.prompt,
                 &root.prompts,
@@ -357,8 +428,48 @@ impl Analyzer {
                 &mut self.errors,
             );
         }
+    }
 
-        root
+    fn resolve_runner_binding<'a>(
+        target: &mut String,
+        kind: &str,
+        names: impl Iterator<Item = &'a str>,
+        span: &Span,
+        errors: &mut Vec<Diagnostic>,
+    ) {
+        if target != IMPLICIT_RUNNER_BINDING {
+            return;
+        }
+
+        let names: Vec<&str> = names.collect();
+        match names.as_slice() {
+            [name] => *target = (*name).to_string(),
+            [] => {
+                errors.push(Diagnostic::error(
+                    span.clone(),
+                    format!("runner omits `{kind}` and no `{kind}` definition was found"),
+                ));
+            }
+            many => {
+                let candidates = many
+                    .iter()
+                    .map(|name| format!("`{name}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                errors.push(
+                    Diagnostic::error(
+                        span.clone(),
+                        format!(
+                            "runner omits `{kind}` but {} `{kind}` definitions exist ({candidates}); add `{kind} = <name>`",
+                            many.len()
+                        ),
+                    )
+                    .with_hint(format!(
+                        "flat Iterfile syntax is ambiguous with multiple `{kind}` definitions"
+                    )),
+                );
+            }
+        }
     }
 
     fn validate_prompt_refs(
@@ -471,6 +582,24 @@ fn workspace_source_ref(workspace: &WorkspaceDef) -> Option<&WorkspaceSourceRef>
         | WorkspaceDef::Clone { source, .. }
         | WorkspaceDef::Sandbox { source, .. } => source.as_ref(),
     }
+}
+
+struct IterBlockSection {
+    keyword: String,
+    keyword_span: Span,
+    kind: Option<CstIdent>,
+    kind2: Option<CstIdent>,
+    alias: Option<CstIdent>,
+    body: Option<CstBlock>,
+    span: Span,
+}
+
+struct IterPromptSection {
+    name: Option<CstIdent>,
+    guard: Option<CstGuard>,
+    body: String,
+    span: Span,
+    body_span: Span,
 }
 
 #[derive(Default)]

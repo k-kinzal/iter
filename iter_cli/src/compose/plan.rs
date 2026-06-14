@@ -29,7 +29,7 @@ pub(crate) struct ComposeService {
 /// Holds the constructed queues and runners in declaration order.
 /// Construction is fallible (see [`build`]); execution is async
 /// (see [`super::run`]).
-pub struct ComposePlan {
+pub(crate) struct ComposePlan {
     pub(crate) queues: BTreeMap<String, Arc<dyn Queue>>,
     pub(crate) services: Vec<ComposeService>,
     pub(crate) triggers: Vec<ComposeTrigger>,
@@ -60,46 +60,46 @@ impl std::fmt::Debug for ComposePlan {
 impl ComposePlan {
     /// Number of named queues built from the compose file.
     #[must_use]
-    pub fn queue_count(&self) -> usize {
+    pub(crate) fn queue_count(&self) -> usize {
         self.queues.len()
     }
 
     /// Number of services built from the compose file.
     #[must_use]
-    pub fn service_count(&self) -> usize {
+    pub(crate) fn service_count(&self) -> usize {
         self.services.len()
     }
 
     /// Iterate built queue names in declaration order.
-    pub fn queue_names(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn queue_names(&self) -> impl Iterator<Item = &str> {
         self.queues.keys().map(String::as_str)
     }
 
     /// Iterate built service names in declaration order.
-    pub fn service_names(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn service_names(&self) -> impl Iterator<Item = &str> {
         self.services.iter().map(|s| s.name.as_str())
     }
 
     /// Number of triggers in the flattened plan.
     #[must_use]
-    pub fn trigger_count(&self) -> usize {
+    pub(crate) fn trigger_count(&self) -> usize {
         self.triggers.len()
     }
 
     /// Iterate trigger names in the flattened plan.
-    pub fn trigger_names(&self) -> impl Iterator<Item = &str> {
+    pub(crate) fn trigger_names(&self) -> impl Iterator<Item = &str> {
         self.triggers.iter().map(|t| t.name.as_str())
     }
 
     /// Collect all declared service names as owned strings.
     #[must_use]
-    pub fn all_service_names(&self) -> Vec<String> {
+    pub(crate) fn all_service_names(&self) -> Vec<String> {
         self.services.iter().map(|s| s.name.clone()).collect()
     }
 
     /// Return service names whose `iterfile_path` matches `source`.
     #[must_use]
-    pub fn services_for_source(&self, source: &Path) -> Vec<String> {
+    pub(crate) fn services_for_source(&self, source: &Path) -> Vec<String> {
         let canonical_source =
             std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
         self.services
@@ -115,13 +115,13 @@ impl ComposePlan {
 
     /// Borrow the project-wide telemetry declaration, when present.
     #[must_use]
-    pub fn telemetry(&self) -> Option<&TelemetryDef> {
+    pub(crate) fn telemetry(&self) -> Option<&TelemetryDef> {
         self.telemetry.as_ref()
     }
 
     /// Look up the source compose file for a given element name.
     #[must_use]
-    pub fn source_of(&self, name: &str) -> Option<&Path> {
+    pub(crate) fn source_of(&self, name: &str) -> Option<&Path> {
         self.sources.get(name).map(PathBuf::as_path)
     }
 }
@@ -142,7 +142,7 @@ impl ComposePlan {
 ///   (compose-managed services must inherit the queue from
 ///   `compose.iter`).
 /// * A queue reference points at a name not declared in the file.
-pub fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, ComposeError> {
+pub(crate) fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, ComposeError> {
     let compose_dir = compose_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -213,11 +213,11 @@ pub fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, Compose
 }
 
 /// Output of [`build_single_service`].
-pub struct SingleServiceBuild {
+pub(crate) struct SingleServiceBuild {
     /// Path recorded into the per-service process registry entry.
-    pub iterfile_path: PathBuf,
+    pub(crate) iterfile_path: PathBuf,
     /// Runner builder ready for `.build()`.
-    pub builder: RunnerBuilder,
+    pub(crate) builder: RunnerBuilder,
 }
 
 /// Build only the named service from a parsed compose file.
@@ -232,7 +232,7 @@ pub struct SingleServiceBuild {
 /// * The named service is not present in the compose file.
 /// * The named service's referenced queue cannot be built.
 /// * Building the service itself fails.
-pub fn build_single_service(
+pub(crate) fn build_single_service(
     root: &Compose,
     compose_path: &Path,
     service_name: &str,

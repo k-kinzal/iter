@@ -27,7 +27,6 @@ pub mod local;
 pub(crate) mod mirror;
 pub mod sandbox;
 // Defining module named for the concept it defines — the path echo is deliberate.
-#[allow(clippy::module_inception)]
 pub mod workspace;
 
 pub use error::WorkspaceError;

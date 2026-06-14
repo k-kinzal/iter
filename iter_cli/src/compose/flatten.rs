@@ -103,8 +103,6 @@ fn resolve_child_path(
     };
     std::fs::canonicalize(&raw).map_err(|e| ComposeError::io(&raw, e))
 }
-
-#[allow(clippy::too_many_arguments)]
 fn merge_child_into_flat(
     compose_ref: &iter_language::NamedCompose,
     child_flat: &Compose,

@@ -21,7 +21,6 @@ pub(crate) struct TerminationArgs {
 }
 
 impl TerminationArgs {
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn shutdown_timeout(&self) -> Duration {
         Duration::from_secs(self.shutdown_timeout_secs)

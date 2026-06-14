@@ -3,7 +3,7 @@
 //!
 //! Owns the print-mode argv (`copilot -p … --allow-all-tools
 //! --output-format json`) and parses the CLI's complete output into a
-//! CLI-shaped [`CopilotResult`] or a CLI-shaped [`CopilotError`] hierarchy.
+//! CLI-shaped [`CopilotRun`] or a CLI-shaped [`CopilotError`] hierarchy.
 //! Nothing here is iter-domain — projecting these onto
 //! [`AgentRun`](crate::agent::AgentRun) / [`AgentError`](crate::agent::AgentError)
 //! is the driver's job (see the `From` impl in `mod.rs`).
@@ -77,8 +77,7 @@ pub(crate) struct CopilotUsage {
 // Captures the CLI's complete result per the no-output-loss design; iter
 // currently consumes only `session_id`, so the rest is read by this
 // module's tests and reserved for future Factors.
-#[allow(dead_code)]
-pub(crate) struct CopilotResult {
+pub(crate) struct CopilotRun {
     /// `sessionId` from the terminal record (feeds iter's session Factors).
     pub(crate) session_id: Option<String>,
     /// `exitCode` reported inside the terminal record, when present.
@@ -176,7 +175,7 @@ struct SessionError {
 /// camelCase keys (`sessionId`, `exitCode`).
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TerminalResult {
+struct TerminalRecord {
     #[serde(default)]
     session_id: Option<String>,
     #[serde(default)]
@@ -205,7 +204,7 @@ fn is_type(obj: &serde_json::Map<String, serde_json::Value>, marker: &str) -> bo
 /// The `session.error` record — when present — is authoritative: its presence
 /// *is* the failure signal, regardless of any terminal `result` that may also
 /// appear. Otherwise the terminal `result` record carries the success path.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<CopilotResult, CopilotError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<CopilotRun, CopilotError> {
     let stdout = output.stdout_str();
 
     let exit_code = match output.exit {
@@ -250,13 +249,13 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CopilotResult, Copilot
         return Err(CopilotError::NoResult { exit_code });
     };
 
-    let record: TerminalResult = serde_json::from_value(value).unwrap_or(TerminalResult {
+    let record: TerminalRecord = serde_json::from_value(value).unwrap_or(TerminalRecord {
         session_id: None,
         exit_code: None,
         usage: None,
     });
 
-    Ok(CopilotResult {
+    Ok(CopilotRun {
         session_id: record.session_id,
         exit_code: record.exit_code,
         usage: CopilotUsage {

@@ -91,7 +91,14 @@ impl Analyzer {
                     CstValue::String(s, span) => {
                         build_path = Some((s, span));
                     }
-                    other => {
+                    other @ (CstValue::Integer(..)
+                    | CstValue::Duration(..)
+                    | CstValue::Bool(..)
+                    | CstValue::Null(_)
+                    | CstValue::Ident(..)
+                    | CstValue::List(..)
+                    | CstValue::Block(_)
+                    | CstValue::Call { .. }) => {
                         self.errors.push(Diagnostic::error(
                             other.span(),
                             "service `build` must be a string path",
@@ -102,7 +109,14 @@ impl Analyzer {
                     CstValue::Ident(name, _) => {
                         queue_ref = Some(QueueRef::Named(name));
                     }
-                    other => {
+                    other @ (CstValue::String(..)
+                    | CstValue::Integer(..)
+                    | CstValue::Duration(..)
+                    | CstValue::Bool(..)
+                    | CstValue::Null(_)
+                    | CstValue::List(..)
+                    | CstValue::Block(_)
+                    | CstValue::Call { .. }) => {
                         self.errors.push(Diagnostic::error(
                             other.span(),
                             "service `queue` must reference a queue name (bareword)",
@@ -116,7 +130,14 @@ impl Analyzer {
                                 CstValue::String(s, _) => {
                                     arg_overrides.insert(args_field.name.name.clone(), s);
                                 }
-                                other => {
+                                other @ (CstValue::Integer(..)
+                                | CstValue::Duration(..)
+                                | CstValue::Bool(..)
+                                | CstValue::Null(_)
+                                | CstValue::Ident(..)
+                                | CstValue::List(..)
+                                | CstValue::Block(_)
+                                | CstValue::Call { .. }) => {
                                     self.errors.push(Diagnostic::error(
                                         other.span(),
                                         "service `args` values must be strings",
@@ -125,7 +146,14 @@ impl Analyzer {
                             }
                         }
                     }
-                    other => {
+                    other @ (CstValue::String(..)
+                    | CstValue::Integer(..)
+                    | CstValue::Duration(..)
+                    | CstValue::Bool(..)
+                    | CstValue::Null(_)
+                    | CstValue::Ident(..)
+                    | CstValue::List(..)
+                    | CstValue::Call { .. }) => {
                         self.errors.push(Diagnostic::error(
                             other.span(),
                             "service `args` must be a block of key = \"value\" pairs",
@@ -168,18 +196,24 @@ impl Analyzer {
         agent_section: &mut Option<Spanned<crate::ast::AgentDef>>,
         runner_section: &mut Option<Spanned<RunnerDef>>,
     ) {
-        let CstValue::Block(_) = field.value else {
-            self.errors.push(Diagnostic::error(
-                field.span,
-                format!("unexpected field `{}` in service body", field.name.name),
-            ));
-            return;
-        };
         let sub_keyword = field.name.name.clone();
         let sub_keyword_span = field.name.span.clone();
         let sub_body = match field.value {
             CstValue::Block(b) => Some(b),
-            _ => unreachable!(),
+            CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. } => {
+                self.errors.push(Diagnostic::error(
+                    field.span,
+                    format!("unexpected field `{}` in service body", field.name.name),
+                ));
+                return;
+            }
         };
         match sub_keyword.as_str() {
             "workspace_clone" | "workspace_local" | "workspace_sandbox" => {
@@ -187,7 +221,13 @@ impl Analyzer {
                     "workspace_clone" => "clone",
                     "workspace_local" => "local",
                     "workspace_sandbox" => "sandbox",
-                    _ => unreachable!(),
+                    other => {
+                        self.errors.push(Diagnostic::error(
+                            sub_keyword_span,
+                            format!("unknown nested workspace service section `{other}`"),
+                        ));
+                        return;
+                    }
                 };
                 let kind_ident = CstIdent {
                     name: kind_str.to_string(),

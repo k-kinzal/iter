@@ -1,0 +1,31 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent claude as default_claude {
+  mode = print
+}
+
+agent codex as default_codex {
+  mode = print
+}
+
+agent antigravity as default_antigravity {
+  mode = print
+}
+
+agent codex as pinned_codex {
+  mode    = print
+  command = "/opt/bin/codex"
+}
+
+runner {
+  agent = default_codex
+  workspace = local
+  queue = memory
+  continue_on_error = false
+  behavior = wait
+  prompt = "Default command test."
+}

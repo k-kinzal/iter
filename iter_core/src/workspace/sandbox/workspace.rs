@@ -7,8 +7,10 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::Workspace;
+use crate::time::{Clock, SystemClock};
 use crate::workspace::WorkspaceError;
 use async_trait::async_trait;
 use tokio::fs;
@@ -79,6 +81,7 @@ pub struct SandboxWorkspace {
     backend: Option<Box<dyn SandboxBackend>>,
     command_prefix: Vec<OsString>,
     set_up: bool,
+    clock: Arc<dyn Clock>,
 }
 
 impl SandboxWorkspace {
@@ -105,6 +108,29 @@ impl SandboxWorkspace {
             backend: None,
             command_prefix: Vec::new(),
             set_up: false,
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    /// Create a new [`SandboxWorkspace`] with an injected clock.
+    #[must_use]
+    pub fn with_clock(
+        base: impl Into<PathBuf>,
+        settings: CloneSettings,
+        policy: SandboxPolicy,
+        profile: SandboxProfile,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self {
+            base: base.into(),
+            settings,
+            policy,
+            profile,
+            mirror: None,
+            backend: None,
+            command_prefix: Vec::new(),
+            set_up: false,
+            clock,
         }
     }
 
@@ -159,11 +185,12 @@ impl SandboxWorkspace {
 
         let clone_filter = CloneFilter::compile(&self.settings.excludes, &self.settings.includes)?;
         let apply_back_filter = self.settings.apply_back_filter()?;
-        let mirror = Mirror::materialize(
+        let mirror = Mirror::materialize_with_clock(
             self.base.clone(),
             &clone_filter,
             apply_back_filter,
             self.settings.preserve_mtime,
+            Arc::clone(&self.clock),
         )
         .await?;
         let temp_path = mirror.path().to_path_buf();
@@ -356,7 +383,6 @@ mod tests {
     #[tokio::test]
     async fn temp_dir_cleaned_up_after_teardown() {
         if !SandboxWorkspace::detect_backend_available() {
-            eprintln!("skipping: no sandbox backend available");
             return;
         }
         let base = TempDir::new().expect("tempdir");
@@ -409,11 +435,12 @@ mod tests {
 
         let clone_filter = CloneFilter::compile(&[], &[]).expect("filter");
         let apply_back_filter = clone_settings().apply_back_filter().expect("abf");
-        let mirror = Mirror::materialize(
+        let mirror = Mirror::materialize_with_clock(
             base.path().to_path_buf(),
             &clone_filter,
             apply_back_filter,
             true,
+            Arc::new(SystemClock),
         )
         .await
         .expect("materialize");
@@ -428,6 +455,7 @@ mod tests {
             backend: Some(Box::new(FailingBackend)),
             command_prefix: Vec::new(),
             set_up: true,
+            clock: Arc::new(SystemClock),
         };
 
         assert!(temp.exists());
@@ -475,6 +503,7 @@ mod tests {
             backend: None,
             command_prefix: prefix.clone(),
             set_up: true,
+            clock: Arc::new(SystemClock),
         };
         assert_eq!(Workspace::sandbox_command_prefix(&ws), prefix.as_slice());
     }

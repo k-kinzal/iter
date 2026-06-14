@@ -21,15 +21,18 @@ use iter_core::agent::{
     CopilotAgent, CursorAgent, FakeAgent, GeminiAgent, GenericAgent, GrokAgent, HermesAgent,
     NoopAgent, OpenCodeAgent,
 };
-use iter_language::{AgentDef, AgentMode as AstAgentMode};
+use iter_language::{
+    AgentDef, AgentMode as AstAgentMode, RouterFallbackClass as AstFallbackClass,
+    RouterFallbackTriggers as AstFallbackTriggers,
+};
 use thiserror::Error;
 
-use iter_core::agent::{AgentRouter, RoutingStrategy};
+use iter_core::agent::{AgentRouter, FallbackClass, FallbackTriggers, RoutingStrategy};
 
 /// Errors produced while translating an [`AgentDef`] into a boxed
 /// [`Agent`](iter_core::Agent).
 #[derive(Debug, Error)]
-pub enum AgentBuildError {
+pub(crate) enum AgentBuildError {
     /// `agent generic { command = [] }` — a generic agent declaration with
     /// no command to invoke.
     #[error("agent generic requires a non-empty `command` array")]
@@ -112,8 +115,7 @@ fn build_grok(
 /// Returns [`AgentBuildError`] when the definition is structurally invalid
 /// for the chosen variant — the empty `generic { command = [] }` case and an
 /// empty `router { }`.
-#[allow(clippy::too_many_lines)]
-pub fn agent_from_def(def: &AgentDef) -> Result<Box<dyn Agent>, AgentBuildError> {
+pub(crate) fn agent_from_def(def: &AgentDef) -> Result<Box<dyn Agent>, AgentBuildError> {
     Ok(match def {
         AgentDef::Claude {
             mode,
@@ -230,13 +232,18 @@ pub fn agent_from_def(def: &AgentDef) -> Result<Box<dyn Agent>, AgentBuildError>
             agent.env = resolve_env(env);
             Box::new(agent)
         }
-        AgentDef::Router { agents, strategy } => Box::new(build_router(agents, *strategy)?),
+        AgentDef::Router {
+            agents,
+            strategy,
+            fallback_on,
+        } => Box::new(build_router(agents, *strategy, fallback_on)?),
     })
 }
 
 fn build_router(
     agents: &[(String, Box<AgentDef>)],
     strategy: iter_language::RouterStrategy,
+    fallback_on: &AstFallbackTriggers,
 ) -> Result<AgentRouter, AgentBuildError> {
     if agents.is_empty() {
         return Err(AgentBuildError::RouterEmpty);
@@ -253,7 +260,34 @@ fn build_router(
         })?;
         built.push((name.clone(), sub_agent));
     }
-    Ok(AgentRouter::new(built, routing_strategy))
+    Ok(AgentRouter::new(
+        built,
+        routing_strategy,
+        convert_fallback_triggers(fallback_on),
+    ))
+}
+
+fn convert_fallback_triggers(triggers: &AstFallbackTriggers) -> FallbackTriggers {
+    match triggers {
+        AstFallbackTriggers::Any => FallbackTriggers::AnyFailure,
+        AstFallbackTriggers::Only(classes) => FallbackTriggers::Only(
+            classes
+                .iter()
+                .copied()
+                .map(convert_fallback_class)
+                .collect(),
+        ),
+    }
+}
+
+fn convert_fallback_class(class: AstFallbackClass) -> FallbackClass {
+    match class {
+        AstFallbackClass::Timeout => FallbackClass::Timeout,
+        AstFallbackClass::TokenLimit => FallbackClass::TokenLimit,
+        AstFallbackClass::Launch => FallbackClass::Launch,
+        AstFallbackClass::TerminatedBySignal => FallbackClass::TerminatedBySignal,
+        AstFallbackClass::Failure => FallbackClass::Failure,
+    }
 }
 
 /// Resolve declared env values with `ITER_` prefix overrides.
@@ -299,7 +333,6 @@ mod tests {
     /// trait object — field-level bind coverage lives in each driver's own
     /// tests.
     #[test]
-    #[allow(clippy::too_many_lines)]
     fn agent_from_def_selects_each_variant() {
         let cases: [(AgentDef, &str); 13] = [
             (claude_def(AstAgentMode::Headless), "claude"),
@@ -489,7 +522,7 @@ mod tests {
 
     #[test]
     fn router_selects_router_driver() {
-        use iter_language::RouterStrategy;
+        use iter_language::{RouterFallbackTriggers, RouterStrategy};
         let def = AgentDef::Router {
             agents: vec![
                 (
@@ -507,6 +540,7 @@ mod tests {
                 ),
             ],
             strategy: RouterStrategy::Fallback,
+            fallback_on: RouterFallbackTriggers::Any,
         };
         let agent = agent_from_def(&def).expect("build");
         assert_eq!(agent.name(), "router");
@@ -514,7 +548,7 @@ mod tests {
 
     #[test]
     fn router_rotate_builds() {
-        use iter_language::RouterStrategy;
+        use iter_language::{RouterFallbackTriggers, RouterStrategy};
         let def = AgentDef::Router {
             agents: vec![(
                 "only".into(),
@@ -524,6 +558,7 @@ mod tests {
                 }),
             )],
             strategy: RouterStrategy::Rotate,
+            fallback_on: RouterFallbackTriggers::Any,
         };
         let agent = agent_from_def(&def).expect("build");
         assert_eq!(agent.name(), "router");
@@ -531,10 +566,11 @@ mod tests {
 
     #[test]
     fn router_empty_errors() {
-        use iter_language::RouterStrategy;
+        use iter_language::{RouterFallbackTriggers, RouterStrategy};
         let def = AgentDef::Router {
             agents: vec![],
             strategy: RouterStrategy::Fallback,
+            fallback_on: RouterFallbackTriggers::Any,
         };
         let Err(err) = agent_from_def(&def) else {
             panic!("empty router must fail to build");
@@ -543,7 +579,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn iter_prefix_overrides_declared_env() {
         let _guard = ENV_LOCK
             .lock()
@@ -555,6 +590,8 @@ mod tests {
             std::env::set_var("ITER_TEST_OVERRIDE", "overridden");
         }
         let resolved = resolve_env(&env);
+        // SAFETY: serialised via ENV_LOCK; remove the temporary override
+        // before leaving the test.
         unsafe {
             std::env::remove_var("ITER_TEST_OVERRIDE");
         }
@@ -565,7 +602,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(unsafe_code)]
     fn iter_prefix_uses_default_when_unset() {
         let _guard = ENV_LOCK
             .lock()

@@ -30,15 +30,11 @@ uuid.workspace = true
 chrono.workspace = true
 hex.workspace = true
 sha2.workspace = true
-rand.workspace = true
 tracing.workspace = true
 handlebars.workspace = true
 
 # workspace 実装向け
 tempfile.workspace = true
-
-# instance 実装向け
-ulid.workspace = true
 
 # queue drivers (feature-gated)
 redis = { workspace = true, optional = true }
@@ -61,7 +57,6 @@ globset.workspace = true
 percent-encoding.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
@@ -76,13 +71,49 @@ tracing-subscriber.workspace = true
 # `allow` `unsafe_code` (legitimate FFI in process/queue), so the rust
 # and clippy lint groups are duplicated from the root `Cargo.toml`.
 [lints.rust]
+# iter_core owns the low-level process and queue FFI boundaries.
 unsafe_code = "allow"
-unreachable_pub = "warn"
-unused_lifetimes = "warn"
-unused_qualifications = "warn"
-trivial_numeric_casts = "warn"
-let_underscore_drop = "warn"
+unreachable_pub = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+trivial_numeric_casts = "deny"
+let_underscore_drop = "deny"
+# Shared trigger/CLI modules intentionally keep some feature- and mode-specific helpers.
+dead_code = "allow"
+# Macro re-exports in trigger crates are only used by binary targets.
+unused_imports = "allow"
+# Some trigger crates export paired stdout/stderr macros but only use one side per target.
+unused_macros = "allow"
 
 [lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# Every unsafe block must carry a local justification, and those comments must
+# stay attached to actual unsafe code.
+undocumented_unsafe_blocks = "deny"
+unnecessary_safety_comment = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+panic_in_result_fn = "deny"
+unwrap_used = "deny"
+wildcard_enum_match_arm = "deny"
+match_wildcard_for_single_variants = "deny"
+# Numeric narrowing is permitted at explicit protocol and display boundaries.
+cast_possible_truncation = "allow"
+# Unit matches keep some command/trigger control-flow branches visually uniform.
+ignored_unit_patterns = "allow"
+# Module names mirror domain nouns even when a type shares the same noun.
+module_inception = "allow"
+# Several APIs take owned values to match builder and async boundary ergonomics.
+needless_pass_by_value = "allow"
+# CLI and runtime assembly functions are clearer kept as single workflows.
+too_many_arguments = "allow"
+# Parser, CLI, and runtime workflows are sometimes clearer in one function.
+too_many_lines = "allow"
+# Existing formatting style intentionally supports pre-captured format values.
+uninlined_format_args = "allow"
+# Async trait implementations keep uniform signatures across sync/async drivers.
+unused_async = "allow"
+disallowed_methods = "deny"

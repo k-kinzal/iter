@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use super::{Analyzer, CONTINUE_ON_ERROR_HINT, RUNNER_BEHAVIOR_HINT, TemplatePosition};
+use super::{
+    Analyzer, CONTINUE_ON_ERROR_HINT, IMPLICIT_RUNNER_BINDING, RUNNER_BEHAVIOR_HINT,
+    TemplatePosition,
+};
 use crate::ast::{
     EventHandlerDef, PromptArm, PromptExpr, PromptValue, RunnerDef, SignalAcquisition, Span,
     Spanned,
@@ -12,6 +15,11 @@ use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
 
 impl Analyzer {
     /// Lower a `runner { agent = <ref> workspace = <ref> ... }` block.
+    ///
+    /// `agent` and `workspace` are optional here because an Iterfile runner can
+    /// bind implicitly when the final file contains exactly one definition of
+    /// that kind. The cross-reference pass resolves the sentinel after all
+    /// top-level definitions have been collected.
     pub(super) fn lower_runner_new(
         &mut self,
         kind: Option<&CstIdent>,
@@ -65,22 +73,11 @@ impl Analyzer {
 
         let mut fields = self.collect_fields_from_vec(block.fields);
 
-        // A `runner` that binds neither `agent` nor `workspace` is the legacy
-        // flat Iterfile shape — those references used to be synthesised from
-        // the sole top-level definitions. That desugaring is gone, so name the
-        // replacement grammar in one actionable error rather than emitting two
-        // generic "runner requires ..." diagnostics.
-        if !fields.contains_key("agent") && !fields.contains_key("workspace") {
-            self.errors.push(Diagnostic::error(
-                keyword_span.clone(),
-                "flat Iterfile syntax is no longer supported; define named `agent`/`workspace`/`queue` definitions and bind them in a `runner { agent = ... workspace = ... }` block",
-            ));
-            return None;
-        }
-
         // Extract binding references.
-        let agent = self.take_required_ident(&mut fields, "agent", keyword_span, "runner");
-        let workspace = self.take_required_ident(&mut fields, "workspace", keyword_span, "runner");
+        let agent_present = fields.contains_key("agent");
+        let workspace_present = fields.contains_key("workspace");
+        let agent = self.take_optional_ident(&mut fields, "agent");
+        let workspace = self.take_optional_ident(&mut fields, "workspace");
         let queue = self.take_optional_ident(&mut fields, "queue");
 
         let continue_on_error = self.take_required_bool_explicit(
@@ -110,10 +107,21 @@ impl Analyzer {
             "runner",
         );
 
+        let agent = if agent_present {
+            agent?
+        } else {
+            IMPLICIT_RUNNER_BINDING.to_string()
+        };
+        let workspace = if workspace_present {
+            workspace?
+        } else {
+            IMPLICIT_RUNNER_BINDING.to_string()
+        };
+
         Some(RunnerDef {
             name,
-            agent: agent?,
-            workspace: workspace?,
+            agent,
+            workspace,
             queue,
             continue_on_error: continue_on_error?,
             behavior: behavior?,
@@ -252,34 +260,6 @@ impl Analyzer {
         }
     }
 
-    /// Extract a required identifier field (bareword reference).
-    fn take_required_ident(
-        &mut self,
-        fields: &mut BTreeMap<String, CstField>,
-        name: &str,
-        keyword_span: &Span,
-        context: &str,
-    ) -> Option<String> {
-        if let Some(field) = fields.remove(name) {
-            match field.value {
-                CstValue::Ident(s, _) | CstValue::String(s, _) => Some(s),
-                other => {
-                    self.errors.push(Diagnostic::error(
-                        other.span(),
-                        format!("`{name}` must be an identifier reference"),
-                    ));
-                    None
-                }
-            }
-        } else {
-            self.errors.push(
-                Diagnostic::error(keyword_span.clone(), format!("{context} requires `{name}`"))
-                    .with_hint(format!("add `{name} = <reference>`")),
-            );
-            None
-        }
-    }
-
     /// Extract an optional identifier field.
     fn take_optional_ident(
         &mut self,
@@ -289,7 +269,13 @@ impl Analyzer {
         let field = fields.remove(name)?;
         match field.value {
             CstValue::Ident(s, _) | CstValue::String(s, _) => Some(s),
-            other => {
+            other @ (CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be an identifier reference"),
@@ -323,7 +309,12 @@ impl Analyzer {
             }
             CstValue::Ident(name, _) => PromptExpr::Single(PromptValue::Ref(name)),
             CstValue::Block(block) => self.parse_prompt_match_block(block),
-            other => {
+            other @ (CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     "`prompt` must be a string, a name reference, or a match block",
@@ -351,7 +342,13 @@ impl Analyzer {
                     PromptValue::Inline(s)
                 }
                 CstValue::Ident(name, _) => PromptValue::Ref(name),
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         "prompt match arm value must be a string or a name reference",
@@ -449,7 +446,13 @@ impl Analyzer {
                     PromptValue::Inline(s)
                 }
                 CstValue::Ident(name, _) => PromptValue::Ref(name),
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         "prompt match arm value must be a string or a name reference",
@@ -521,7 +524,13 @@ impl Analyzer {
             match field.value {
                 CstValue::Ident(name, span) => self.parse_runner_behavior_ident(&name, &span),
                 CstValue::Block(block) => self.parse_runner_behavior_block(block),
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Call { .. }) => {
                     self.errors.push(
                     Diagnostic::error(
                         other.span(),
@@ -566,7 +575,14 @@ impl Analyzer {
         let kind = if let Some(field) = kind_field {
             match field.value {
                 CstValue::Ident(name, span) => Some((name, span)),
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         "`behavior.kind` must be an identifier (`wait` or `loop`)",

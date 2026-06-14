@@ -1,0 +1,15 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-implicit-agent-ambiguous.iter
+---
+Error: runner omits `agent` but 2 `agent` definitions exist (`codex`, `claude`); add `agent = <name>`
+    ╭─[runner-implicit-agent-ambiguous.iter:9:1]
+    │
+  9 │ ╭─▶ runner {
+    ┆ ┆   
+ 14 │ ├─▶ }
+    │ │       
+    │ ╰─────── runner omits `agent` but 2 `agent` definitions exist (`codex`, `claude`); add `agent = <name>`
+    │     
+    │     Help: flat Iterfile syntax is ambiguous with multiple `agent` definitions
+────╯

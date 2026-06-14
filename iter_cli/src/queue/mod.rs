@@ -29,7 +29,7 @@ use crate::secrets::SecretsError;
 /// Errors produced while building a concrete `Arc<dyn Queue>` from a
 /// [`QueueDef`].
 #[derive(Debug, Error)]
-pub enum QueueBuildError {
+pub(crate) enum QueueBuildError {
     /// Opening the file-backed queue directory failed.
     #[error("opening file queue at {path}: {source}")]
     OpenFile {
@@ -90,7 +90,7 @@ impl QueueBuildError {
 ///
 /// Returns [`QueueBuildError`] when the underlying constructor fails (e.g. an
 /// invalid queue directory or a malformed Redis URL).
-pub fn queue_from_def(decl: &QueueDef) -> Result<Arc<dyn Queue>, QueueBuildError> {
+pub(crate) fn queue_from_def(decl: &QueueDef) -> Result<Arc<dyn Queue>, QueueBuildError> {
     match decl {
         QueueDef::Memory => Ok(Arc::new(InMemoryQueue::new())),
         QueueDef::File { path } => {
@@ -148,7 +148,7 @@ pub fn queue_from_def(decl: &QueueDef) -> Result<Arc<dyn Queue>, QueueBuildError
 /// dialable from another process; ask [`QueueAddress::is_addressable`] when
 /// the question is reachability rather than spelling.
 #[must_use]
-pub fn queue_address(decl: &QueueDef) -> Option<QueueAddress> {
+pub(crate) fn queue_address(decl: &QueueDef) -> Option<QueueAddress> {
     match decl {
         QueueDef::Memory => Some(QueueAddress::Memory),
         QueueDef::File { path } => Some(QueueAddress::File { path: path.clone() }),

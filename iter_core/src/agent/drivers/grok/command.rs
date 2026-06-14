@@ -1,7 +1,7 @@
 //! `GrokCommand` — the **Command level** for Grok Build's headless mode.
 //!
 //! Owns the headless argv (requesting `--output-format json`) and parses the
-//! CLI's complete output into a CLI-shaped [`GrokResult`] or a CLI-shaped
+//! CLI's complete output into a CLI-shaped [`GrokRun`] or a CLI-shaped
 //! [`GrokError`] hierarchy. Nothing here is iter-domain — projecting these
 //! onto [`AgentRun`](crate::agent::AgentRun) /
 //! [`AgentError`](crate::agent::AgentError) is the driver's job (see the
@@ -162,8 +162,7 @@ pub(crate) struct GrokUsage {
 // this module's tests and reserved for future Factors) rather than being
 // pushed into `AgentRun`, mirroring how the Cursor/Claude drivers keep their
 // usage/cost at the Command level. See the `From`/projection note in `mod.rs`.
-#[allow(dead_code)]
-pub(crate) struct GrokResult {
+pub(crate) struct GrokRun {
     /// `sessionId` from the terminal object (feeds iter's session Factors).
     pub(crate) session_id: Option<String>,
     /// `requestId` from the terminal object — the server-side id for the turn.
@@ -318,7 +317,11 @@ fn reported_error_of(obj: &Value) -> Option<String> {
                     .map_or_else(|| "error".to_owned(), str::to_owned);
                 return Some(msg);
             }
-            _ => {}
+            Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_) => {}
         }
     }
     // A boolean error flag (`isError` / `is_error`) paired with the message.
@@ -335,7 +338,7 @@ fn reported_error_of(obj: &Value) -> Option<String> {
 }
 
 /// Parse Grok Build's complete headless output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<GrokResult, GrokError> {
+pub(crate) fn interpret(output: &CommandOutput) -> Result<GrokRun, GrokError> {
     let stdout = output.stdout_str();
     // Whole-stream JSON object first; then the `streaming-json` terminal
     // event (`type:"end"` in `grok 0.2.45`), then a legacy `result` event.
@@ -389,7 +392,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<GrokResult, GrokError>
         return Err(GrokError::Reported { message, exit_code });
     }
 
-    Ok(GrokResult {
+    Ok(GrokRun {
         session_id: session_id_of(&value),
         request_id: request_id_of(&value),
         final_message: final_message_of(&value),

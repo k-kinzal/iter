@@ -17,7 +17,6 @@ pub mod id;
 pub mod kind;
 pub mod metadata;
 // Defining module named for the concept it defines — the path echo is deliberate.
-#[allow(clippy::module_inception)]
 pub mod signal;
 
 pub use defaults::{MetadataPairError, base_metadata, parse_metadata_pair, parse_metadata_pairs};

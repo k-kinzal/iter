@@ -1,0 +1,23 @@
+queue memory
+
+workspace local {
+  base = "."
+}
+
+agent router {
+  strategy = fallback
+  fallback_on = any
+
+  primary {
+    kind = noop
+  }
+}
+
+runner {
+  agent = router
+  workspace = local
+  queue = memory
+  continue_on_error = false
+  behavior = wait
+  prompt = "Router fallback any test."
+}

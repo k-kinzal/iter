@@ -29,7 +29,6 @@ pub(crate) enum PriorityArg {
 }
 
 impl PriorityArg {
-    #[allow(dead_code)]
     fn into_priority(self) -> Priority {
         match self {
             Self::Low => Priority::LOW,
@@ -53,18 +52,13 @@ pub(crate) struct SignalDefaultsArgs {
 }
 
 impl SignalDefaultsArgs {
-    #[allow(dead_code)]
     #[must_use]
     pub(crate) fn priority_value(&self) -> Priority {
         self.priority.into_priority()
     }
-
-    #[allow(dead_code)]
     pub(crate) fn base_metadata(&self) -> Result<Metadata, MetadataPairError> {
         base_metadata(&self.metadata)
     }
-
-    #[allow(dead_code)]
     pub(crate) fn base_metadata_pairs(
         &self,
     ) -> Result<Vec<(MetadataKey, String)>, MetadataPairError> {

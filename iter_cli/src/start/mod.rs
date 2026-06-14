@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use iter_core::process::ProcessRuntime;
+use crate::process::ProcessRuntime;
 use iter_core::{Runner, RunnerBuilder, TemplateError};
 use iter_language::{
     AgentDef, EventHandlerDef, NamedPrompt, PromptDef, PromptExpr, PromptValue, RunnerDef, Spanned,
@@ -19,16 +19,16 @@ use iter_language::{
 use thiserror::Error;
 
 use crate::agent::{AgentBuildError, agent_from_def};
-use crate::config::runner_policy_from_def;
 use crate::events::register_event_actions_from_events;
 use crate::prompt::{PromptBuildError, prompt_selector_from_defs};
+use crate::runner_policy::runner_policy_from_def;
 use crate::workspace::workspaces_from_def;
 use iter_core::Queue;
 use iter_core::SandboxProfile;
 
 /// Errors produced by [`runner_builder_from_plan`].
 #[derive(Debug, Error)]
-pub enum StartError {
+pub(crate) enum StartError {
     /// Building the agent from its declaration failed.
     #[error(transparent)]
     AgentBuild(#[from] AgentBuildError),
@@ -449,15 +449,15 @@ mod tests {
 
     #[tokio::test]
     async fn wire_builder_runtime_installs_observer_and_stdio_sink() {
-        use chrono::Utc;
-        use iter_core::process::{
+        use crate::process::{
             LifecycleObserver, OutputPolicy, ProcessRegistry, ProcessRuntime, ShutdownIntent,
             open_output,
         };
+        use chrono::Utc;
 
         let tmp = tempfile::tempdir().expect("tmp");
         let registry = ProcessRegistry::open(tmp.path()).expect("open registry");
-        let draft = iter_core::process::MetadataDraft {
+        let draft = crate::process::MetadataDraft {
             iterfile: tmp.path().join("Iterfile"),
             subcommand: "run".into(),
             started_at: Utc::now(),

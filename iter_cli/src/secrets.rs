@@ -11,7 +11,7 @@ use iter_language::SecretExpr;
 
 /// Errors produced while resolving a [`SecretExpr`].
 #[derive(Debug, thiserror::Error)]
-pub enum SecretsError {
+pub(crate) enum SecretsError {
     /// Reading the named environment variable failed (missing or non-Unicode).
     #[error("reading secret from env var {name}: {source}")]
     Env {
@@ -42,7 +42,7 @@ pub enum SecretsError {
 /// # Errors
 ///
 /// Returns [`SecretsError`] when the named env var or file cannot be read.
-pub fn resolve_secret(secret: &SecretExpr) -> Result<String, SecretsError> {
+pub(crate) fn resolve_secret(secret: &SecretExpr) -> Result<String, SecretsError> {
     match secret {
         SecretExpr::Literal(s) => Ok(s.clone()),
         SecretExpr::EnvVar(name) => std::env::var(name).map_err(|source| SecretsError::Env {

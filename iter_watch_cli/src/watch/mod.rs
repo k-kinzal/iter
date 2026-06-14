@@ -1,11 +1,11 @@
 //! [`WatchTrigger`] — emits signals from filesystem change events.
 
-mod config;
 mod filter;
 mod kind;
+mod settings;
 
-pub use config::{WatchBackend, WatchConfig};
 pub use kind::ChangeKind;
+pub use settings::{WatchBackend, WatchConfig};
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -112,7 +112,6 @@ impl<Q: Queue + ?Sized + 'static> WatchTrigger<Q> {
 
     /// Select the watcher backend. Defaults to
     /// [`WatchBackend::Recommended`].
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_backend(mut self, backend: WatchBackend) -> Self {
         self.backend = backend;
@@ -122,7 +121,6 @@ impl<Q: Queue + ?Sized + 'static> WatchTrigger<Q> {
     /// Set a state directory for persisting pending batch records across
     /// restarts.  When set, the trigger writes pending batch data before
     /// flushing and recovers any un-flushed batch on startup.
-    #[allow(dead_code)]
     #[must_use]
     pub fn with_state_dir(mut self, dir: std::path::PathBuf) -> Self {
         self.state_dir = Some(dir);
@@ -293,8 +291,6 @@ impl<Q: Queue + ?Sized + 'static> WatchTrigger<Q> {
             }
         }
     }
-
-    #[allow(clippy::too_many_arguments)]
     async fn run_batched(
         &self,
         rx: &mut mpsc::UnboundedReceiver<ChangeRecord>,

@@ -98,7 +98,14 @@ impl Analyzer {
         if let Some(field) = fields.remove(name) {
             match field.value {
                 CstValue::String(s, _) => Some(s),
-                other => {
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         format!("`{name}` must be a string"),
@@ -123,7 +130,14 @@ impl Analyzer {
         let field = fields.remove(name)?;
         match field.value {
             CstValue::String(s, _) => Some(s),
-            other => {
+            other @ (CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a string"),
@@ -141,7 +155,14 @@ impl Analyzer {
         let field = fields.remove(name)?;
         match field.value {
             CstValue::Integer(n, _) => Some(n),
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be an integer"),
@@ -159,7 +180,14 @@ impl Analyzer {
         let field = fields.remove(name)?;
         match field.value {
             CstValue::Bool(b, _) => Some(b),
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a boolean"),
@@ -178,7 +206,13 @@ impl Analyzer {
         match field.value {
             CstValue::Duration(secs, _) => Some(secs),
             CstValue::Integer(n, _) => Some(n), // accept bare integer seconds
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a duration (e.g. `5s`, `2m`, `1h`)"),
@@ -200,7 +234,14 @@ impl Analyzer {
                 for item in items {
                     match item {
                         CstValue::String(s, _) => out.push(s),
-                        other => self.errors.push(Diagnostic::error(
+                        other @ (CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Block(_)
+                        | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                             other.span(),
                             format!("`{name}` list elements must be strings"),
                         )),
@@ -208,7 +249,14 @@ impl Analyzer {
                 }
                 Some(out)
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a list of strings"),
@@ -229,7 +277,14 @@ impl Analyzer {
         if let Some(field) = fields.remove(name) {
             match field.value {
                 CstValue::Bool(b, _) => Some(b),
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         format!("`{name}` must be a boolean"),
@@ -261,7 +316,14 @@ impl Analyzer {
                     for item in items {
                         match item {
                             CstValue::String(s, _) => out.push(s),
-                            other => self.errors.push(Diagnostic::error(
+                            other @ (CstValue::Integer(..)
+                            | CstValue::Duration(..)
+                            | CstValue::Bool(..)
+                            | CstValue::Null(_)
+                            | CstValue::Ident(..)
+                            | CstValue::List(..)
+                            | CstValue::Block(_)
+                            | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                                 other.span(),
                                 format!("`{name}` list elements must be strings"),
                             )),
@@ -269,7 +331,14 @@ impl Analyzer {
                     }
                     Some(out)
                 }
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         format!("`{name}` must be a list of strings"),
@@ -353,7 +422,14 @@ impl Analyzer {
                     None
                 }
             }
-            other => {
+            other @ (CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!(
@@ -384,7 +460,14 @@ impl Analyzer {
                     None
                 }
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be one of low, normal, high, critical"),
@@ -414,7 +497,14 @@ impl Analyzer {
                     None
                 }
             },
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be one of continue, abort, skip"),
@@ -443,7 +533,14 @@ impl Analyzer {
                     Some(u64::try_from(n).expect("non-negative i64 fits in u64"))
                 }
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a non-negative integer"),
@@ -472,7 +569,14 @@ impl Analyzer {
                             self.validate_template(&s, &span, position);
                             out.push((f.name.name, s));
                         }
-                        other => {
+                        other @ (CstValue::Integer(..)
+                        | CstValue::Duration(..)
+                        | CstValue::Bool(..)
+                        | CstValue::Null(_)
+                        | CstValue::Ident(..)
+                        | CstValue::List(..)
+                        | CstValue::Block(_)
+                        | CstValue::Call { .. }) => {
                             self.errors.push(Diagnostic::error(
                                 other.span(),
                                 format!("`{}.{}` must be a string", name, f.name.name),
@@ -482,7 +586,14 @@ impl Analyzer {
                 }
                 Some(out)
             }
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a `{{ key = \"value\" ... }}` block"),
@@ -507,7 +618,14 @@ impl Analyzer {
                 self.validate_template(&s, &span, position);
                 Some(s)
             }
-            other => {
+            other @ (CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a string"),
@@ -528,7 +646,14 @@ impl Analyzer {
         let field = fields.remove(name)?;
         match field.value {
             CstValue::Block(b) => Some(self.collect_fields(Some(b))),
-            other => {
+            other @ (CstValue::String(..)
+            | CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a block (`{name} {{ ... }}`)"),
@@ -563,7 +688,14 @@ impl Analyzer {
                     None
                 }
             }
-            other => {
+            other @ (CstValue::Integer(..)
+            | CstValue::Duration(..)
+            | CstValue::Bool(..)
+            | CstValue::Null(_)
+            | CstValue::Ident(..)
+            | CstValue::List(..)
+            | CstValue::Block(_)
+            | CstValue::Call { .. }) => {
                 self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}` must be a string literal or `from_metadata(\"key\")`"),
@@ -588,7 +720,14 @@ impl Analyzer {
         for (k, field) in leftover {
             match field.value {
                 CstValue::String(v, _) => out.push((k, v)),
-                other => self.errors.push(Diagnostic::error(
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}.{k}` must be a string"),
                 )),
@@ -628,7 +767,14 @@ impl Analyzer {
                 CstValue::String(v, _) => {
                     out.insert(k, v);
                 }
-                other => self.errors.push(Diagnostic::error(
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`env.{k}` must be a string"),
                 )),
@@ -652,7 +798,14 @@ impl Analyzer {
                 CstValue::String(v, _) => {
                     out.insert(k, v);
                 }
-                other => self.errors.push(Diagnostic::error(
+                other @ (CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::Ident(..)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => self.errors.push(Diagnostic::error(
                     other.span(),
                     format!("`{name}.{k}` must be a string"),
                 )),
@@ -670,7 +823,14 @@ impl Analyzer {
         if let Some(field) = fields.remove("mode") {
             match field.value {
                 CstValue::Ident(ident, span) => self.parse_agent_mode(&ident, span),
-                other => {
+                other @ (CstValue::String(..)
+                | CstValue::Integer(..)
+                | CstValue::Duration(..)
+                | CstValue::Bool(..)
+                | CstValue::Null(_)
+                | CstValue::List(..)
+                | CstValue::Block(_)
+                | CstValue::Call { .. }) => {
                     self.errors.push(Diagnostic::error(
                         other.span(),
                         "`mode` must be an identifier",

@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-implicit-workspace-missing.iter
+---
+Error: runner omits `workspace` and no `workspace` definition was found
+   ╭─[runner-implicit-workspace-missing.iter:3:1]
+   │
+ 3 │ ╭─▶ runner {
+   ┆ ┆   
+ 8 │ ├─▶ }
+   │ │       
+   │ ╰─────── runner omits `workspace` and no `workspace` definition was found
+───╯

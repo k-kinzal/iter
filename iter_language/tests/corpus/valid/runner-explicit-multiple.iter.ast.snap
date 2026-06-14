@@ -1,0 +1,70 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-explicit-multiple.iter
+---
+Iterfile {
+    args: [],
+    queues: [],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "main",
+                decl: Local {
+                    base: ".",
+                    source: None,
+                },
+            },
+            span: 0..40,
+        },
+        Spanned {
+            node: NamedDef {
+                name: "scratch",
+                decl: Local {
+                    base: "/tmp",
+                    source: None,
+                },
+            },
+            span: 42..88,
+        },
+    ],
+    sources: [],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "codex",
+                decl: Noop,
+            },
+            span: 90..112,
+        },
+        Spanned {
+            node: NamedDef {
+                name: "claude",
+                decl: Noop,
+            },
+            span: 114..137,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDef {
+                name: None,
+                agent: "codex",
+                workspace: "main",
+                queue: None,
+                continue_on_error: false,
+                behavior: Synthesize {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: None,
+                prompt: Single(
+                    Inline(
+                        "Explicit binding remains valid.",
+                    ),
+                ),
+                events: [],
+            },
+            span: 139..275,
+        },
+    ],
+}
