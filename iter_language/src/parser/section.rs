@@ -88,6 +88,7 @@ impl Parser<'_> {
         const RESERVED_SECTION_KEYWORDS: &[&str] = &[
             "queue",
             "workspace",
+            "source",
             "agent",
             "trigger",
             "runner",

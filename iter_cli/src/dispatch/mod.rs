@@ -21,6 +21,9 @@ pub(crate) use compose::{
     run_compose_ps, run_compose_up, run_compose_validate,
 };
 pub(crate) use enqueue::{EnqueueCmdError, run_enqueue};
-pub(crate) use proc::{ProcessCmdError, run_inspect, run_kill, run_logs, run_ps, run_rm, run_stop};
+pub(crate) use proc::{
+    ProcessCmdError, run_discard, run_inspect, run_kill, run_logs, run_promote, run_ps, run_rm,
+    run_stop,
+};
 pub(crate) use run::{RunCmdError, run_run};
 pub(crate) use validate::{ValidateCmdError, run_validate};

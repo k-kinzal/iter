@@ -31,11 +31,13 @@ Iterfile {
                 name: "local",
                 decl: Local {
                     base: ".",
+                    source: None,
                 },
             },
             span: 220..252,
         },
     ],
+    sources: [],
     agents: [
         Spanned {
             node: NamedDef {

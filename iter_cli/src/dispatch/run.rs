@@ -103,6 +103,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         IterfileError::Canonicalise { .. }
         | IterfileError::Read { .. }
         | IterfileError::QueueBuild(_)
+        | IterfileError::Source(_)
         | IterfileError::Runner(_)
         | IterfileError::Lifecycle(_)
         | IterfileError::Start(crate::StartError::QueueBuild(_)) => exit_codes::RUNTIME,

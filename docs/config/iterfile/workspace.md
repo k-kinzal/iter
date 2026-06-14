@@ -2,6 +2,10 @@
 
 Declares the filesystem environment the agent operates in. Optional — zero or one block per `Iterfile`. Also usable inside a `compose.iter` inline service.
 
+A workspace can name a [`source`](source.md) instead of a direct `base`. The
+source derives a durable base once for the whole runner; the workspace still
+performs its normal per-iteration setup and `apply_back` against that base.
+
 AST: `WorkspaceDef` in `iter_language/src/ast/workspace.rs`.
 
 ## Syntax
@@ -39,6 +43,7 @@ workspace local {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `base` | `string` | Required | — | Workspace root path. Relative paths resolve against the directory containing the `Iterfile`. |
+| `source` | `ident` / `string` | Optional | — | Named `source` block, or path sugar equivalent to a directory passthrough source. Mutually exclusive with `base`. |
 
 ---
 
@@ -66,6 +71,7 @@ workspace clone {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `base` | `string` | Required | — | Source directory used as the clone seed. |
+| `source` | `ident` / `string` | Optional | — | Named `source` block, or path sugar equivalent to a directory passthrough source. Mutually exclusive with `base`. |
 | `remote` | `string` | Optional | — | Remote URL passed verbatim to the clone backend. iter does not interpret it. |
 | `excludes` | `list(string)` | Required | — | Clone-time exclude patterns. `[]` explicitly means "skip nothing"; omitting the field is not allowed. Supports `!pattern` negation to rescue specific paths. See [Glob patterns](#glob-patterns). |
 | `includes` | `list(string)` | Optional | `[]` | Clone-time rescue patterns. Entries here win over matching entries in `excludes`; paths matching neither list always enter the workspace. `[]` means "no overrides". |

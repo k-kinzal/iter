@@ -20,12 +20,12 @@ Error: expected a value, found `}`
    │ ╰── expected a value, found `}`
 ───╯
 
-Error: workspace local requires `base`
+Error: workspace local requires `base` or `source`
    ╭─[bad-string.iter:1:11]
    │
  1 │ workspace local { base = "unterminated
    │           ──┬──  
-   │             ╰──── workspace local requires `base`
+   │             ╰──── workspace local requires `base` or `source`
    │ 
-   │ Help: add `base = "..."`
+   │ Help: add `base = "..."`, `source = "..."`, or `source = <name>`
 ───╯

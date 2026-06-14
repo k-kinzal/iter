@@ -142,6 +142,18 @@ pub enum Command {
                       iter ps -q | xargs iter rm")]
     Rm(TargetArgs),
 
+    /// Execute a deferred source disposition (alias for `iter process promote`).
+    #[command(after_help = "EXAMPLES:\n  \
+                      iter promote <ID>\n  \
+                      iter promote -q <ID>")]
+    Promote(TargetArgs),
+
+    /// Drop a deferred source base (alias for `iter process discard`).
+    #[command(after_help = "EXAMPLES:\n  \
+                      iter discard <ID>\n  \
+                      iter discard -q <ID>")]
+    Discard(TargetArgs),
+
     /// Show the metadata document for a process (alias for `iter process inspect`).
     #[command(after_help = "EXAMPLES:\n  \
                       iter inspect <ID>\n  \
@@ -308,6 +320,16 @@ pub enum ProcessCmd {
                       iter process rm <ID>\n  \
                       iter process ls -q | xargs iter process rm")]
     Rm(TargetArgs),
+    /// Execute a deferred source disposition.
+    #[command(after_help = "EXAMPLES:\n  \
+                      iter process promote <ID>\n  \
+                      iter process promote -q <ID>")]
+    Promote(TargetArgs),
+    /// Drop a deferred source base.
+    #[command(after_help = "EXAMPLES:\n  \
+                      iter process discard <ID>\n  \
+                      iter process discard -q <ID>")]
+    Discard(TargetArgs),
 }
 
 /// Subcommands grouped under `iter signal`.

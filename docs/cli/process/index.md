@@ -15,6 +15,8 @@ target.
 | [`iter process stop`](stop.md) | `iter stop` | Request graceful termination with SIGTERM. |
 | [`iter process kill`](kill.md) | `iter kill` | Force termination with SIGKILL. |
 | [`iter process rm`](rm.md) | `iter rm` | Remove a stopped process record. |
+| [`iter process promote`](promote.md) | `iter promote` | Execute a deferred source disposition. |
+| [`iter process discard`](discard.md) | `iter discard` | Drop a deferred source base. |
 
 Use process commands for runner-level operation. Use
 [`compose`](../compose/index.md) commands when the target is a compose project or

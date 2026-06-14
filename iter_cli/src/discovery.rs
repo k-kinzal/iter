@@ -245,14 +245,15 @@ fn project_member_from_record(
     }))
 }
 
-/// Read `meta.json`, treating `ENOENT` as "not yet visible / already gone"
-/// rather than a hard error. See [`project_member_from_record`].
+/// Read `meta.json`, treating narrow publication races as "not yet visible /
+/// already gone" rather than a hard error. See [`project_member_from_record`].
 fn read_metadata_or_skip(
     record: &ProcessRecord,
 ) -> Result<Option<iter_core::process::ProcessMetadata>, DiscoveryError> {
     match record.metadata() {
         Ok(meta) => Ok(Some(meta)),
         Err(ProcessError::Io(ref e)) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(ProcessError::JsonRead(ref e)) if e.is_eof() => Ok(None),
         Err(e) => Err(DiscoveryError::Process(e)),
     }
 }

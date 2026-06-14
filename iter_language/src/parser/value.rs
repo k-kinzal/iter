@@ -1,7 +1,7 @@
 //! Value-position parsing: fields, scalar/composite values, lists, and calls.
 
 use super::Parser;
-use super::cst::{CstField, CstValue};
+use super::cst::{CstField, CstIdent, CstValue};
 use crate::ast::Span;
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
@@ -57,6 +57,19 @@ impl Parser<'_> {
             Token::Ident(name) => {
                 if matches!(self.peek_at(1), Some(Token::LParen)) {
                     self.parse_call(name, tok.span)
+                } else if matches!(self.peek_at(1), Some(Token::LBrace)) {
+                    self.bump();
+                    let mut block = self.parse_block();
+                    let kind_field = CstField {
+                        name: CstIdent {
+                            name: "kind".to_string(),
+                            span: tok.span.clone(),
+                        },
+                        value: CstValue::Ident(name, tok.span.clone()),
+                        span: tok.span.clone(),
+                    };
+                    block.fields.insert(0, kind_field);
+                    Some(CstValue::Block(block))
                 } else {
                     self.bump();
                     Some(CstValue::Ident(name, tok.span))

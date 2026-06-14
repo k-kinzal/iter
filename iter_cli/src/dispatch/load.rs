@@ -197,7 +197,10 @@ runner {
         else {
             panic!("expected parse error, got {err:?}");
         };
-        assert!(!compose_section, "single-kind section must not set the flag");
+        assert!(
+            !compose_section,
+            "single-kind section must not set the flag"
+        );
     }
 
     #[test]

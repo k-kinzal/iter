@@ -1,5 +1,7 @@
 //! `workspace` declaration AST and supporting sandbox-policy types.
 
+use super::WorkspaceSourceRef;
+
 /// Reconciliation strategy for `workspace clone` teardown.
 ///
 /// Mirrors the `ApplyBackMode` enum in `iter_workspace` but lives in the
@@ -42,12 +44,16 @@ pub enum WorkspaceDef {
     Local {
         /// Filesystem path to the workspace root. Required.
         base: String,
+        /// Optional exploration-scoped source reference.
+        source: Option<WorkspaceSourceRef>,
     },
     /// Clone the directory at `base` (or `remote` if set) into a fresh
     /// scratch directory before each run.
     Clone {
         /// Source directory or path used as the clone seed. Required.
         base: String,
+        /// Optional exploration-scoped source reference.
+        source: Option<WorkspaceSourceRef>,
         /// Optional remote URL passed to whatever clone backend the project
         /// configures. iter does not interpret the string.
         remote: Option<String>,
@@ -71,6 +77,8 @@ pub enum WorkspaceDef {
     Sandbox {
         /// Source directory used to seed the sandbox. Required.
         base: String,
+        /// Optional exploration-scoped source reference.
+        source: Option<WorkspaceSourceRef>,
         /// Clone-time exclude pattern list. Required.
         excludes: Vec<String>,
         /// Clone-time include override list. Entries bypass the exclude

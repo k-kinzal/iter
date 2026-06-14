@@ -37,6 +37,7 @@ mod event;
 mod prompt;
 mod queue;
 mod runner;
+mod source;
 mod telemetry;
 mod trigger;
 mod value;
@@ -58,6 +59,9 @@ pub use queue::{
     SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,
 };
 pub use runner::{RunnerDef, SignalAcquisition};
+pub use source::{
+    GitFastForward, GitLocator, SourceDef, SourceDerive, SourceDisposition, WorkspaceSourceRef,
+};
 pub use telemetry::{TelemetryDef, TelemetryProtocol};
 pub use trigger::{
     ExtractExpr, FilesSource, OnErrorKeyword, SecretExpr, Subscription, TriggerDef, WatchEventKind,
@@ -123,6 +127,8 @@ pub struct Iterfile {
     pub queues: Vec<Spanned<NamedDef<QueueDef>>>,
     /// Named workspace definitions: `workspace <kind> [as <name>] { ... }`.
     pub workspaces: Vec<Spanned<NamedDef<WorkspaceDef>>>,
+    /// Named source definitions: `source <kind> [as <name>] { ... }`.
+    pub sources: Vec<Spanned<NamedDef<SourceDef>>>,
     /// Named agent definitions: `agent <kind> [as <name>] { ... }`.
     pub agents: Vec<Spanned<NamedDef<AgentDef>>>,
     /// Named prompt templates: `prompt as <name> "..."`.

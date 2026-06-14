@@ -53,6 +53,9 @@ pub enum ProcessCmdError {
         /// PID of the still-running process.
         pid: u32,
     },
+    /// Source promotion/discard failed.
+    #[error(transparent)]
+    Source(#[from] crate::source::SourceBuildError),
 }
 
 impl IntoExitCode for ProcessCmdError {
@@ -63,9 +66,12 @@ impl IntoExitCode for ProcessCmdError {
             | Self::AmbiguousTerminal(_)
             | Self::AmbiguousActive(_)
             | Self::AmbiguousPrefix(_)
-            | Self::StillRunning { .. } => exit_codes::USER_INPUT,
+            | Self::StillRunning { .. }
+            | Self::Source(crate::source::SourceBuildError::NoPendingDecision) => {
+                exit_codes::USER_INPUT
+            }
             // Disk / registry / log-read failures are runtime issues.
-            Self::Process(_) | Self::LogIo(_) => exit_codes::RUNTIME,
+            Self::Process(_) | Self::LogIo(_) | Self::Source(_) => exit_codes::RUNTIME,
             // Serialisation should never happen on a well-formed record.
             Self::JsonSerialize(_) => exit_codes::INTERNAL,
         }
@@ -373,6 +379,36 @@ pub async fn run_inspect(args: InspectArgs) -> Result<(), ProcessCmdError> {
     let record = lookup(&registry, &args.instance)?;
     let meta = record.metadata()?;
     print_json_pretty(&meta).map_err(ProcessCmdError::JsonSerialize)?;
+    Ok(())
+}
+
+/// `iter promote <process>` — execute a deferred source disposition.
+pub async fn run_promote(args: TargetArgs) -> Result<(), ProcessCmdError> {
+    let registry = open_registry()?;
+    let record = lookup(&registry, &args.instance)?;
+    let pending = crate::source::read_pending_source(&record)?;
+    iter_core::source::promote_pending(pending)
+        .await
+        .map_err(crate::source::SourceBuildError::Runtime)?;
+    crate::source::clear_pending_source(&record)?;
+    if !args.quiet {
+        cli_eprintln!("promoted {}", record.id());
+    }
+    Ok(())
+}
+
+/// `iter discard <process>` — drop a deferred source base.
+pub async fn run_discard(args: TargetArgs) -> Result<(), ProcessCmdError> {
+    let registry = open_registry()?;
+    let record = lookup(&registry, &args.instance)?;
+    let pending = crate::source::read_pending_source(&record)?;
+    iter_core::source::discard_pending(pending)
+        .await
+        .map_err(crate::source::SourceBuildError::Runtime)?;
+    crate::source::clear_pending_source(&record)?;
+    if !args.quiet {
+        cli_eprintln!("discarded {}", record.id());
+    }
     Ok(())
 }
 

@@ -139,6 +139,9 @@ fn render_root(root: &mut Iterfile, values: &BTreeMap<String, String>) -> Result
     for ws in &mut root.workspaces {
         render_workspace(&mut ws.node.decl, values)?;
     }
+    for source in &mut root.sources {
+        render_source(&mut source.node.decl, values)?;
+    }
     for agent in &mut root.agents {
         render_agent(&mut agent.node.decl, values)?;
     }
@@ -188,17 +191,20 @@ fn render_workspace(
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     match ws {
-        iter_language::WorkspaceDef::Local { base } => {
+        iter_language::WorkspaceDef::Local { base, source } => {
             render_str(base, values)?;
+            render_workspace_source(source, values)?;
         }
         iter_language::WorkspaceDef::Clone {
             base,
+            source,
             remote,
             excludes,
             includes,
             ..
         } => {
             render_str(base, values)?;
+            render_workspace_source(source, values)?;
             if let Some(r) = remote {
                 render_str(r, values)?;
             }
@@ -211,17 +217,126 @@ fn render_workspace(
         }
         iter_language::WorkspaceDef::Sandbox {
             base,
+            source,
             excludes,
             includes,
             ..
         } => {
             render_str(base, values)?;
+            render_workspace_source(source, values)?;
             for s in excludes.iter_mut() {
                 render_str(s, values)?;
             }
             for s in includes.iter_mut() {
                 render_str(s, values)?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn render_workspace_source(
+    source: &mut Option<iter_language::WorkspaceSourceRef>,
+    values: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
+    match source {
+        Some(iter_language::WorkspaceSourceRef::Path(path)) => render_str(path, values),
+        Some(iter_language::WorkspaceSourceRef::Named(name)) => render_str(name, values),
+        None => Ok(()),
+    }
+}
+
+fn render_source(
+    source: &mut iter_language::SourceDef,
+    values: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
+    match source {
+        iter_language::SourceDef::Directory {
+            path,
+            derive,
+            disposition,
+        } => {
+            render_str(path, values)?;
+            render_source_derive(derive, values)?;
+            if let Some(disposition) = disposition {
+                render_source_disposition(disposition, values)?;
+            }
+        }
+        iter_language::SourceDef::Git {
+            locator,
+            derive,
+            disposition,
+        } => {
+            match locator {
+                iter_language::GitLocator::Url(url) | iter_language::GitLocator::Path(url) => {
+                    render_str(url, values)?;
+                }
+            }
+            render_source_derive(derive, values)?;
+            render_source_disposition(disposition, values)?;
+        }
+    }
+    Ok(())
+}
+
+fn render_source_derive(
+    derive: &mut iter_language::SourceDerive,
+    values: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
+    match derive {
+        iter_language::SourceDerive::Passthrough => {}
+        iter_language::SourceDerive::Copy { excludes, .. } => {
+            for item in excludes {
+                render_str(item, values)?;
+            }
+        }
+        iter_language::SourceDerive::Worktree { ref_name, branch }
+        | iter_language::SourceDerive::Clone {
+            ref_name, branch, ..
+        } => {
+            if let Some(value) = ref_name {
+                render_str(value, values)?;
+            }
+            if let Some(value) = branch {
+                render_str(value, values)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_source_disposition(
+    disposition: &mut iter_language::SourceDisposition,
+    values: &BTreeMap<String, String>,
+) -> Result<(), ArgError> {
+    match disposition {
+        iter_language::SourceDisposition::Discard => {}
+        iter_language::SourceDisposition::Merge {
+            excludes,
+            includes,
+            into,
+            ..
+        } => {
+            for item in excludes {
+                render_str(item, values)?;
+            }
+            for item in includes {
+                render_str(item, values)?;
+            }
+            if let Some(value) = into {
+                render_str(value, values)?;
+            }
+        }
+        iter_language::SourceDisposition::Sync { excludes, includes } => {
+            for item in excludes {
+                render_str(item, values)?;
+            }
+            for item in includes {
+                render_str(item, values)?;
+            }
+        }
+        iter_language::SourceDisposition::Defer { promote } => {
+            render_source_disposition(promote, values)?;
         }
     }
     Ok(())
@@ -404,7 +519,7 @@ runner {
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
         match &root.workspaces.first().unwrap().node.decl {
-            iter_language::WorkspaceDef::Local { base } => {
+            iter_language::WorkspaceDef::Local { base, .. } => {
                 assert_eq!(base, "/path/to/default-name");
             }
             other => panic!("unexpected workspace: {other:?}"),
@@ -430,7 +545,7 @@ runner {
         overrides.insert("worktree_name".to_owned(), "override-name".to_owned());
         resolve_args(&mut root, &overrides).expect("resolve");
         match &root.workspaces.first().unwrap().node.decl {
-            iter_language::WorkspaceDef::Local { base } => {
+            iter_language::WorkspaceDef::Local { base, .. } => {
                 assert_eq!(base, "/path/to/override-name");
             }
             other => panic!("unexpected workspace: {other:?}"),
@@ -589,7 +704,7 @@ runner {
         overrides.insert("worktree_name".to_owned(), "supplied-name".to_owned());
         resolve_args(&mut root, &overrides).expect("resolve");
         match &root.workspaces.first().unwrap().node.decl {
-            iter_language::WorkspaceDef::Local { base } => {
+            iter_language::WorkspaceDef::Local { base, .. } => {
                 assert_eq!(base, "/path/to/supplied-name");
             }
             other => panic!("unexpected workspace: {other:?}"),

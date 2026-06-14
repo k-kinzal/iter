@@ -35,6 +35,7 @@ use crate::process_lifecycle::{
     leaves_record_non_terminal, log_finalize_report, terminal_status_for,
 };
 use crate::queue::QueueBuildError;
+use crate::source::{ActiveSource, SourceBuildError};
 use crate::start::{self, StartError};
 
 pub use crate::process_lifecycle::RunRecordMetadata;
@@ -140,6 +141,9 @@ pub enum IterfileError {
     /// or event handler).
     #[error(transparent)]
     Start(#[from] StartError),
+    /// Source provisioning, disposition, or pending-decision recording failed.
+    #[error(transparent)]
+    Source(#[from] SourceBuildError),
     /// `RunnerBuilder::build` rejected the wired configuration.
     #[error(transparent)]
     Builder(#[from] BuilderError),
@@ -244,12 +248,14 @@ async fn run_inner(
     // Build the runner builder + the registry-record path (which may
     // differ from `canonical_path` for compose-service builds whose
     // service points at a separate `build = ...` Iterfile).
-    let (mut builder, record_path) = match &input.source {
+    let (mut builder, record_path, active_source) = match &input.source {
         RunSource::Iterfile => {
-            build_iterfile_builder(&canonical_path, input.once, &input.arg_overrides)?
+            build_iterfile_builder(&canonical_path, input.once, &input.arg_overrides).await?
         }
         RunSource::ComposeService { service_name } => {
-            build_compose_service_builder(&canonical_path, service_name, input.once)?
+            let (builder, path) =
+                build_compose_service_builder(&canonical_path, service_name, input.once)?;
+            (builder, path, None)
         }
     };
 
@@ -287,7 +293,7 @@ async fn run_inner(
         runner.run(cancel).await
     };
 
-    match runner_result {
+    let summary = match runner_result {
         Ok(summary) => {
             info!(
                 iterations = summary.iteration_count,
@@ -295,13 +301,16 @@ async fn run_inner(
                 reason = ?summary.termination_reason,
                 "runner exited"
             );
-            Ok(summary)
+            summary
         }
         Err(err) => {
             error!(error = %err, "runner exited with error");
-            Err(IterfileError::Runner(err))
+            return Err(IterfileError::Runner(err));
         }
-    }
+    };
+
+    dispose_active_source(active_source, runtime.as_ref()).await?;
+    Ok(summary)
 }
 
 /// Build a [`RunnerBuilder`](iter_core::RunnerBuilder)-shaped value from
@@ -309,11 +318,11 @@ async fn run_inner(
 ///
 /// Returns the builder along with the canonical iterfile path that the
 /// caller will record into the per-process registry entry.
-fn build_iterfile_builder(
+async fn build_iterfile_builder(
     iterfile_path: &Path,
     once: bool,
     arg_overrides: &BTreeMap<String, String>,
-) -> Result<(iter_core::RunnerBuilder, PathBuf), IterfileError> {
+) -> Result<(iter_core::RunnerBuilder, PathBuf, Option<ActiveSource>), IterfileError> {
     let mut iterfile = load_and_parse(iterfile_path)?;
     resolve_args(&mut iterfile, arg_overrides)?;
 
@@ -329,9 +338,64 @@ fn build_iterfile_builder(
         return Err(IterfileError::MissingSection("agent"));
     }
 
-    let builder = start::runner_builder_from_root(&iterfile, &runner.node, None, once)?;
+    let workspace_decl = iterfile
+        .workspaces
+        .iter()
+        .find(|w| w.node.name == runner.node.workspace)
+        .map(|w| &w.node.decl)
+        .expect("semantic analyzer validated workspace reference");
+    let (workspace_decl, active_source) =
+        crate::source::provision_for_workspace(workspace_decl, &iterfile.sources).await?;
 
-    Ok((builder, iterfile_path.to_owned()))
+    let agent_decl = iterfile
+        .agents
+        .iter()
+        .find(|a| a.node.name == runner.node.agent)
+        .map(|a| &a.node.decl)
+        .expect("semantic analyzer validated agent reference");
+    let prompts = start::prompt_defs_from_expr(&runner.node.prompt, &iterfile.prompts);
+    let queue = if let Some(ref queue_name) = runner.node.queue {
+        let queue_decl = iterfile
+            .queues
+            .iter()
+            .find(|q| q.node.name == *queue_name)
+            .map(|q| &q.node.decl)
+            .expect("semantic analyzer validated queue reference");
+        Some(crate::queue::queue_from_def(queue_decl)?)
+    } else {
+        None
+    };
+
+    let builder = start::runner_builder_from_plan(
+        queue,
+        &workspace_decl,
+        agent_decl,
+        &runner.node,
+        &prompts,
+        &runner.node.events,
+        once,
+    )?;
+
+    Ok((builder, iterfile_path.to_owned(), active_source))
+}
+
+async fn dispose_active_source(
+    active_source: Option<ActiveSource>,
+    runtime: Option<&(ProcessRuntime, TerminationRecorder)>,
+) -> Result<(), IterfileError> {
+    let Some(active_source) = active_source else {
+        return Ok(());
+    };
+    let pending = active_source.dispose().await?;
+    let Some(pending) = pending else {
+        return Ok(());
+    };
+    let Some((runtime, _)) = runtime else {
+        return Err(SourceBuildError::NoProcessRecord.into());
+    };
+    let paths = runtime.session().paths();
+    crate::source::write_pending_source(paths.dir(), &pending)?;
+    Ok(())
 }
 
 /// Build a [`RunnerBuilder`](iter_core::RunnerBuilder)-shaped value from

@@ -475,7 +475,10 @@ fn validate_compose_basename_delegates_with_note() {
 fn validate_compose_basename_delegates_json_format() {
     let dir = TempDir::new().expect("tempdir");
     write_compose_fixture(dir.path(), "compose.iter");
-    let out = run_iter(dir.path(), &["validate", "--format", "json", "compose.iter"]);
+    let out = run_iter(
+        dir.path(),
+        &["validate", "--format", "json", "compose.iter"],
+    );
     assert!(
         out.status.success(),
         "delegated JSON validation must succeed; stderr=\n{}",
@@ -541,7 +544,9 @@ fn validate_service_first_compose_file_gets_compose_hint() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("hint: this looks like a compose file; use 'iter compose validate -f services.iter'"),
+        stderr.contains(
+            "hint: this looks like a compose file; use 'iter compose validate -f services.iter'"
+        ),
         "compose hint missing for service-first file; stderr=\n{stderr}"
     );
 }

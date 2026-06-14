@@ -61,13 +61,14 @@ mod semantic;
 pub use ast::{
     Action, AgentDef, AgentMode, ApplyBackDef, ArgDef, CloneApplyBackMode, CmpOp, Compose,
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef, DlqTargetDef, EventHandlerDef,
-    EventName, ExtractExpr, FilesSource, InlineService, IterationField, Iterfile, MetadataSource,
-    NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService, NamedTrigger, OnErrorKeyword,
-    PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard, PromptValue, QueueDef,
-    QueueRef, RetryPolicyDef, RouterStrategy, RunnerDef, SandboxNetworkDef, SandboxPolicyDef,
-    SecretExpr, ServiceSource, SignalAcquisition, Span, Spanned, SqsConfig, SqsConsumer,
-    SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, Subscription,
-    TelemetryDef, TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef,
+    EventName, ExtractExpr, FilesSource, GitFastForward, GitLocator, InlineService, IterationField,
+    Iterfile, MetadataSource, NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService,
+    NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard,
+    PromptValue, QueueDef, QueueRef, RetryPolicyDef, RouterStrategy, RunnerDef, SandboxNetworkDef,
+    SandboxPolicyDef, SecretExpr, ServiceSource, SignalAcquisition, SourceDef, SourceDerive,
+    SourceDisposition, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials,
+    SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef, TelemetryProtocol,
+    TriggerDef, Value, WatchEventKind, WorkspaceDef, WorkspaceSourceRef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{
@@ -90,7 +91,7 @@ pub use parser::{
 /// component. Adding a new optional field, a new kind that is parsed but not
 /// required, or a new diagnostic message bumps the minor component. Bug
 /// fixes and documentation changes bump the patch component.
-pub const GRAMMAR_VERSION: &str = "4.1.0";
+pub const GRAMMAR_VERSION: &str = "4.2.0";
 
 /// Parse the given source text into a validated [`Iterfile`].
 ///

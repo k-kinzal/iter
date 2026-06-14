@@ -43,6 +43,7 @@ mod prompt;
 mod queue;
 mod secrets;
 mod shell_action;
+mod source;
 mod start;
 mod workspace;
 
@@ -89,8 +90,8 @@ use crate::cli::{
 use crate::dispatch::{
     AttachError, ComposeCmdError, ComposeUpError, EnqueueCmdError, ProcessCmdError, RunCmdError,
     ValidateCmdError, attach, run_compose_config, run_compose_down, run_compose_ls, run_compose_ps,
-    run_compose_up, run_compose_validate, run_enqueue, run_inspect, run_kill, run_logs, run_ps,
-    run_rm, run_run, run_stop, run_validate, status_exit_code,
+    run_compose_up, run_compose_validate, run_discard, run_enqueue, run_inspect, run_kill,
+    run_logs, run_promote, run_ps, run_rm, run_run, run_stop, run_validate, status_exit_code,
 };
 use crate::naming::default_process_name;
 use crate::output::{IntoExitCode, cli_println, exit_codes, run_main};
@@ -203,6 +204,8 @@ fn real_main() -> Result<(), IterCliError> {
         Command::Stop(args) => stop_dispatch(args),
         Command::Kill(args) => kill_dispatch(args),
         Command::Rm(args) => rm_dispatch(args),
+        Command::Promote(args) => promote_dispatch(args),
+        Command::Discard(args) => discard_dispatch(args),
         Command::Inspect(args) => inspect_dispatch(args),
         Command::Enqueue(args) => enqueue_dispatch(args, prefs),
 
@@ -214,6 +217,8 @@ fn real_main() -> Result<(), IterCliError> {
             ProcessCmd::Stop(args) => stop_dispatch(args),
             ProcessCmd::Kill(args) => kill_dispatch(args),
             ProcessCmd::Rm(args) => rm_dispatch(args),
+            ProcessCmd::Promote(args) => promote_dispatch(args),
+            ProcessCmd::Discard(args) => discard_dispatch(args),
         },
 
         Command::Signal { cmd } => match cmd {
@@ -245,6 +250,14 @@ fn kill_dispatch(args: TargetArgs) -> Result<(), IterCliError> {
 
 fn rm_dispatch(args: TargetArgs) -> Result<(), IterCliError> {
     block_on(async move { run_rm(args).await.map_err(IterCliError::from) })
+}
+
+fn promote_dispatch(args: TargetArgs) -> Result<(), IterCliError> {
+    block_on(async move { run_promote(args).await.map_err(IterCliError::from) })
+}
+
+fn discard_dispatch(args: TargetArgs) -> Result<(), IterCliError> {
+    block_on(async move { run_discard(args).await.map_err(IterCliError::from) })
 }
 
 fn inspect_dispatch(args: InspectArgs) -> Result<(), IterCliError> {

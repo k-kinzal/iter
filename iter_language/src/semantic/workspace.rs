@@ -9,6 +9,7 @@ use super::{
 };
 use crate::ast::{
     ApplyBackDef, CloneApplyBackMode, SandboxNetworkDef, SandboxPolicyDef, Span, WorkspaceDef,
+    WorkspaceSourceRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
@@ -46,9 +47,10 @@ impl Analyzer {
         fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<WorkspaceDef> {
-        let base = self.take_required_string(fields, "base", kind_span, "workspace local")?;
-        self.reject_unknown_fields(fields, &["base"], "workspace local");
-        Some(WorkspaceDef::Local { base })
+        let (base, source) =
+            self.take_workspace_base_or_source(fields, kind_span, "workspace local")?;
+        self.reject_unknown_fields(fields, &["base", "source"], "workspace local");
+        Some(WorkspaceDef::Local { base, source })
     }
 
     fn lower_workspace_clone(
@@ -56,7 +58,8 @@ impl Analyzer {
         fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<WorkspaceDef> {
-        let base = self.take_required_string(fields, "base", kind_span, "workspace clone")?;
+        let (base, source) =
+            self.take_workspace_base_or_source(fields, kind_span, "workspace clone")?;
         let remote = self.take_optional_string(fields, "remote");
         let excludes = self.take_required_string_list_explicit(
             fields,
@@ -80,6 +83,7 @@ impl Analyzer {
             fields,
             &[
                 "base",
+                "source",
                 "remote",
                 "excludes",
                 "includes",
@@ -90,6 +94,7 @@ impl Analyzer {
         );
         Some(WorkspaceDef::Clone {
             base,
+            source,
             remote,
             excludes: excludes?,
             includes,
@@ -103,7 +108,8 @@ impl Analyzer {
         fields: &mut BTreeMap<String, CstField>,
         kind_span: &Span,
     ) -> Option<WorkspaceDef> {
-        let base = self.take_required_string(fields, "base", kind_span, "workspace sandbox")?;
+        let (base, source) =
+            self.take_workspace_base_or_source(fields, kind_span, "workspace sandbox")?;
         let excludes = self.take_required_string_list_explicit(
             fields,
             "excludes",
@@ -128,6 +134,7 @@ impl Analyzer {
             fields,
             &[
                 "base",
+                "source",
                 "excludes",
                 "includes",
                 "preserve_mtime",
@@ -138,12 +145,73 @@ impl Analyzer {
         );
         Some(WorkspaceDef::Sandbox {
             base,
+            source,
             excludes: excludes?,
             includes,
             preserve_mtime: preserve_mtime?,
             apply_back: apply_back?,
             policy: policy?,
         })
+    }
+
+    fn take_workspace_base_or_source(
+        &mut self,
+        fields: &mut BTreeMap<String, CstField>,
+        kind_span: &Span,
+        context: &str,
+    ) -> Option<(String, Option<WorkspaceSourceRef>)> {
+        let base_field = fields.remove("base");
+        let source_field = fields.remove("source");
+        match (base_field, source_field) {
+            (Some(base), Some(source)) => {
+                self.errors.push(Diagnostic::error(
+                    source.name.span,
+                    format!("{context} cannot set both `base` and `source`"),
+                ));
+                match base.value {
+                    CstValue::String(s, _) => Some((s, None)),
+                    other => {
+                        self.errors
+                            .push(Diagnostic::error(other.span(), "`base` must be a string"));
+                        None
+                    }
+                }
+            }
+            (Some(base), None) => match base.value {
+                CstValue::String(s, _) => Some((s, None)),
+                other => {
+                    self.errors
+                        .push(Diagnostic::error(other.span(), "`base` must be a string"));
+                    None
+                }
+            },
+            (None, Some(source)) => match source.value {
+                CstValue::String(s, _) => {
+                    let source = WorkspaceSourceRef::Path(s.clone());
+                    Some((s, Some(source)))
+                }
+                CstValue::Ident(name, _) => {
+                    Some((String::new(), Some(WorkspaceSourceRef::Named(name))))
+                }
+                other => {
+                    self.errors.push(Diagnostic::error(
+                        other.span(),
+                        "`source` must be a source name or path string",
+                    ));
+                    None
+                }
+            },
+            (None, None) => {
+                self.errors.push(
+                    Diagnostic::error(
+                        kind_span.clone(),
+                        format!("{context} requires `base` or `source`"),
+                    )
+                    .with_hint("add `base = \"...\"`, `source = \"...\"`, or `source = <name>`"),
+                );
+                None
+            }
+        }
     }
 
     /// Parse the required nested `apply_back { mode = ...; excludes = [...];

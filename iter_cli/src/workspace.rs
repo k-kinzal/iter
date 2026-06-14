@@ -143,11 +143,12 @@ pub fn workspaces_from_def(
     profile: SandboxProfile,
 ) -> impl Fn() -> Box<dyn Workspace> + Send + Sync + use<> {
     let spec = match decl {
-        WorkspaceDef::Local { base } => WorkspaceSpec::Local {
+        WorkspaceDef::Local { base, .. } => WorkspaceSpec::Local {
             base: PathBuf::from(base),
         },
         WorkspaceDef::Clone {
             base,
+            source: _,
             remote: _,
             excludes,
             includes,
@@ -169,6 +170,7 @@ pub fn workspaces_from_def(
         },
         WorkspaceDef::Sandbox {
             base,
+            source: _,
             excludes,
             includes,
             preserve_mtime,
@@ -205,6 +207,7 @@ mod tests {
     fn factory_yields_distinct_local_instances() {
         let decl = WorkspaceDef::Local {
             base: "/tmp/iter-cli-test".into(),
+            source: None,
         };
         let supply = workspaces_from_def(&decl, SandboxProfile::default());
         let a = supply();
@@ -227,6 +230,7 @@ mod tests {
     fn factory_handles_clone_decl() {
         let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
+            source: None,
             remote: None,
             excludes: Vec::new(),
             includes: Vec::new(),
@@ -242,6 +246,7 @@ mod tests {
     fn factory_handles_clone_with_remote() {
         let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
+            source: None,
             remote: Some("https://example.com/repo".into()),
             excludes: Vec::new(),
             includes: Vec::new(),
@@ -257,6 +262,7 @@ mod tests {
     fn factory_handles_sandbox_decl() {
         let decl = WorkspaceDef::Sandbox {
             base: "/tmp/iter-cli-test".into(),
+            source: None,
             excludes: Vec::new(),
             includes: Vec::new(),
             preserve_mtime: true,

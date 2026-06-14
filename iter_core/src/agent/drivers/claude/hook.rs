@@ -342,34 +342,10 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn hook_script_includes_user_hooks_when_present() {
-        let tmp = TempDir::new().expect("tmp");
-        let settings_path = tmp.path().join(".claude/settings.json");
-        let user_config = json!({
-            "hooks": {
-                "Stop": [
-                    {
-                        "matcher": "",
-                        "hooks": [
-                            { "type": "command", "command": "echo my-user-hook" }
-                        ]
-                    }
-                ]
-            }
-        });
-        write(
-            &settings_path,
-            serde_json::to_vec_pretty(&user_config).unwrap().as_slice(),
-        )
-        .await;
-
-        let _bundle = HookBundle::install(tmp.path(), "test_svc")
-            .await
-            .expect("install");
-
-        let script = tmp.path().join(".claude/hooks/iter-stop-hook.sh");
-        let body = fs::read_to_string(&script).await.expect("read");
+    #[test]
+    fn hook_script_includes_user_hooks_when_present() {
+        let user_hooks_script = Path::new("/tmp/iter-test/existing-stop-hooks.sh");
+        let body = hook_script_body(Some(user_hooks_script));
         assert!(
             body.contains("existing-stop-hooks.sh"),
             "hook script must reference the preserved user-hooks script"

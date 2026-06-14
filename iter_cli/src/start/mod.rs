@@ -232,6 +232,7 @@ mod tests {
     fn minimal_workspace() -> WorkspaceDef {
         WorkspaceDef::Local {
             base: "/tmp/start-test".into(),
+            source: None,
         }
     }
 

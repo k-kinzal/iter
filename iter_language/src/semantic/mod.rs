@@ -13,6 +13,7 @@ mod guard;
 mod prompt;
 mod queue;
 mod runner;
+mod source;
 mod suggest;
 mod template;
 mod trigger;
@@ -26,7 +27,10 @@ use guard::lower_guard_pure;
 use suggest::{closest, parse_priority};
 pub(crate) use template::TemplatePosition;
 
-use crate::ast::{ArgDef, Iterfile, NamedDef, NamedPrompt, PromptExpr, PromptValue, Span, Spanned};
+use crate::ast::{
+    ArgDef, Iterfile, NamedDef, NamedPrompt, PromptExpr, PromptValue, Span, Spanned, WorkspaceDef,
+    WorkspaceSourceRef,
+};
 use crate::diagnostic::Diagnostic;
 use crate::parser::{CstBlock, CstFile, CstIdent, CstSection};
 
@@ -178,6 +182,32 @@ impl Analyzer {
                                     .push(Spanned::new(NamedDef { name, decl }, span));
                             }
                         }
+                        "source" => {
+                            let def_name = alias
+                                .as_ref()
+                                .map(|a| a.name.clone())
+                                .or_else(|| kind.as_ref().map(|k| k.name.clone()));
+                            let Some(name) = def_name else {
+                                self.errors.push(Diagnostic::error(
+                                    keyword_span.clone(),
+                                    "`source` requires a kind (and optionally `as <name>`)",
+                                ));
+                                continue;
+                            };
+                            if self.reject_duplicate_name(
+                                &seen.source_names,
+                                &name,
+                                &span,
+                                "source",
+                            ) {
+                                continue;
+                            }
+                            seen.source_names.insert(name.clone(), span.clone());
+                            if let Some(decl) = self.lower_source(kind, body, &keyword_span) {
+                                root.sources
+                                    .push(Spanned::new(NamedDef { name, decl }, span));
+                            }
+                        }
                         "agent" => {
                             let def_name = alias
                                 .as_ref()
@@ -271,6 +301,19 @@ impl Analyzer {
                         "top-level `on <event>` is no longer supported; move event handlers inside the runner block as `on <event> { ... }`",
                     ));
                 }
+            }
+        }
+
+        // Validate runner references.
+        for workspace in &root.workspaces {
+            if let Some(WorkspaceSourceRef::Named(name)) =
+                workspace_source_ref(&workspace.node.decl)
+                && !root.sources.iter().any(|s| s.node.name == *name)
+            {
+                self.errors.push(Diagnostic::error(
+                    workspace.span.clone(),
+                    format!("workspace references source `{name}` which is not defined"),
+                ));
             }
         }
 
@@ -422,12 +465,21 @@ impl Analyzer {
     }
 }
 
+fn workspace_source_ref(workspace: &WorkspaceDef) -> Option<&WorkspaceSourceRef> {
+    match workspace {
+        WorkspaceDef::Local { source, .. }
+        | WorkspaceDef::Clone { source, .. }
+        | WorkspaceDef::Sandbox { source, .. } => source.as_ref(),
+    }
+}
+
 #[derive(Default)]
 struct SectionSeen {
     args: std::collections::BTreeMap<String, Span>,
     // Name-based duplicate guards for named definitions.
     queue_names: std::collections::BTreeMap<String, Span>,
     workspace_names: std::collections::BTreeMap<String, Span>,
+    source_names: std::collections::BTreeMap<String, Span>,
     agent_names: std::collections::BTreeMap<String, Span>,
     prompt_names: std::collections::BTreeMap<String, Span>,
 }

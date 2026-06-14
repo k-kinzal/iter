@@ -35,6 +35,7 @@ pub mod prompt;
 pub mod queue;
 pub mod runner;
 pub mod signal;
+pub mod source;
 pub mod telemetry;
 pub mod template;
 pub mod workspace;

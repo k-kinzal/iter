@@ -22,6 +22,7 @@ Iterfile {
                 name: "clone",
                 decl: Clone {
                     base: ".",
+                    source: None,
                     remote: None,
                     excludes: [],
                     includes: [],
@@ -36,6 +37,7 @@ Iterfile {
             span: 144..244,
         },
     ],
+    sources: [],
     agents: [
         Spanned {
             node: NamedDef {

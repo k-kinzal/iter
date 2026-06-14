@@ -23,6 +23,8 @@ resource clearer.
 | `iter process stop` | `iter stop` |
 | `iter process kill` | `iter kill` |
 | `iter process rm` | `iter rm` |
+| `iter process promote` | `iter promote` |
+| `iter process discard` | `iter discard` |
 | `iter signal push` | `iter enqueue` |
 
 ## Common Paths
