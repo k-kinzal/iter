@@ -17,6 +17,7 @@ driver-sqs = ["dep:aws-config", "dep:aws-credential-types", "dep:aws-sdk-sqs", "
 driver-redis = ["dep:redis"]
 
 [dependencies]
+claude_code.workspace = true
 iter_tracing.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }

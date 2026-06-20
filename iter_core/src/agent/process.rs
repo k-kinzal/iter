@@ -22,7 +22,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -117,6 +117,34 @@ impl RawExit {
             }),
         }
     }
+
+    /// Convert this observed platform exit into an [`std::process::ExitStatus`].
+    ///
+    /// This is used when a caller runs a process through iter's execution
+    /// layer, then hands the captured output back to a library API that
+    /// decodes standard process output.
+    pub(crate) fn into_exit_status(self) -> std::process::ExitStatus {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            match self {
+                Self::Code(code) => std::process::ExitStatus::from_raw(code << 8),
+                Self::Signal(signal) => std::process::ExitStatus::from_raw(signal),
+                Self::Unknown => std::process::ExitStatus::from_raw(1 << 8),
+            }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::ExitStatusExt;
+            match self {
+                Self::Code(code) => {
+                    let code = u32::try_from(code).unwrap_or(1);
+                    std::process::ExitStatus::from_raw(code)
+                }
+                Self::Signal(_) | Self::Unknown => std::process::ExitStatus::from_raw(1),
+            }
+        }
+    }
 }
 
 /// Complete captured output of a non-interactive agent child.
@@ -144,6 +172,15 @@ impl CommandOutput {
     /// Borrow stderr as a UTF-8 string (lossy).
     pub(crate) fn stderr_str(&self) -> std::borrow::Cow<'_, str> {
         String::from_utf8_lossy(&self.stderr)
+    }
+
+    /// Convert iter's captured process output into the standard output shape.
+    pub(crate) fn into_std_output(self) -> Output {
+        Output {
+            status: self.exit.into_exit_status(),
+            stdout: self.stdout,
+            stderr: self.stderr,
+        }
     }
 }
 

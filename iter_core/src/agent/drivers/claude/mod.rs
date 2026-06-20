@@ -48,36 +48,75 @@ use std::process::Stdio;
 
 use crate::{Agent, AgentInvocation, AgentRun, Prompt};
 use async_trait::async_trait;
-use tokio::process::Command;
+use claude_code::{
+    ClaudeCode, Error as ClaudeCodeError, ExecuteCommand, JsonOutput, PermissionMode,
+};
+use thiserror::Error;
 use tokio_util::sync::CancellationToken;
 
-mod command;
 mod hook;
 
 use crate::agent::AgentError;
 use crate::agent::mode::AgentMode;
 use crate::agent::process::{
-    PromptDelivery, apply_user_env, drive_interactive_with_finalize,
+    PromptDelivery, apply_user_env, detect_token_limit, drive_interactive_with_finalize,
     inject_agent_otel_resource_attrs, inject_trace_context_env, spawn_capture,
 };
 use crate::agent::session::SessionIdFile;
-use command::{ClaudeCodeCommand, ClaudeCodeError};
 use hook::HookBundle;
 
-impl From<ClaudeCodeError> for AgentError {
-    /// Adapter projection: collapse Claude Code's CLI-shaped error hierarchy
-    /// onto iter's minimal domain error. Only [`ClaudeCodeError::TokenLimit`]
+#[derive(Debug, Error)]
+enum ClaudeCodeOutputError {
+    /// The configured session id is not a UUID accepted by Claude Code.
+    #[error("claude session id `{value}` is not a valid UUID: {source}")]
+    InvalidSessionId {
+        /// Invalid session id value read from the session file.
+        value: String,
+        /// UUID parser error.
+        source: uuid::Error,
+    },
+    /// Context-window / token-limit detected in the output.
+    #[error("claude hit the context/token limit: {0}")]
+    TokenLimit(String),
+    /// Claude Code output could not be decoded by the `claude_code` crate.
+    #[error("claude code output could not be decoded: {0}")]
+    Decode(ClaudeCodeError),
+    /// A terminal `result` record with `is_error: true`.
+    #[error("claude reported an error result (subtype `{subtype}`)")]
+    Reported {
+        /// The `subtype` of the failing record.
+        subtype: String,
+        /// Process exit code, when one accompanied the failure.
+        exit_code: Option<i32>,
+    },
+    /// The process exited without ever producing a terminal `result` record.
+    #[error("claude produced no terminal result (exit code {exit_code:?})")]
+    NoResult {
+        /// Process exit code, when one was produced.
+        exit_code: Option<i32>,
+    },
+}
+
+impl From<ClaudeCodeOutputError> for AgentError {
+    /// Adapter projection: collapse Claude Code's CLI-shaped result/error
+    /// onto iter's minimal domain error. Only token-limit detection
     /// is router-relevant and preserved as [`AgentError::TokenLimit`]; the
-    /// rest become the generic failure / signal variants.
-    fn from(err: ClaudeCodeError) -> Self {
+    /// rest become generic failures.
+    fn from(err: ClaudeCodeOutputError) -> Self {
         match err {
-            ClaudeCodeError::TokenLimit(detail) => Self::TokenLimit(detail),
-            ClaudeCodeError::Signal(sig) => Self::TerminatedBySignal(sig),
-            ClaudeCodeError::Reported { subtype, exit_code } => Self::Failed {
+            ClaudeCodeOutputError::InvalidSessionId { value, source } => {
+                Self::Launch(format!("invalid claude session id `{value}`: {source}"))
+            }
+            ClaudeCodeOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            ClaudeCodeOutputError::Decode(source) => Self::Failed {
+                code: None,
+                message: format!("claude code output could not be decoded: {source}"),
+            },
+            ClaudeCodeOutputError::Reported { subtype, exit_code } => Self::Failed {
                 code: exit_code,
                 message: format!("claude reported error result `{subtype}`"),
             },
-            ClaudeCodeError::NoResult { exit_code } => Self::Failed {
+            ClaudeCodeOutputError::NoResult { exit_code } => Self::Failed {
                 code: exit_code,
                 message: "claude produced no terminal result".to_owned(),
             },
@@ -90,7 +129,7 @@ impl From<ClaudeCodeError> for AgentError {
 pub struct ClaudeAgent {
     /// Binary name or path. Required (no implicit `"claude"` fallback).
     pub command: String,
-    /// Print vs. interactive mode. Required (no implicit fallback).
+    /// How iter drives the Claude Code process. Required (no implicit fallback).
     pub mode: AgentMode,
     /// Additional arguments appended after the built-in flags. Useful for
     /// overriding assumptions like `--model` or `--output-format`.
@@ -168,37 +207,6 @@ impl ClaudeAgent {
         let uid = unsafe { libc::getuid() };
         PathBuf::from(format!("/private/tmp/claude-{uid}"))
     }
-
-    /// Build the interactive-mode command. Passes the prompt as the first
-    /// positional argument so `claude` seeds its initial user turn with it
-    /// before dropping into the TUI. Extra args come afterward so users
-    /// can still inject `--model`, `-c`, and friends.
-    ///
-    /// `--permission-mode bypassPermissions` is emitted before the extra
-    /// args so users can still override it downstream. iter always runs
-    /// Claude inside a `sandbox-exec` / `bwrap` profile that is the real
-    /// filesystem boundary; the CLI's own per-tool prompt is redundant
-    /// and, crucially, cannot be answered from a detached runner — every
-    /// `Write`/`Edit` would otherwise silently auto-deny and the agent
-    /// would loop reporting "blocked on permissions".
-    fn build_interactive_command(
-        &self,
-        path: &Path,
-        prompt: &Prompt,
-        session_id: Option<&str>,
-    ) -> Command {
-        let mut cmd = Command::new(&self.command);
-        cmd.current_dir(path);
-        cmd.arg("--permission-mode").arg("bypassPermissions");
-        if let Some(sid) = session_id {
-            cmd.arg("--session-id").arg(sid);
-        }
-        cmd.arg(prompt.as_str());
-        for arg in &self.args {
-            cmd.arg(arg);
-        }
-        cmd
-    }
 }
 
 #[async_trait]
@@ -253,12 +261,24 @@ impl Agent for ClaudeAgent {
         };
         match self.mode {
             AgentMode::Headless => {
-                let mut command = ClaudeCodeCommand {
-                    program: &self.command,
-                    args: &self.args,
-                    session_id: session_id.as_deref(),
+                let claude_session_id = session_id
+                    .as_deref()
+                    .map(uuid::Uuid::parse_str)
+                    .transpose()
+                    .map_err(|source| ClaudeCodeOutputError::InvalidSessionId {
+                        value: session_id.as_deref().unwrap_or_default().to_owned(),
+                        source,
+                    })?;
+                let claude_command = ExecuteCommand {
+                    permission_mode: Some(PermissionMode::BypassPermissions),
+                    session_id: claude_session_id,
+                    ..ExecuteCommand::default()
                 }
-                .build(workspace_path);
+                .json();
+                let mut command = ClaudeCode::new(&self.command)
+                    .with_current_dir(workspace_path)
+                    .to_process(&claude_command);
+                command.args(&self.args);
                 apply_user_env(&mut command, declared_env);
                 inject_agent_otel_resource_attrs(
                     &mut command,
@@ -278,9 +298,48 @@ impl Agent for ClaudeAgent {
                     sandbox_command_prefix,
                 )
                 .await?;
-                // Adapter: project the Command's CLI-shaped result/error onto
-                // iter's domain. `?` runs the `From<ClaudeCodeError>` above.
-                let result = command::interpret(&output)?;
+                let raw_exit = output.exit;
+                let exit_code = raw_exit.exit_code();
+                let stdout_text = output.stdout_str().into_owned();
+                let stderr_text = output.stderr_str().into_owned();
+                let result = match JsonOutput::try_from(output.into_std_output()) {
+                    Ok(result) => result,
+                    Err(ClaudeCodeError::Cli {
+                        exit_code,
+                        stdout,
+                        stderr,
+                    }) => {
+                        if let Some(err) = raw_exit.into_failure() {
+                            if matches!(err, AgentError::TerminatedBySignal(_)) {
+                                return Err(err);
+                            }
+                        }
+                        if let Some(detail) = detect_token_limit(&stdout) {
+                            return Err(ClaudeCodeOutputError::TokenLimit(detail).into());
+                        }
+                        if let Some(detail) = detect_token_limit(&stderr) {
+                            return Err(ClaudeCodeOutputError::TokenLimit(detail).into());
+                        }
+                        return Err(ClaudeCodeOutputError::NoResult { exit_code }.into());
+                    }
+                    Err(err) => return Err(ClaudeCodeOutputError::Decode(err).into()),
+                };
+                if result.is_error {
+                    if let Some(detail) = result
+                        .result
+                        .as_deref()
+                        .and_then(detect_token_limit)
+                        .or_else(|| detect_token_limit(&stdout_text))
+                        .or_else(|| detect_token_limit(&stderr_text))
+                    {
+                        return Err(ClaudeCodeOutputError::TokenLimit(detail).into());
+                    }
+                    return Err(ClaudeCodeOutputError::Reported {
+                        subtype: result.subtype.as_str().to_owned(),
+                        exit_code,
+                    }
+                    .into());
+                }
                 Ok(AgentRun {
                     session_id: result.session_id,
                 })
@@ -326,7 +385,24 @@ impl ClaudeAgent {
     ) -> Result<AgentRun, AgentError> {
         let bundle = HookBundle::install(path, hook_isolation_key).await?;
 
-        let mut command = self.build_interactive_command(path, prompt, session_id);
+        let claude_session_id =
+            session_id
+                .map(uuid::Uuid::parse_str)
+                .transpose()
+                .map_err(|source| ClaudeCodeOutputError::InvalidSessionId {
+                    value: session_id.unwrap_or_default().to_owned(),
+                    source,
+                })?;
+        let execute = ExecuteCommand {
+            permission_mode: Some(PermissionMode::BypassPermissions),
+            session_id: claude_session_id,
+            ..ExecuteCommand::default()
+        };
+        let mut command = ClaudeCode::new(&self.command)
+            .with_current_dir(path)
+            .to_process(&execute);
+        command.arg(prompt.as_str());
+        command.args(&self.args);
         apply_user_env(&mut command, declared_env);
         inject_agent_otel_resource_attrs(&mut command, signal_id, signal_kind, path, "claude");
         command
@@ -367,7 +443,7 @@ mod tests {
 
     /// Fake `claude` print binary: echoes each argv arg and its stdin to
     /// *stderr* (so a [`CaptureSink`] can observe them), then prints a valid
-    /// terminal `result` JSON object to stdout so the Command parses an `Ok`.
+    /// terminal `result` JSON object to stdout.
     const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
 cat 1>&2
 printf '%s' '{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"sess-x"}'"#;

@@ -865,6 +865,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "claude_code"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1994,6 +2008,7 @@ dependencies = [
  "aws-types",
  "bytes",
  "chrono",
+ "claude_code",
  "futures",
  "globset",
  "handlebars",
