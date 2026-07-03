@@ -45,7 +45,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 use std::path::Path;
 
 /// Number of trailing stderr bytes carried in a no-result failure. Bounded so
@@ -135,7 +135,7 @@ pub(crate) enum CursorError {
 }
 
 /// Parse Cursor's complete print-mode output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<CursorRun, CursorError> {
+pub(crate) fn interpret(output: RawOutput<'_>) -> Result<CursorRun, CursorError> {
     let stdout = output.stdout_str();
     // The success contract is "the whole stream is one JSON document", but a
     // streaming revision may precede the terminal record with progress lines;
@@ -151,7 +151,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CursorRun, CursorError
 
     let Some(value) = terminal else {
         // No terminal `result` record → cursor-agent never ran a turn.
-        return Err(classify_failure(output, &stdout, exit_code));
+        return Err(classify_failure(&output, &stdout, exit_code));
     };
 
     // Success: a terminal `result` record is present. `is_error` is
@@ -170,7 +170,7 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CursorRun, CursorError
 /// Refinement order: token-limit (in stdout or stderr) → signal → exit `2`
 /// below-min-version → a generic no-result error carrying the exit code and a
 /// short diagnostic (a `type:"error"` record message, else the stderr tail).
-fn classify_failure(output: &CommandOutput, stdout: &str, exit_code: Option<i32>) -> CursorError {
+fn classify_failure(output: &RawOutput<'_>, stdout: &str, exit_code: Option<i32>) -> CursorError {
     let stderr = output.stderr_str();
     if let Some(detail) = detect_token_limit(stdout).or_else(|| detect_token_limit(&stderr)) {
         return CursorError::TokenLimit(detail);
@@ -233,18 +233,24 @@ fn parse_usage(value: Option<&Value>) -> CursorUsage {
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, stderr: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    fn output(stdout: &str, stderr: &str, exit: RawExit) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
     }
 
+    /// Parse a synthesized process output through the `RawOutput` borrow the
+    /// driver hands the parser.
+    fn parse(out: std::process::Output) -> Result<CursorRun, CursorError> {
+        interpret(RawOutput::from(&out))
+    }
+
     #[test]
     fn parses_successful_result_with_session_request_and_usage() {
         let json = r#"{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"sess-1","request_id":"req-9","usage":{"input_tokens":12,"output_tokens":34,"num_turns":2},"duration_ms":99}"#;
-        let res = interpret(&output(json, "", RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, "", RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.request_id.as_deref(), Some("req-9"));
         assert_eq!(res.final_message.as_deref(), Some("done"));
@@ -257,8 +263,7 @@ mod tests {
     fn is_error_true_is_ignored_when_result_present() {
         // `is_error` is hard-coded and must NOT flip a present result to Err.
         let json = r#"{"type":"result","subtype":"success","is_error":true,"session_id":"s"}"#;
-        let res =
-            interpret(&output(json, "", RawExit::Code(0))).expect("present result is success");
+        let res = parse(output(json, "", RawExit::Code(0))).expect("present result is success");
         assert_eq!(res.session_id.as_deref(), Some("s"));
     }
 
@@ -268,13 +273,13 @@ mod tests {
             "{\"type\":\"progress\",\"n\":1}\n",
             "{\"type\":\"result\",\"is_error\":false,\"session_id\":\"s2\"}\n",
         );
-        let res = interpret(&output(stream, "", RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, "", RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("s2"));
     }
 
     #[test]
     fn no_result_on_nonzero_exit_carries_stderr_tail() {
-        let err = interpret(&output("", "fatal: boom\n", RawExit::Code(1))).expect_err("err");
+        let err = parse(output("", "fatal: boom\n", RawExit::Code(1))).expect_err("err");
         match err {
             CursorError::NoResult { exit_code, detail } => {
                 assert_eq!(exit_code, Some(1));
@@ -291,7 +296,7 @@ mod tests {
     #[test]
     fn no_result_prefers_error_record_message() {
         let stdout = "{\"type\":\"error\",\"message\":\"auth required\"}\n";
-        let err = interpret(&output(stdout, "noise", RawExit::Code(1))).expect_err("err");
+        let err = parse(output(stdout, "noise", RawExit::Code(1))).expect_err("err");
         match err {
             CursorError::NoResult { detail, .. } => assert_eq!(detail, "auth required"),
             other @ (CursorError::TokenLimit(_)
@@ -304,19 +309,19 @@ mod tests {
 
     #[test]
     fn exit_two_maps_to_below_min_version() {
-        let err = interpret(&output("", "needs upgrade", RawExit::Code(2))).expect_err("err");
+        let err = parse(output("", "needs upgrade", RawExit::Code(2))).expect_err("err");
         assert!(matches!(err, CursorError::BelowMinVersion));
     }
 
     #[test]
     fn signal_without_result_maps_to_signal() {
-        let err = interpret(&output("", "", RawExit::Signal(9))).expect_err("err");
+        let err = parse(output("", "", RawExit::Signal(9))).expect_err("err");
         assert!(matches!(err, CursorError::Signal(9)));
     }
 
     #[test]
     fn token_limit_in_stderr_is_detected() {
-        let err = interpret(&output(
+        let err = parse(output(
             "",
             "Error: context window exceeded\n",
             RawExit::Code(1),
@@ -327,7 +332,7 @@ mod tests {
 
     #[test]
     fn token_limit_in_stdout_is_detected() {
-        let err = interpret(&output(
+        let err = parse(output(
             "too many tokens for this model\n",
             "",
             RawExit::Code(1),
@@ -340,14 +345,13 @@ mod tests {
     fn token_limit_takes_precedence_over_exit_two() {
         // A below-min-version exit that also mentions a token limit refines to
         // the router-relevant TokenLimit, not BelowMinVersion.
-        let err =
-            interpret(&output("", "context window exceeded", RawExit::Code(2))).expect_err("err");
+        let err = parse(output("", "context window exceeded", RawExit::Code(2))).expect_err("err");
         assert!(matches!(err, CursorError::TokenLimit(_)));
     }
 
     #[test]
     fn empty_stderr_yields_placeholder_detail() {
-        let err = interpret(&output("", "", RawExit::Code(1))).expect_err("err");
+        let err = parse(output("", "", RawExit::Code(1))).expect_err("err");
         match err {
             CursorError::NoResult { detail, .. } => assert_eq!(detail, "no error output"),
             other @ (CursorError::TokenLimit(_)

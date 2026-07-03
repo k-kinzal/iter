@@ -13,103 +13,178 @@
 //!   * the `RunnerFinished` `reason` matches the expected
 //!     termination reason.
 //!
-//! The signal-processing steps are stubbed via fake `Workspace`
-//! and `Agent` impls. We rely on `InMemoryQueue` for the queue.
+//! The signal-processing steps are stubbed via fake `Workspace` /
+//! `ActiveWorkspace` and stub `AgentDriver` impls (each driver wrapped
+//! in a `SingleAgentRouter` behind a real `Agent`, so the whole agent
+//! cycle — prepare → command → spawn-on-workspace → capture → interpret
+//! → cleanup — runs against trivial `sh` invocations). We rely on
+//! `InMemoryQueue` for the queue.
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use super::*;
-use crate::agent::{AgentInvocation, AgentRun};
-use crate::prompt::PromptTemplate;
+use crate::agent::{
+    Agent, AgentCommand, AgentDriver, AgentError, AgentKind, AgentRun, SingleAgentRouter,
+};
+use crate::prompt::{Prompt, PromptTemplate};
 use crate::queue::{InMemoryQueue, Priority, QueueError};
 use crate::signal::{Metadata, Signal, SignalId};
 use crate::time::{DeterministicIdSource, FixedClock};
-use crate::workspace::WorkspaceError;
-use async_trait::async_trait;
+use crate::workspace::workspace::finish_spawn;
+use crate::workspace::{ActiveWorkspace, StdioMode, Workspace, WorkspaceError};
 
+/// Outer wall-clock bound for the iteration-timeout tests that wait for a
+/// cancelled agent to finish shutting down.
+///
+/// Unlike the old in-process fake agents (which returned the instant their
+/// cancel arm fired), the migrated drivers spawn a real child. Cancelling a
+/// piped agent runs `feed_and_capture`'s SIGTERM → grace → SIGKILL window
+/// (`AGENT_TERMINATION_GRACE`), so the realistic return time is roughly
+/// `iteration_timeout + AGENT_TERMINATION_GRACE`. This bound sits comfortably
+/// above that yet far below the agents' 60s natural sleep, so it still proves
+/// the *timeout* — not the sleep — is what ended the run.
+const TIMEOUT_TEST_WALL_BOUND: Duration =
+    Duration::from_secs(crate::agent::process::AGENT_TERMINATION_GRACE.as_secs() + 10);
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fake workspaces.
+//
+// Each `Workspace` recipe mints a `Box<dyn ActiveWorkspace>` on `setup`.
+// The active must be able to *actually spawn* — the stub drivers below emit
+// real `sh` invocations — so every active's working path is a real
+// `tempfile::TempDir` and `spawn` sets `current_dir` before delegating to
+// the shared `finish_spawn` tail (steps 2–5 of the spawn contract).
+// ─────────────────────────────────────────────────────────────────────────
+
+/// The always-succeeding workspace. Holds a temp dir for the whole
+/// exploration; each `setup` hands back an active pointed at it.
 struct FakeWorkspace {
-    path: PathBuf,
+    dir: tempfile::TempDir,
+}
+
+impl FakeWorkspace {
+    fn new() -> Self {
+        Self {
+            dir: tempfile::TempDir::new().expect("tempdir"),
+        }
+    }
 }
 
 #[async_trait]
 impl Workspace for FakeWorkspace {
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        Ok(())
-    }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        Ok(())
-    }
-    fn path(&self) -> &Path {
-        &self.path
-    }
-    fn final_path(&self) -> &Path {
-        self.path()
+    async fn setup(
+        &mut self,
+        _cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
+        Ok(Box::new(FakeActive {
+            path: self.dir.path().to_path_buf(),
+        }))
     }
     fn name(&self) -> &'static str {
         "fake"
     }
 }
 
-/// Workspace whose `teardown()` always fails. The `teardown_calls`
-/// counter records every invocation so tests can assert that
-/// best-effort cleanup actually ran (not merely that no teardown
-/// event surfaced).
-struct FailingTeardownWorkspace {
+struct FakeActive {
     path: PathBuf,
+}
+
+#[async_trait]
+impl ActiveWorkspace for FakeActive {
+    fn path(&self) -> &Path {
+        &self.path
+    }
+    fn spawn(
+        &self,
+        mut command: tokio::process::Command,
+        io: StdioMode,
+    ) -> std::io::Result<tokio::process::Child> {
+        command.current_dir(&self.path);
+        finish_spawn(command, io)
+    }
+    async fn teardown(
+        self: Box<Self>,
+        _cancel: CancellationToken,
+    ) -> Result<PathBuf, WorkspaceError> {
+        Ok(self.path)
+    }
+}
+
+/// Workspace whose active's `teardown()` always fails. The `teardown_calls`
+/// counter records every invocation so tests can assert that best-effort
+/// cleanup actually ran (not merely that no teardown event surfaced).
+struct FailingTeardownWorkspace {
+    dir: tempfile::TempDir,
     teardown_calls: Arc<AtomicUsize>,
 }
 
 #[async_trait]
 impl Workspace for FailingTeardownWorkspace {
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        Ok(())
-    }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        self.teardown_calls.fetch_add(1, Ordering::SeqCst);
-        Err(WorkspaceError::new(std::io::Error::other("boom")))
-    }
-    fn path(&self) -> &Path {
-        &self.path
-    }
-    fn final_path(&self) -> &Path {
-        self.path()
+    async fn setup(
+        &mut self,
+        _cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
+        Ok(Box::new(FailingTeardownActive {
+            path: self.dir.path().to_path_buf(),
+            teardown_calls: Arc::clone(&self.teardown_calls),
+        }))
     }
     fn name(&self) -> &'static str {
         "failing-teardown"
     }
 }
 
-/// Workspace whose `setup()` AND `teardown()` both fail. Used to
-/// exercise the silent-teardown contract on the setup-failure branch
-/// of `drive_workspace`: when setup fails the runner attempts a
-/// best-effort teardown internally, but a teardown error there must
-/// NOT surface as a second `RunnerError(WorkspaceTeardown)` event.
-/// The `teardown_calls` counter records every invocation so tests
-/// can assert the best-effort cleanup actually ran.
-struct FailingSetupWorkspace {
+struct FailingTeardownActive {
     path: PathBuf,
     teardown_calls: Arc<AtomicUsize>,
 }
 
 #[async_trait]
-impl Workspace for FailingSetupWorkspace {
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        Err(WorkspaceError::new(std::io::Error::other("setup-boom")))
-    }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        self.teardown_calls.fetch_add(1, Ordering::SeqCst);
-        Err(WorkspaceError::new(std::io::Error::other("teardown-boom")))
-    }
+impl ActiveWorkspace for FailingTeardownActive {
     fn path(&self) -> &Path {
         &self.path
     }
-    fn final_path(&self) -> &Path {
-        self.path()
+    fn spawn(
+        &self,
+        mut command: tokio::process::Command,
+        io: StdioMode,
+    ) -> std::io::Result<tokio::process::Child> {
+        command.current_dir(&self.path);
+        finish_spawn(command, io)
+    }
+    async fn teardown(
+        self: Box<Self>,
+        _cancel: CancellationToken,
+    ) -> Result<PathBuf, WorkspaceError> {
+        self.teardown_calls.fetch_add(1, Ordering::SeqCst);
+        Err(WorkspaceError::new(std::io::Error::other("boom")))
+    }
+}
+
+/// Workspace whose `setup()` always fails. Under the new self-cleaning
+/// `setup` contract a failed setup releases everything it touched and hands
+/// back no [`ActiveWorkspace`], so the runner never issues a teardown call.
+/// The `setup_calls` counter lets tests assert setup ran exactly once (the
+/// analogue of the old best-effort-teardown observation, which no longer
+/// applies).
+struct FailingSetupWorkspace {
+    setup_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Workspace for FailingSetupWorkspace {
+    async fn setup(
+        &mut self,
+        _cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
+        self.setup_calls.fetch_add(1, Ordering::SeqCst);
+        Err(WorkspaceError::new(std::io::Error::other("setup-boom")))
     }
     fn name(&self) -> &'static str {
         "failing-setup"
@@ -117,137 +192,220 @@ impl Workspace for FailingSetupWorkspace {
 }
 
 /// Workspace that simulates a transient working directory (like
-/// `CloneWorkspace`): `path()` returns the temp dir while active,
-/// `final_path()` always returns the durable base.
+/// `CloneWorkspace`): each `setup` mints a fresh temp dir moved into the
+/// active, so `path()` returns the transient tree while
+/// `teardown()` returns the durable base.
 struct TransientWorkspace {
     base: PathBuf,
-    temp: tempfile::TempDir,
 }
 
 impl TransientWorkspace {
     fn new(base: PathBuf) -> Self {
-        Self {
-            base,
-            temp: tempfile::TempDir::new().expect("tempdir"),
-        }
+        Self { base }
     }
 }
 
 #[async_trait]
 impl Workspace for TransientWorkspace {
-    async fn setup(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        Ok(())
-    }
-    async fn teardown(&mut self, _cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        Ok(())
-    }
-    fn path(&self) -> &Path {
-        self.temp.path()
-    }
-    fn final_path(&self) -> &Path {
-        &self.base
+    async fn setup(
+        &mut self,
+        _cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
+        Ok(Box::new(TransientActive {
+            base: self.base.clone(),
+            temp: tempfile::TempDir::new().expect("tempdir"),
+        }))
     }
     fn name(&self) -> &'static str {
         "transient"
     }
 }
 
-#[derive(Default)]
-struct StubAgent;
+struct TransientActive {
+    base: PathBuf,
+    temp: tempfile::TempDir,
+}
 
 #[async_trait]
-impl Agent for StubAgent {
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::Fake
+impl ActiveWorkspace for TransientActive {
+    fn path(&self) -> &Path {
+        self.temp.path()
     }
+    fn spawn(
+        &self,
+        mut command: tokio::process::Command,
+        io: StdioMode,
+    ) -> std::io::Result<tokio::process::Child> {
+        command.current_dir(self.temp.path());
+        finish_spawn(command, io)
+    }
+    async fn teardown(
+        self: Box<Self>,
+        _cancel: CancellationToken,
+    ) -> Result<PathBuf, WorkspaceError> {
+        // The persistent path is the durable base, not the transient working
+        // tree — this is what post-teardown event handlers must observe.
+        Ok(self.base)
+    }
+}
 
-    async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
+// ─────────────────────────────────────────────────────────────────────────
+// Stub drivers.
+//
+// Each stub is a minimal `AgentDriver` wrapped in a `SingleAgentRouter`
+// behind a real `Agent`. `command()` emits a trivial `sh` invocation so the
+// full spawn/capture path runs; `interpret()` decides the run's verdict.
+// ─────────────────────────────────────────────────────────────────────────
+
+fn shell_command(script: &str) -> AgentCommand {
+    let mut process = tokio::process::Command::new("sh");
+    process.arg("-c").arg(script);
+    AgentCommand {
+        process,
+        stdin: None,
+        io: StdioMode::Piped,
+    }
+}
+
+/// Driver that always reports a clean run: the child exits `0` and
+/// `interpret` returns an empty [`AgentRun`].
+struct StubDriver;
+
+#[async_trait]
+impl AgentDriver for StubDriver {
+    fn command(
+        &self,
+        _path: &Path,
+        _prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        Ok(shell_command("exit 0"))
+    }
+    fn interpret(&self, _output: &std::process::Output) -> Result<AgentRun, AgentError> {
         Ok(AgentRun::empty())
     }
+    fn kind(&self) -> AgentKind {
+        AgentKind::Fake
+    }
 }
 
-/// Agent that always returns an error. Used to assert the
-/// agent-failure event-ordering contract: `RunnerError(AgentRun)`
-/// fires immediately after `AgentFinished` and `WorkspaceTeardown*`
-/// events are suppressed for the failing iteration.
-struct FailingAgent;
+/// Driver whose child exits cleanly but whose `interpret` returns an error.
+/// Used to assert the agent-failure event-ordering contract:
+/// `AgentRunFailed` fires immediately after `AgentFinished` and
+/// `WorkspaceTeardown*` events are suppressed for the failing iteration.
+/// The error class ([`AgentError::Cancelled`]) preserves the class the old
+/// `FailingAgent` returned.
+struct FailingDriver;
 
 #[async_trait]
-impl Agent for FailingAgent {
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::Fake
+impl AgentDriver for FailingDriver {
+    fn command(
+        &self,
+        _path: &Path,
+        _prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        Ok(shell_command("exit 0"))
     }
-
-    async fn run(&self, _ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
-        Err(crate::agent::AgentError::Cancelled)
+    fn interpret(&self, _output: &std::process::Output) -> Result<AgentRun, AgentError> {
+        Err(AgentError::Cancelled)
+    }
+    fn kind(&self) -> AgentKind {
+        AgentKind::Fake
     }
 }
 
-/// Agent that sleeps for `delay`, observing `ctx.cancel`. Used to
-/// exercise the per-iteration timeout: the runner cancels its child
-/// token, the agent's `select!` arm fires, and the agent returns
-/// `Cancelled`.
+/// Driver whose child sleeps for `delay`, so the runner's per-iteration
+/// timeout has to cancel it. Used to exercise the timeout: the runner
+/// cancels its child token, `feed_and_capture` terminates the process group,
+/// and the run returns `Cancelled`.
 ///
-/// `cancel_observed` is set when the agent's cancel arm actually ran
-/// (as opposed to the future being dropped from underneath).  Tests
-/// pin a copy and assert it transitioned, which catches regressions
-/// where the runner drops the agent future on `iteration_timeout`
-/// instead of awaiting its graceful shutdown.
-struct SleepyAgent {
+/// `cancel_observed` is set in `cleanup()`. After `prepare` succeeds the
+/// agent cycle runs `cleanup` on **every** path, so a set flag proves the
+/// runner drained the agent future to graceful completion rather than
+/// dropping it on the floor at timeout — the same regression `cancel_observed`
+/// caught when it lived inside the old in-process agent's cancel arm.
+struct SleepyDriver {
     delay: Duration,
     cancel_observed: Arc<AtomicBool>,
 }
 
-impl SleepyAgent {
-    fn new(delay: Duration) -> Self {
-        Self {
-            delay,
-            cancel_observed: Arc::new(AtomicBool::new(false)),
-        }
+#[async_trait]
+impl AgentDriver for SleepyDriver {
+    fn command(
+        &self,
+        _path: &Path,
+        _prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        Ok(shell_command(&format!("sleep {}", self.delay.as_secs())))
+    }
+    fn interpret(&self, _output: &std::process::Output) -> Result<AgentRun, AgentError> {
+        Ok(AgentRun::empty())
+    }
+    async fn cleanup(&self, _path: &Path) -> Result<(), AgentError> {
+        self.cancel_observed.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+    fn kind(&self) -> AgentKind {
+        AgentKind::Fake
     }
 }
 
-/// Agent that observes `ctx.cancel` *and then* takes a long time to
-/// actually return — simulating an agent stuck in slow cleanup
-/// (`group.terminate(GRACE)` for a non-responsive child, etc.).
-/// Used to verify the runner does not silently wait out the full
-/// drain grace period when the parent `cancel` fires during the
-/// drain window.
-struct SluggishCleanupAgent {
+/// Driver whose child sleeps and whose `cleanup()` then takes a long time —
+/// simulating an agent stuck in slow post-cancel shutdown. Used to verify the
+/// runner does not silently wait out the full drain grace period when the
+/// parent `cancel` fires during the drain window: the drain must yield to the
+/// parent token well before `cleanup` returns.
+struct SluggishDriver {
     post_cancel_sleep: Duration,
 }
 
 #[async_trait]
-impl Agent for SluggishCleanupAgent {
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::Fake
+impl AgentDriver for SluggishDriver {
+    fn command(
+        &self,
+        _path: &Path,
+        _prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        Ok(shell_command("sleep 60"))
     }
-
-    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
-        ctx.cancel.cancelled().await;
-        // Stay alive much longer than DRAIN_GRACE so that any test
-        // that bounded its overall wait at < DRAIN_GRACE could only
-        // succeed if the runner short-circuited the drain.
+    fn interpret(&self, _output: &std::process::Output) -> Result<AgentRun, AgentError> {
+        Ok(AgentRun::empty())
+    }
+    async fn cleanup(&self, _path: &Path) -> Result<(), AgentError> {
+        // Stay in cleanup far longer than DRAIN_GRACE so the only way the
+        // drain window returns quickly is via its parent-cancel arm.
         tokio::time::sleep(self.post_cancel_sleep).await;
-        Err(crate::agent::AgentError::Cancelled)
+        Ok(())
+    }
+    fn kind(&self) -> AgentKind {
+        AgentKind::Fake
     }
 }
 
-#[async_trait]
-impl Agent for SleepyAgent {
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::Fake
-    }
+fn agent_over(driver: impl AgentDriver + 'static) -> Agent {
+    Agent::new(Box::new(SingleAgentRouter::new(Box::new(driver))))
+}
 
-    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, crate::agent::AgentError> {
-        tokio::select! {
-            () = tokio::time::sleep(self.delay) => Ok(AgentRun::empty()),
-            () = ctx.cancel.cancelled() => {
-                self.cancel_observed.store(true, Ordering::SeqCst);
-                Err(crate::agent::AgentError::Cancelled)
-            }
-        }
-    }
+fn stub_agent() -> Agent {
+    agent_over(StubDriver)
+}
+
+fn failing_agent() -> Agent {
+    agent_over(FailingDriver)
+}
+
+fn sleepy_agent(delay: Duration) -> Agent {
+    agent_over(SleepyDriver {
+        delay,
+        cancel_observed: Arc::new(AtomicBool::new(false)),
+    })
+}
+
+fn sluggish_agent(post_cancel_sleep: Duration) -> Agent {
+    agent_over(SluggishDriver { post_cancel_sleep })
 }
 
 /// Captures every `HookEvent` the runner emits. Wrapped in `Arc<Mutex>`
@@ -293,42 +451,25 @@ impl EventAction for FailFirstHandler {
     }
 }
 
-fn make_provider() -> impl Fn() -> Box<dyn Workspace> + Send + Sync {
-    || -> Box<dyn Workspace> {
-        Box::new(FakeWorkspace {
-            path: PathBuf::from("/tmp/iter-runner-test"),
-        })
-    }
+fn make_workspace() -> Box<dyn Workspace> {
+    Box::new(FakeWorkspace::new())
 }
 
-fn make_failing_teardown_provider() -> (
-    impl Fn() -> Box<dyn Workspace> + Send + Sync,
-    Arc<AtomicUsize>,
-) {
+fn make_failing_teardown_workspace() -> (Box<dyn Workspace>, Arc<AtomicUsize>) {
     let teardown_calls = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&teardown_calls);
-    let supply = move || -> Box<dyn Workspace> {
-        Box::new(FailingTeardownWorkspace {
-            path: PathBuf::from("/tmp/iter-runner-test"),
-            teardown_calls: Arc::clone(&counter),
-        })
-    };
-    (supply, teardown_calls)
+    let workspace = Box::new(FailingTeardownWorkspace {
+        dir: tempfile::TempDir::new().expect("tempdir"),
+        teardown_calls: Arc::clone(&teardown_calls),
+    });
+    (workspace, teardown_calls)
 }
 
-fn make_failing_setup_provider() -> (
-    impl Fn() -> Box<dyn Workspace> + Send + Sync,
-    Arc<AtomicUsize>,
-) {
-    let teardown_calls = Arc::new(AtomicUsize::new(0));
-    let counter = Arc::clone(&teardown_calls);
-    let supply = move || -> Box<dyn Workspace> {
-        Box::new(FailingSetupWorkspace {
-            path: PathBuf::from("/tmp/iter-runner-test"),
-            teardown_calls: Arc::clone(&counter),
-        })
-    };
-    (supply, teardown_calls)
+fn make_failing_setup_workspace() -> (Box<dyn Workspace>, Arc<AtomicUsize>) {
+    let setup_calls = Arc::new(AtomicUsize::new(0));
+    let workspace = Box::new(FailingSetupWorkspace {
+        setup_calls: Arc::clone(&setup_calls),
+    });
+    (workspace, setup_calls)
 }
 
 fn count_runner_starting(events: &[HookEvent]) -> usize {
@@ -384,8 +525,8 @@ async fn synthesized_signal_uses_injected_clock_and_id_source() {
     let pinned = UNIX_EPOCH + Duration::from_secs(1_700_000_123);
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -439,8 +580,8 @@ async fn once_path_emits_runner_starting_and_finished_exactly_once() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -477,8 +618,8 @@ async fn cancel_path_emits_runner_starting_and_finished_exactly_once() {
     cancel.cancel();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: false,
@@ -511,8 +652,8 @@ async fn drained_path_emits_runner_starting_and_finished_exactly_once() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: false,
@@ -549,11 +690,11 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let (provider, _teardown_calls) = make_failing_teardown_provider();
+    let (workspace, _teardown_calls) = make_failing_teardown_workspace();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(provider)
-        .agent(Box::new(StubAgent))
+        .workspace(workspace)
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: false,
@@ -612,11 +753,11 @@ async fn error_path_carries_handler_counts_in_runner_finished() {
         events: Arc::clone(&events_buf),
         calls: Arc::clone(&calls),
     };
-    let (provider, _teardown_calls) = make_failing_teardown_provider();
+    let (workspace, _teardown_calls) = make_failing_teardown_workspace();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(provider)
-        .agent(Box::new(StubAgent))
+        .workspace(workspace)
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: false,
@@ -689,11 +830,11 @@ async fn teardown_failure_with_continue_on_error_carries_errored_result_to_next_
         .await
         .unwrap();
     let handler = CapturingIterHandler::default();
-    let (provider, _teardown_calls) = make_failing_teardown_provider();
+    let (workspace, _teardown_calls) = make_failing_teardown_workspace();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(provider)
-        .agent(Box::new(StubAgent))
+        .workspace(workspace)
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: false,
@@ -797,8 +938,8 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
     };
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -824,10 +965,9 @@ async fn runner_starting_handler_error_does_not_abort_runner() {
 #[tokio::test]
 async fn iteration_timeout_kills_long_running_agent() {
     // The agent would sleep effectively forever. With the timeout in
-    // place, the agent module cancels the iteration after
-    // `iteration_timeout`, surfaces an `AgentError::IterationTimeout`
-    // error, and (because `continue_on_error = false`) terminates with
-    // `RunnerError`.
+    // place, the runner cancels the iteration after `iteration_timeout`,
+    // surfaces an `AgentError::IterationTimeout` error, and (because
+    // `continue_on_error = false`) terminates with `RunnerError`.
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
         .enqueue(Signal::new(Metadata::new()), Priority::default())
@@ -836,8 +976,8 @@ async fn iteration_timeout_kills_long_running_agent() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(SleepyAgent::new(Duration::from_secs(60))))
+        .workspace(make_workspace())
+        .agent(sleepy_agent(Duration::from_secs(60)))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -849,9 +989,12 @@ async fn iteration_timeout_kills_long_running_agent() {
         .build()
         .unwrap();
 
-    let result = tokio::time::timeout(Duration::from_secs(2), runner.run(CancellationToken::new()))
-        .await
-        .expect("runner must return well before the agent's 60s sleep");
+    let result = tokio::time::timeout(
+        TIMEOUT_TEST_WALL_BOUND,
+        runner.run(CancellationToken::new()),
+    )
+    .await
+    .expect("runner must return well before the agent's 60s sleep");
     // continue_on_error = false → the timeout aborts the runner.
     assert!(result.is_err(), "expected RunnerError on aborted run");
 
@@ -890,8 +1033,8 @@ async fn iteration_timeout_does_not_fire_when_agent_returns_quickly() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -935,7 +1078,7 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
     // With `continue_on_error = true`, a timed-out iteration becomes
     // a recorded failure and the loop moves on. We use `once = true`
     // so we get a single iteration and observe its result via the
-    // emitted `AgentFinished` event (`result label = "cancelled"`).
+    // emitted `AgentRunFailed` event.
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
         .enqueue(Signal::new(Metadata::new()), Priority::default())
@@ -944,8 +1087,8 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(SleepyAgent::new(Duration::from_secs(60))))
+        .workspace(make_workspace())
+        .agent(sleepy_agent(Duration::from_secs(60)))
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -957,10 +1100,13 @@ async fn iteration_timeout_with_continue_on_error_advances_to_next_iter() {
         .build()
         .unwrap();
 
-    tokio::time::timeout(Duration::from_secs(5), runner.run(CancellationToken::new()))
-        .await
-        .expect("runner returned before deadline")
-        .expect("continue_on_error should make a timed-out iter recoverable");
+    tokio::time::timeout(
+        TIMEOUT_TEST_WALL_BOUND,
+        runner.run(CancellationToken::new()),
+    )
+    .await
+    .expect("runner returned before deadline")
+    .expect("continue_on_error should make a timed-out iter recoverable");
 
     let events = handler.events.lock().unwrap().clone();
     assert_eq!(finished_iteration_count(&events), 1);
@@ -981,11 +1127,15 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
     // bypassing `terminate(GRACE)`'s graceful `SIGTERM` → grace →
     // `SIGKILL`).  The runner must instead keep awaiting the agent
     // future after firing the iter-scoped cancel so the agent's own
-    // cleanup can run.  We verify the agent's cancel arm actually
-    // executed by reading the `cancel_observed` flag after `run`
-    // returns.
-    let agent = SleepyAgent::new(Duration::from_secs(60));
-    let observed = Arc::clone(&agent.cancel_observed);
+    // cleanup can run.  The driver sets `cancel_observed` inside
+    // `cleanup()`, which the agent cycle guarantees runs on every path
+    // once `prepare` has succeeded — so a set flag proves the runner
+    // drained the future to completion rather than dropping it.
+    let cancel_observed = Arc::new(AtomicBool::new(false));
+    let agent = agent_over(SleepyDriver {
+        delay: Duration::from_secs(60),
+        cancel_observed: Arc::clone(&cancel_observed),
+    });
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
         .enqueue(Signal::new(Metadata::new()), Priority::default())
@@ -994,8 +1144,8 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(agent))
+        .workspace(make_workspace())
+        .agent(agent)
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -1008,15 +1158,18 @@ async fn iteration_timeout_lets_agent_observe_cancel_before_returning() {
         .unwrap();
 
     drop(
-        tokio::time::timeout(Duration::from_secs(5), runner.run(CancellationToken::new()))
-            .await
-            .expect("runner returned before deadline"),
+        tokio::time::timeout(
+            TIMEOUT_TEST_WALL_BOUND,
+            runner.run(CancellationToken::new()),
+        )
+        .await
+        .expect("runner returned before deadline"),
     );
 
     assert!(
-        observed.load(Ordering::SeqCst),
-        "agent's cancel arm must run on iteration_timeout — runner must \
-             not drop the agent future on the floor",
+        cancel_observed.load(Ordering::SeqCst),
+        "the driver's cleanup must run on iteration_timeout — the runner must \
+             drain the agent future to graceful completion, not drop it on the floor",
     );
 }
 
@@ -1035,23 +1188,21 @@ async fn iteration_timeout_drain_yields_to_parent_cancel() {
         .await
         .unwrap();
     let runner = Runner::builder()
-            .queue(Arc::clone(&queue))
-            .workspaces(make_provider())
-            // Outlast DRAIN_GRACE comfortably so the only way the test
-            // returns quickly is via the parent-cancel arm.
-            .agent(Box::new(SluggishCleanupAgent {
-                post_cancel_sleep: Duration::from_secs(60),
-            }))
-            .prompt_template(PromptTemplate::new("hello").unwrap())
-            .config(RunnerPolicy {
-                once: true,
-                continue_on_error: true,
-                behavior: SignalAcquisition::Wait,
-                iteration_timeout: Some(Duration::from_millis(50)),
-            })
-            .on_all(CapturingHandler::default())
-            .build()
-            .unwrap();
+        .queue(Arc::clone(&queue))
+        // The agent's cleanup outlasts DRAIN_GRACE comfortably, so the only
+        // way the test returns quickly is via the drain's parent-cancel arm.
+        .workspace(make_workspace())
+        .agent(sluggish_agent(Duration::from_secs(60)))
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: true,
+            continue_on_error: true,
+            behavior: SignalAcquisition::Wait,
+            iteration_timeout: Some(Duration::from_millis(50)),
+        })
+        .on_all(CapturingHandler::default())
+        .build()
+        .unwrap();
 
     let parent_cancel = CancellationToken::new();
     let canceller = parent_cancel.clone();
@@ -1089,8 +1240,8 @@ async fn agent_failure_emits_runner_error_before_teardown_events() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(FailingAgent))
+        .workspace(make_workspace())
+        .agent(failing_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -1152,31 +1303,27 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
     //
     // When `Workspace::setup` fails, the runner:
     //   1. Emits `RunnerError(WorkspaceSetup)` exactly once.
-    //   2. Best-effort tears down internally to release the
-    //      workspace, but does NOT emit
-    //      `WorkspaceTeardownStarting` / `WorkspaceTeardownFinished`
-    //      (per the documented "fires instead of any later lifecycle
-    //      events" rule).
-    //   3. If that best-effort teardown itself errors, it logs via
-    //      `tracing::warn!` but does NOT emit a second
-    //      `RunnerError(WorkspaceTeardown)` — the operator already
-    //      has the original setup error, and a follow-on teardown
-    //      error during the cleanup attempt is noise that would
-    //      mislead error-routing handlers.
-    //
-    // `FailingSetupWorkspace` fails BOTH setup and teardown, so this
-    // test exercises every branch of the setup-failure error path.
+    //   2. Does NOT emit `WorkspaceTeardownStarting` /
+    //      `WorkspaceTeardownFinished` (per the documented "fires
+    //      instead of any later lifecycle events" rule).
+    //   3. Issues NO teardown call at all: under the self-cleaning
+    //      `setup` contract a failed setup has already released every
+    //      resource it acquired and returns no `ActiveWorkspace`, so
+    //      there is nothing for the runner to tear down. (This replaces
+    //      the old best-effort-teardown-after-setup-failure behavior;
+    //      the operator gets exactly the original setup error, with no
+    //      follow-on teardown error to mislead error-routing handlers.)
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
         .enqueue(Signal::new(Metadata::new()), Priority::default())
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let (provider, teardown_calls) = make_failing_setup_provider();
+    let (workspace, setup_calls) = make_failing_setup_workspace();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(provider)
-        .agent(Box::new(StubAgent))
+        .workspace(workspace)
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -1210,8 +1357,8 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
         .count();
     assert_eq!(
         teardown_error_count, 0,
-        "WorkspaceTeardownFailed must NOT fire when teardown is invoked as best-effort \
-             cleanup after a setup failure (silent-teardown contract), got: {events:?}",
+        "WorkspaceTeardownFailed must NOT fire when setup failed — a failed setup \
+             is self-cleaning and the runner issues no teardown, got: {events:?}",
     );
 
     let saw_teardown_event = events.iter().any(|e| {
@@ -1234,13 +1381,14 @@ async fn setup_failure_emits_single_runner_error_with_no_teardown_events() {
         "WorkspaceSetupFinished must NOT fire when setup itself failed, got: {events:?}",
     );
 
-    // Best-effort cleanup actually ran. Without this assertion the
-    // test would still pass if the silent teardown call were
-    // deleted entirely from `drive_workspace`.
+    // Setup ran exactly once and self-cleaned; the runner made no teardown
+    // call. Without this assertion the test would still pass if the runner
+    // regressed into calling teardown after a setup failure.
     assert_eq!(
-        teardown_calls.load(Ordering::SeqCst),
+        setup_calls.load(Ordering::SeqCst),
         1,
-        "Workspace::teardown must be invoked exactly once as best-effort cleanup",
+        "Workspace::setup must be invoked exactly once; a failed setup is \
+             self-cleaning so the runner performs no teardown call",
     );
 }
 
@@ -1260,11 +1408,11 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
         .await
         .unwrap();
     let handler = CapturingHandler::default();
-    let (provider, teardown_calls) = make_failing_teardown_provider();
+    let (workspace, teardown_calls) = make_failing_teardown_workspace();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(provider)
-        .agent(Box::new(FailingAgent))
+        .workspace(workspace)
+        .agent(failing_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -1317,7 +1465,7 @@ async fn agent_failure_with_failing_teardown_emits_single_runner_error() {
     assert_eq!(
         teardown_calls.load(Ordering::SeqCst),
         1,
-        "Workspace::teardown must be invoked exactly once as best-effort cleanup",
+        "Workspace teardown must be invoked exactly once as best-effort cleanup",
     );
 }
 
@@ -1358,8 +1506,8 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: false,
@@ -1442,8 +1590,8 @@ async fn dequeue_failure_with_continue_on_error_retries_and_does_not_bump_iterat
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,
@@ -1492,8 +1640,8 @@ async fn terminate_signal_stops_runner_gracefully() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy::default())
         .on_all(handler.clone())
@@ -1526,8 +1674,8 @@ async fn work_signals_before_terminate_are_all_processed() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(make_provider())
-        .agent(Box::new(StubAgent))
+        .workspace(make_workspace())
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy::default())
         .on_all(handler.clone())
@@ -1546,11 +1694,7 @@ async fn work_signals_before_terminate_are_all_processed() {
 async fn transient_workspace_teardown_event_carries_persistent_path() {
     let persistent_dir = tempfile::TempDir::new().expect("persistent dir");
     let persistent_path = persistent_dir.path().to_path_buf();
-
     let expected = persistent_path.clone();
-    let provider = move || -> Box<dyn Workspace> {
-        Box::new(TransientWorkspace::new(persistent_path.clone()))
-    };
 
     let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
     queue
@@ -1560,8 +1704,8 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
     let handler = CapturingHandler::default();
     let runner = Runner::builder()
         .queue(Arc::clone(&queue))
-        .workspaces(provider)
-        .agent(Box::new(StubAgent))
+        .workspace(Box::new(TransientWorkspace::new(persistent_path)))
+        .agent(stub_agent())
         .prompt_template(PromptTemplate::new("hello").unwrap())
         .config(RunnerPolicy {
             once: true,

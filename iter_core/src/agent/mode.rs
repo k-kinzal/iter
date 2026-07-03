@@ -2,16 +2,16 @@
 
 use serde::{Deserialize, Serialize};
 
-/// How a hook-capable agent drives its underlying CLI binary.
+/// How a hook-capable driver assembles its underlying CLI invocation.
 ///
-/// Four agents in this crate honour this enum —
-/// [`ClaudeAgent`](crate::agent::ClaudeAgent),
-/// [`CodexAgent`](crate::agent::CodexAgent),
-/// [`GeminiAgent`](crate::agent::GeminiAgent), and
-/// [`CopilotAgent`](crate::agent::CopilotAgent). The remaining four agents
-/// ([`CursorAgent`](crate::agent::CursorAgent), [`ClineAgent`](crate::agent::ClineAgent),
-/// [`OpenCodeAgent`](crate::agent::OpenCodeAgent), and
-/// [`GenericAgent`](crate::agent::GenericAgent)) do not implement a hook-driven TUI
+/// Four drivers in this crate honour this enum —
+/// [`ClaudeCodeDriver`](crate::agent::ClaudeCodeDriver),
+/// [`CodexDriver`](crate::agent::CodexDriver),
+/// [`GeminiDriver`](crate::agent::GeminiDriver), and
+/// [`CopilotDriver`](crate::agent::CopilotDriver). The print-only drivers
+/// ([`CursorDriver`](crate::agent::CursorDriver), [`ClineDriver`](crate::agent::ClineDriver),
+/// [`OpenCodeDriver`](crate::agent::OpenCodeDriver), and
+/// [`GenericDriver`](crate::agent::GenericDriver)) do not implement a hook-driven TUI
 /// path and run in a single print-style shape regardless of the requested
 /// mode.
 ///
@@ -28,9 +28,9 @@ use serde::{Deserialize, Serialize};
 /// * [`AgentMode::Headless`] — runs the CLI non-interactively in its
 ///   one-shot mode (`claude --print`, `codex exec`, `gemini -p`,
 ///   `gh copilot suggest`, etc.). The prompt is delivered inline or on
-///   stdin and the CLI's machine-readable output is parsed by the per-CLI
-///   Command into an [`AgentRun`](crate::AgentRun). No tty required; works
-///   in CI and detached instances.
+///   stdin and the CLI's machine-readable output is read by the driver's
+///   `interpret` into an [`AgentRun`](crate::AgentRun). No tty required;
+///   works in CI and detached instances.
 ///
 /// There is no `Default` impl. Headless vs Interactive is a project-shaped
 /// decision: iter has no honest default because some workflows need the

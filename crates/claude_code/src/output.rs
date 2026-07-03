@@ -243,7 +243,11 @@ where
     Ok(
         Option::<Value>::deserialize(deserializer)?.and_then(|value| match value {
             Value::String(value) => Some(value),
-            _ => None,
+            Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::Array(_)
+            | Value::Object(_) => None,
         }),
     )
 }

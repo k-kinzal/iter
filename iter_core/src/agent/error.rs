@@ -1,21 +1,21 @@
 //! [`AgentError`] — iter's domain error for a single agent run.
 //!
-//! This is the error half of the **Agent level** (see [`AgentRun`]). It is
-//! deliberately minimal: it enumerates only the failure classes iter
-//! actually consumes — either by classifying router fallback eligibility or
-//! by reading it into a Factor (the runner reads the exit code off
-//! [`AgentError::Failed`] for the `iteration.previous_exit_code` template
-//! field).
+//! This is the error half of the agent's domain vocabulary (see
+//! [`AgentRun`]). It is deliberately minimal: it enumerates only the
+//! failure classes iter actually consumes — either by classifying router
+//! fallback eligibility (a [`Route`](crate::agent::Route) reads the
+//! [`FallbackClass`]) or by reading it into a Factor (the runner reads the
+//! exit code off [`AgentError::Failed`] for the
+//! `iteration.previous_exit_code` template field).
 //!
 //! The rich, CLI-shaped error hierarchy — auth/quota/rate/context/network
-//! classes, HTTP status codes, retry flags — lives at the **Command level**
-//! (`drivers/<cli>/command.rs`). Each driver, acting as an Adapter, projects
-//! that hierarchy down to one of these variants. Do **not** grow this enum
-//! into an enumerate-so-the-runner-can-branch vocabulary: the runner does
-//! not branch on the class, and an unconsumed variant is dead surface.
+//! classes, HTTP status codes, retry flags — lives inside each driver's
+//! `interpret` (and its `command.rs` helpers). Each driver projects that
+//! hierarchy down to one of these variants. Do **not** grow this enum into
+//! an enumerate-so-the-runner-can-branch vocabulary: the runner does not
+//! branch on the class, and an unconsumed variant is dead surface.
 //!
 //! [`AgentRun`]: crate::agent::AgentRun
-//! [`AgentRouter`]: crate::agent::AgentRouter
 
 use std::io;
 

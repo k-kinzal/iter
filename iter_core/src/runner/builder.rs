@@ -33,16 +33,15 @@ pub enum BuilderError {
 
 /// Fluent builder for [`Runner`].
 ///
-/// All three runtime axes are trait objects: the builder holds the queue as
-/// `Arc<dyn Queue>`, the per-iteration workspace supply as
-/// `Arc<dyn Fn() -> Box<dyn Workspace>>`, and the agent as `Box<dyn Agent>`
-/// (R18 — a closed enum at the definition layer, a trait object at run time),
-/// so `RunnerBuilder` carries no type parameters.
+/// The runner binds one [`Workspace`] (held as `Box<dyn Workspace>` for the
+/// whole exploration) with one [`Agent`] (a concrete struct — the cycle is
+/// implemented once; what varies lives in its router and drivers), so
+/// `RunnerBuilder` carries no type parameters.
 #[must_use = "call `build()` to produce a Runner"]
 pub struct RunnerBuilder {
     queue: Option<Arc<dyn Queue>>,
-    workspaces: Option<Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>>,
-    agent: Option<Box<dyn Agent>>,
+    workspace: Option<Box<dyn Workspace>>,
+    agent: Option<Agent>,
     prompt_selector: Option<PromptSelector>,
     events: EventDispatcher,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
@@ -56,7 +55,7 @@ impl Default for RunnerBuilder {
     fn default() -> Self {
         Self {
             queue: None,
-            workspaces: None,
+            workspace: None,
             agent: None,
             prompt_selector: None,
             events: EventDispatcher::new(),
@@ -87,28 +86,24 @@ impl RunnerBuilder {
         self
     }
 
-    /// Supply the per-iteration workspace supply used to mint a fresh
-    /// workspace for each signal.
-    ///
-    /// The supply yields a `Box<dyn Workspace>` so the runtime workspace axis
-    /// is a trait object (R18); the closed set of workspace kinds lives at the
-    /// definition layer, not here.
-    pub fn workspaces<F>(mut self, supply: F) -> Self
-    where
-        F: Fn() -> Box<dyn Workspace> + Send + Sync + 'static,
-    {
-        self.workspaces = Some(Arc::new(supply));
+    /// Supply the single [`Workspace`] the runner holds for the whole
+    /// exploration. Each iteration calls
+    /// [`setup`](crate::workspace::Workspace::setup) on it to mint a fresh
+    /// [`ActiveWorkspace`](crate::workspace::ActiveWorkspace); the runtime
+    /// workspace axis stays a trait object (R18) — the closed set of
+    /// workspace kinds lives at the definition layer, not here.
+    pub fn workspace(mut self, workspace: Box<dyn Workspace>) -> Self {
+        self.workspace = Some(workspace);
         self
     }
 
-    /// Supply the [`Agent`] used for every iteration.
+    /// Supply the [`Agent`] bound to this runner for every iteration.
     ///
-    /// The agent is a trait object (`Box<dyn Agent>`): the closed set of
-    /// agent kinds lives at the definition layer, and the runtime drives a
-    /// single boxed agent (R18). The operator's translation fn boxes the
-    /// concrete driver it selects from the agent definition; standalone
-    /// callers box the agent themselves.
-    pub fn agent(mut self, agent: Box<dyn Agent>) -> Self {
+    /// `Agent` is a concrete struct: the cycle is implemented once. What
+    /// varies per CLI lives in its drivers, and what varies per composition
+    /// in its router — both fixed when the operator's translation layer
+    /// assembles the agent from its definition.
+    pub fn agent(mut self, agent: Agent) -> Self {
         self.agent = Some(agent);
         self
     }
@@ -188,12 +183,13 @@ impl RunnerBuilder {
         self
     }
 
-    /// Install the [`OutputSink`](crate::log::OutputSink) every
-    /// agent invocation should tee its child stdout/stderr through. The
-    /// operator's start path supplies this from
-    /// `ProcessRuntime::sink()` so agent output reaches the per-process
-    /// `log.ndjson`. Standalone runners may leave it unset — the runner
-    /// falls back to a [`NoopSink`](crate::log::NoopSink) in that case.
+    /// Install the [`OutputSink`](crate::log::OutputSink) the agent tees its
+    /// child stdout/stderr through. Fixed onto the [`Agent`] at
+    /// [`build`](Self::build) time — completing the agent's birth — so the
+    /// operator's start path can supply it from `ProcessRuntime::sink()`
+    /// after the agent was assembled from its definition. Standalone
+    /// runners may leave it unset — the agent keeps its
+    /// [`NoopSink`](crate::log::NoopSink) default in that case.
     pub fn stdio_sink(mut self, sink: Arc<dyn crate::log::OutputSink>) -> Self {
         self.stdio_sink = Some(sink);
         self
@@ -228,19 +224,22 @@ impl RunnerBuilder {
     }
 
     /// Finish building, returning the [`Runner`] or a [`BuilderError`].
+    ///
+    /// Building is where the agent's birth completes: a sink installed via
+    /// [`Self::stdio_sink`] is fixed onto the agent here (replacing the
+    /// agent's no-op default), so the running agent never carries the sink
+    /// through any call signature.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the operation fails.
-    ///
-    /// Every driver now uses [`AgentError`](crate::agent::AgentError)
-    /// directly — the `Agent` trait has no associated error type — and the
-    /// agent is a `Box<dyn Agent>`, so [`Runner`] is a concrete type with no
-    /// parameters.
+    /// Returns [`BuilderError::MissingField`] when a required collaborator
+    /// was not supplied, and [`BuilderError::InvalidConfig`] for an
+    /// internally inconsistent configuration.
     pub fn build(self) -> Result<Runner, BuilderError> {
-        let workspaces = self
-            .workspaces
-            .ok_or(BuilderError::MissingField("workspaces"))?;
-        let agent = self.agent.ok_or(BuilderError::MissingField("agent"))?;
+        let workspace = self
+            .workspace
+            .ok_or(BuilderError::MissingField("workspace"))?;
+        let mut agent = self.agent.ok_or(BuilderError::MissingField("agent"))?;
         let prompt_selector = self
             .prompt_selector
             .ok_or(BuilderError::MissingField("prompt_selector"))?;
@@ -251,17 +250,18 @@ impl RunnerBuilder {
             ));
         }
 
+        if let Some(sink) = self.stdio_sink {
+            agent = agent.with_stdio_sink(sink);
+        }
+
         Ok(Runner {
             queue: self.queue,
-            workspaces,
+            workspace,
             agent,
             prompt_selector,
             events: self.events,
             observers: self.observers,
             config: self.config,
-            stdio_sink: self
-                .stdio_sink
-                .unwrap_or_else(|| Arc::new(crate::log::NoopSink)),
             clock: self.clock,
             id_source: self.id_source,
         })

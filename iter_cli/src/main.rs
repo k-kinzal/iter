@@ -46,7 +46,6 @@ mod source;
 mod start;
 mod workspace;
 
-pub(crate) use agent::agent_from_def;
 pub(crate) use compose::{
     CompletedServices, CompletedTask, ComposeError, ComposePlan, DEFAULT_COMPOSE_FILE,
     FailurePolicy, LABEL_ORCHESTRATOR_BOOT_ID, LABEL_ORCHESTRATOR_PID,
@@ -71,7 +70,6 @@ pub(crate) use queue::{QueueBuildError, queue_address, queue_from_def};
 pub(crate) use runner_policy::runner_policy_from_def;
 pub(crate) use secrets::resolve_secret;
 pub(crate) use start::StartError;
-pub(crate) use workspace::workspaces_from_def;
 
 use std::collections::BTreeMap;
 use std::io;

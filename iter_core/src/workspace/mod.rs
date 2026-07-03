@@ -30,12 +30,12 @@ pub mod sandbox;
 pub mod workspace;
 
 pub use error::WorkspaceError;
-pub use workspace::Workspace;
+pub use workspace::{ActiveWorkspace, StdioMode, Workspace};
 
 pub use apply_back::ApplyBackMode;
 pub use clone::{CloneSettings, CloneWorkspace, CloneWorkspaceError};
 pub use local::{LocalWorkspace, LocalWorkspaceError};
 pub use sandbox::{
-    BackendError, NetworkAccess, SandboxBackend, SandboxDescriptor, SandboxPolicy, SandboxProfile,
-    SandboxWorkspace, SandboxWorkspaceError, match_env_pattern,
+    NetworkAccess, SandboxPolicy, SandboxProfile, SandboxWorkspace, SandboxWorkspaceError,
+    match_env_pattern,
 };

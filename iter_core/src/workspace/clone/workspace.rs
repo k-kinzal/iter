@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::Workspace;
 use crate::time::{Clock, SystemClock};
 use crate::workspace::WorkspaceError;
+use crate::workspace::workspace::{ActiveWorkspace, StdioMode, finish_spawn};
 use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
@@ -41,17 +42,16 @@ use super::{CloneSettings, CloneWorkspaceError};
 ///         apply_back_includes: Vec::new(),
 ///     },
 /// );
-/// ws.setup(CancellationToken::new()).await?;
-/// // ... run the agent against ws.path() ...
-/// ws.teardown(CancellationToken::new()).await?;
+/// let active = ws.setup(CancellationToken::new()).await?;
+/// // ... run the agent against active.path() ...
+/// let persistent = active.teardown(CancellationToken::new()).await?;
+/// # let _ = persistent;
 /// # Ok(()) }
 /// ```
 #[derive(Debug)]
 pub struct CloneWorkspace {
     base: PathBuf,
     settings: CloneSettings,
-    mirror: Option<Mirror>,
-    set_up: bool,
     clock: Arc<dyn Clock>,
 }
 
@@ -62,11 +62,11 @@ impl CloneWorkspace {
     /// Every knob is supplied by the caller; iter ships no defaults.
     #[must_use]
     pub fn new(base: impl Into<PathBuf>, settings: CloneSettings) -> Self {
+        let base = base.into();
+        settings.warn_if_merge_gate_defeated("clone", &base);
         Self {
-            base: base.into(),
+            base,
             settings,
-            mirror: None,
-            set_up: false,
             clock: Arc::new(SystemClock),
         }
     }
@@ -78,19 +78,13 @@ impl CloneWorkspace {
         settings: CloneSettings,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        let base = base.into();
+        settings.warn_if_merge_gate_defeated("clone", &base);
         Self {
-            base: base.into(),
+            base,
             settings,
-            mirror: None,
-            set_up: false,
             clock,
         }
-    }
-
-    /// Returns `true` if the workspace has been successfully set up.
-    #[must_use]
-    pub fn is_set_up(&self) -> bool {
-        self.set_up
     }
 
     /// Current apply-back mode.
@@ -99,30 +93,22 @@ impl CloneWorkspace {
         self.settings.apply_back
     }
 
-    /// Reconcile the mirror back into `base` according to the configured
-    /// mode. Split out of [`Workspace::teardown`] so the logic can be
-    /// exercised directly from tests without worrying about `TempDir` drop
-    /// order.
-    async fn apply_back_to_base(&self) -> Result<(), CloneWorkspaceError> {
-        let Some(mirror) = self.mirror.as_ref() else {
-            return Err(CloneWorkspaceError::NotSetUp);
-        };
-        match self.settings.apply_back {
-            ApplyBackMode::Discard => Ok(()),
-            ApplyBackMode::Sync => Ok(mirror.sync_back().await?),
-            ApplyBackMode::Merge => Ok(mirror.merge_back().await?),
-        }
-    }
-
     /// Materialise the mirror, returning the concrete [`CloneWorkspaceError`].
     /// The [`Workspace`] trait impl erases this into [`WorkspaceError`].
+    ///
+    /// Self-cleaning on failure: the mirror's backing `TempDir` is dropped
+    /// (and therefore removed) on every error path, so a failed setup leaves
+    /// nothing behind.
     ///
     /// # Errors
     ///
     /// Returns [`CloneWorkspaceError`] when the base path is missing or not a
     /// directory, when a clone/apply-back filter fails to compile, or when
     /// materialising the mirror fails.
-    pub async fn setup(&mut self, cancel: CancellationToken) -> Result<(), CloneWorkspaceError> {
+    pub async fn setup(
+        &mut self,
+        cancel: CancellationToken,
+    ) -> Result<ActiveCloneWorkspace, CloneWorkspaceError> {
         // The copy path is pure filesystem work with no natural cancel point;
         // accept the token for signature compatibility and drop it.
         drop(cancel);
@@ -154,72 +140,94 @@ impl CloneWorkspace {
             mode = ?self.settings.apply_back,
             "clone workspace set up",
         );
-        self.mirror = Some(mirror);
-        self.set_up = true;
-        Ok(())
-    }
-
-    /// Reconcile and tear down the mirror, returning the concrete
-    /// [`CloneWorkspaceError`] (see [`setup`](Self::setup) for the erasure
-    /// note).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CloneWorkspaceError`] when reconciling the mirror back into
-    /// the base directory (apply-back) fails.
-    pub async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), CloneWorkspaceError> {
-        drop(cancel);
-        if !self.set_up {
-            // Teardown without setup is a no-op rather than an error so it
-            // can be safely used in Drop/bail paths.
-            return Ok(());
-        }
-        self.apply_back_to_base().await?;
-
-        if let Some(mirror) = self.mirror.take() {
-            mirror.close_best_effort().await;
-        }
-        self.set_up = false;
-        tracing::debug!(base = %self.base.display(), "clone workspace torn down");
-        Ok(())
+        Ok(ActiveCloneWorkspace {
+            base: self.base.clone(),
+            mirror,
+            apply_back: self.settings.apply_back,
+        })
     }
 }
 
 #[async_trait]
 impl Workspace for CloneWorkspace {
-    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+    async fn setup(
+        &mut self,
+        cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
         CloneWorkspace::setup(self, cancel)
             .await
-            .map_err(WorkspaceError::new)
-    }
-
-    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        CloneWorkspace::teardown(self, cancel)
-            .await
+            .map(|active| Box::new(active) as Box<dyn ActiveWorkspace>)
             .map_err(WorkspaceError::new)
     }
 
     fn name(&self) -> &'static str {
         "clone"
     }
+}
 
+/// The active form of a [`CloneWorkspace`]: the materialised temp mirror.
+///
+/// Owns the [`Mirror`] outright — there is no "not yet cloned" state to
+/// represent. [`teardown`](Self::teardown) reconciles the mirror back into
+/// the base directory per the configured [`ApplyBackMode`] and returns the
+/// base as the persistent path.
+#[derive(Debug)]
+pub struct ActiveCloneWorkspace {
+    base: PathBuf,
+    mirror: Mirror,
+    apply_back: ApplyBackMode,
+}
+
+impl ActiveCloneWorkspace {
+    /// Reconcile and tear down the mirror, returning the concrete
+    /// [`CloneWorkspaceError`] (the trait impl erases it).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CloneWorkspaceError`] when reconciling the mirror back into
+    /// the base directory (apply-back) fails. The temp tree is removed on
+    /// every path — on apply-back failure the mirror is dropped and its
+    /// backing `TempDir` cleans up.
+    pub async fn teardown(self, cancel: CancellationToken) -> Result<PathBuf, CloneWorkspaceError> {
+        // Apply-back is not interrupted mid-flight: the agent's in-flight
+        // work outranks shutdown book-keeping.
+        drop(cancel);
+        let apply_back_result = match self.apply_back {
+            ApplyBackMode::Discard => Ok(()),
+            ApplyBackMode::Sync => self.mirror.sync_back().await,
+            ApplyBackMode::Merge => self.mirror.merge_back().await,
+        };
+        // Close the mirror on every path — an implicit `Drop` on the error
+        // path would run the temp tree's removal synchronously on the
+        // reactor thread, while `close_best_effort` routes it through
+        // `spawn_blocking`.
+        self.mirror.close_best_effort().await;
+        apply_back_result?;
+        tracing::debug!(base = %self.base.display(), "clone workspace torn down");
+        Ok(self.base)
+    }
+}
+
+#[async_trait]
+impl ActiveWorkspace for ActiveCloneWorkspace {
     fn path(&self) -> &Path {
-        // Active-phase working path: the temp clone the agent operates
-        // against. Before setup / after teardown the temp dir is gone, so
-        // we fall back to the base path for diagnostic convenience; the
-        // [`Runner`](crate::Runner) only reads `path()` during the
-        // active phase and uses [`final_path`] after teardown instead.
-        match self.mirror.as_ref() {
-            Some(m) => m.path(),
-            None => &self.base,
-        }
+        self.mirror.path()
     }
 
-    fn final_path(&self) -> &Path {
-        // Persistent path: after teardown, apply-back has reconciled the
-        // temp copy into the base directory, so `&self.base` is the
-        // stable location of the agent's work.
-        &self.base
+    fn spawn(
+        &self,
+        mut command: tokio::process::Command,
+        io: StdioMode,
+    ) -> std::io::Result<tokio::process::Child> {
+        command.current_dir(self.mirror.path());
+        finish_spawn(command, io)
+    }
+
+    async fn teardown(
+        self: Box<Self>,
+        cancel: CancellationToken,
+    ) -> Result<PathBuf, WorkspaceError> {
+        (*self).teardown(cancel).await.map_err(WorkspaceError::new)
     }
 }
 
@@ -257,9 +265,9 @@ mod tests {
         write(&base.path().join("aux/inside.txt"), b"aux").await;
 
         let mut ws = CloneWorkspace::new(base.path(), settings());
-        ws.setup(CancellationToken::new()).await.expect("setup");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
 
-        let temp = ws.path().to_path_buf();
+        let temp = active.path().to_path_buf();
         assert_ne!(temp, base.path());
         assert!(temp.join("keep.txt").exists());
         assert!(temp.join("sub/nested.txt").exists());
@@ -275,9 +283,9 @@ mod tests {
         let mut s = settings();
         s.excludes = vec!["ignore".to_string()];
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
 
-        let temp = ws.path().to_path_buf();
+        let temp = active.path().to_path_buf();
         assert!(temp.join("keep.txt").exists());
         assert!(!temp.join("ignore").exists());
     }
@@ -295,9 +303,9 @@ mod tests {
         let mut s = settings();
         s.excludes = vec!["docs/**/*.md".to_string()];
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
 
-        let temp = ws.path().to_path_buf();
+        let temp = active.path().to_path_buf();
         assert!(!temp.join("docs/a/b/c.md").exists());
         assert!(!temp.join("docs/top.md").exists());
         assert!(temp.join("src/foo.md").exists());
@@ -316,9 +324,9 @@ mod tests {
         let mut s = settings();
         s.excludes = vec!["node_modules".to_string()];
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
 
-        let temp = ws.path().to_path_buf();
+        let temp = active.path().to_path_buf();
         assert!(!temp.join("node_modules").exists());
         assert!(!temp.join("vendor/foo/node_modules").exists());
         assert!(temp.join("vendor/foo").exists());
@@ -326,10 +334,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn path_returns_base_before_setup() {
+    async fn bare_dir_exclude_prunes_subtree_despite_child_negation() {
+        // Pins the intended directory-granular clone pruning (see the
+        // filter.rs module docs): a *bare-directory* exclude prunes the whole
+        // subtree — the walk skips `vendor/` and never descends, so a child
+        // negation cannot rescue anything within it. This is symmetric with
+        // the apply-back workspace gate (filter.rs
+        // `workspace_gate_masks_child_of_excluded_dir_despite_include`); the
+        // documented idiom for keeping one child is exercised by
+        // `contents_glob_exclude_rescues_named_child` below.
         let base = TempDir::new().expect("tempdir");
-        let ws = CloneWorkspace::new(base.path(), settings());
-        assert_eq!(ws.path(), base.path());
+        write(&base.path().join("vendor/keep/sub.txt"), b"keep").await;
+        write(&base.path().join("vendor/other/o.txt"), b"other").await;
+        write(&base.path().join("src/main.rs"), b"rs").await;
+
+        let mut s = settings();
+        s.excludes = vec!["vendor".to_string(), "!vendor/keep".to_string()];
+        let mut ws = CloneWorkspace::new(base.path(), s);
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+
+        let temp = active.path().to_path_buf();
+        assert!(
+            !temp.join("vendor").exists(),
+            "a bare-directory exclude prunes the whole subtree; a child negation is moot",
+        );
+        assert!(temp.join("src/main.rs").exists());
+    }
+
+    #[tokio::test]
+    async fn contents_glob_exclude_rescues_named_child() {
+        // The documented idiom for "drop a directory's contents but keep one
+        // child": exclude at *contents* granularity so the walk still descends
+        // the directory, then negate the child. Unlike a bare-directory
+        // exclude, this leaves `vendor/keep` materialised while dropping its
+        // siblings.
+        let base = TempDir::new().expect("tempdir");
+        write(&base.path().join("vendor/keep/sub.txt"), b"keep").await;
+        write(&base.path().join("vendor/other/o.txt"), b"other").await;
+        write(&base.path().join("src/main.rs"), b"rs").await;
+
+        let mut s = settings();
+        s.excludes = vec!["vendor/*".to_string(), "!vendor/keep".to_string()];
+        let mut ws = CloneWorkspace::new(base.path(), s);
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+
+        let temp = active.path().to_path_buf();
+        assert!(
+            temp.join("vendor/keep/sub.txt").exists(),
+            "a contents-granularity exclude lets the negation rescue the named child",
+        );
+        assert!(
+            !temp.join("vendor/other").exists(),
+            "siblings the contents exclude matched are still dropped",
+        );
+        assert!(temp.join("src/main.rs").exists());
     }
 
     #[tokio::test]
@@ -338,15 +396,17 @@ mod tests {
         write(&base.path().join("a.txt"), b"original").await;
 
         let mut ws = CloneWorkspace::new(base.path(), settings());
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
 
         fs::write(temp.join("a.txt"), b"modified").await.expect("w");
         write(&temp.join("new.txt"), b"brand new").await;
 
-        ws.teardown(CancellationToken::new())
+        let persistent = active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
+        assert_eq!(persistent, base.path());
 
         let back = fs::read_to_string(base.path().join("a.txt"))
             .await
@@ -365,14 +425,15 @@ mod tests {
         write(&base.path().join("deleteme.txt"), b"bye").await;
 
         let mut ws = CloneWorkspace::new(base.path(), settings());
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
 
         fs::remove_file(temp.join("deleteme.txt"))
             .await
             .expect("rm");
 
-        ws.teardown(CancellationToken::new())
+        active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
 
@@ -390,15 +451,16 @@ mod tests {
         let mut s = settings();
         s.excludes = vec![".git".to_string()];
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
 
-        let temp = ws.path().to_path_buf();
+        let temp = active.path().to_path_buf();
         assert!(!temp.join(".git").exists(), "clone must exclude .git");
         fs::write(temp.join("src/main.rs"), b"fn main() { run(); }")
             .await
             .expect("write");
 
-        ws.teardown(CancellationToken::new())
+        active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
 
@@ -424,11 +486,12 @@ mod tests {
         let mut s = settings();
         s.apply_back = ApplyBackMode::Discard;
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
         fs::write(temp.join("a.txt"), b"modified").await.expect("w");
         write(&temp.join("new.txt"), b"new").await;
-        ws.teardown(CancellationToken::new())
+        active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
 
@@ -448,8 +511,8 @@ mod tests {
         let mut s = settings();
         s.apply_back = ApplyBackMode::Merge;
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
 
         // Delete a file in temp and modify another; wait a beat so the
         // Merge mtime check recognises the update.
@@ -459,7 +522,8 @@ mod tests {
             .await
             .expect("w");
 
-        ws.teardown(CancellationToken::new())
+        active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
 
@@ -468,15 +532,6 @@ mod tests {
             .await
             .expect("read");
         assert_eq!(got, "updated");
-    }
-
-    #[tokio::test]
-    async fn teardown_without_setup_is_noop() {
-        let base = TempDir::new().expect("tempdir");
-        let mut ws = CloneWorkspace::new(base.path(), settings());
-        ws.teardown(CancellationToken::new())
-            .await
-            .expect("noop ok");
     }
 
     #[tokio::test]
@@ -494,13 +549,41 @@ mod tests {
         let base = TempDir::new().expect("tempdir");
         write(&base.path().join("a.txt"), b"hi").await;
         let mut ws = CloneWorkspace::new(base.path(), settings());
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
         assert!(temp.exists());
-        ws.teardown(CancellationToken::new())
+        active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
         assert!(!temp.exists(), "temp dir must be removed after teardown");
+    }
+
+    #[tokio::test]
+    async fn repeated_setup_teardown_cycles_on_one_workspace() {
+        // The runner holds one Workspace for the whole exploration; two full
+        // cycles on the same instance are the regression net for that model.
+        let base = TempDir::new().expect("tempdir");
+        write(&base.path().join("a.txt"), b"v0").await;
+        let mut ws = CloneWorkspace::new(base.path(), settings());
+
+        for round in 1..=2 {
+            let active = ws.setup(CancellationToken::new()).await.expect("setup");
+            let temp = active.path().to_path_buf();
+            fs::write(temp.join("a.txt"), format!("v{round}"))
+                .await
+                .expect("write");
+            let persistent = active
+                .teardown(CancellationToken::new())
+                .await
+                .expect("teardown");
+            assert_eq!(persistent, base.path());
+            assert!(!temp.exists());
+            let back = fs::read_to_string(base.path().join("a.txt"))
+                .await
+                .expect("read");
+            assert_eq!(back, format!("v{round}"));
+        }
     }
 
     #[tokio::test]
@@ -514,8 +597,8 @@ mod tests {
         s.excludes = vec!["hidden".to_string(), "drop".to_string()];
         s.includes = vec!["hidden".to_string()];
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
         assert!(temp.join("keep.txt").exists());
         assert!(
             temp.join("hidden/value.txt").exists(),
@@ -540,8 +623,8 @@ mod tests {
         let mut s = settings();
         s.apply_back_excludes = vec!["*.md".to_string()];
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp = ws.path().to_path_buf();
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp = active.path().to_path_buf();
 
         // Agent sees the existing .md inside the temp tree.
         assert!(temp.join("README.md").exists());
@@ -552,7 +635,8 @@ mod tests {
             .await
             .expect("w");
 
-        ws.teardown(CancellationToken::new())
+        active
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
 
@@ -586,8 +670,8 @@ mod tests {
         let mut s = settings();
         s.preserve_mtime = true;
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp_a = ws.path().join("a.txt");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp_a = active.path().join("a.txt");
         let copied = fs::metadata(&temp_a).await.expect("meta");
         let copied_mtime = copied.modified().expect("mtime");
         assert_eq!(copied_mtime, stamped);
@@ -607,8 +691,8 @@ mod tests {
         let mut s = settings();
         s.preserve_mtime = false;
         let mut ws = CloneWorkspace::new(base.path(), s);
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        let temp_a = ws.path().join("a.txt");
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let temp_a = active.path().join("a.txt");
         let copied = fs::metadata(&temp_a).await.expect("meta");
         let copied_mtime = copied.modified().expect("mtime");
         assert!(

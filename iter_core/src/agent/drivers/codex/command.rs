@@ -41,7 +41,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 use std::path::Path;
 
 /// Codex's usage-limit message — treated as a token/usage-limit class even
@@ -329,7 +329,7 @@ fn detect_limit(text: &str) -> Option<String> {
 }
 
 /// Parse Codex's complete `exec --json` output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexRun, CodexError> {
+pub(crate) fn interpret(output: &RawOutput<'_>) -> Result<CodexRun, CodexError> {
     let stdout = output.stdout_str();
     let terminal = cli_json::last_event_matching(&stdout, is_turn_status);
 
@@ -379,12 +379,17 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<CodexRun, CodexError> 
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    /// Synthesize a completed run's [`std::process::Output`] from a stdout
+    /// stream and an exit disposition, then interpret it. Mirrors what the
+    /// agent cycle hands the driver, with the exit carried faithfully through
+    /// [`RawExit::into_exit_status`].
+    fn run(stdout: &str, exit: RawExit) -> Result<CodexRun, CodexError> {
+        let output = std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
-        }
+        };
+        interpret(&RawOutput::from(&output))
     }
 
     #[test]
@@ -395,7 +400,7 @@ mod tests {
             "{\"type\":\"token_count\",\"total_tokens\":1234}\n",
             "{\"type\":\"task_complete\",\"status\":\"completed\"}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = run(stream, RawExit::Code(0)).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.turn_status, CodexTurnStatus::Completed);
         assert_eq!(res.final_message.as_deref(), Some("all done"));
@@ -408,7 +413,7 @@ mod tests {
             "{\"msg\":{\"type\":\"session_configured\",\"session_id\":\"sess-2\"}}\n",
             "{\"msg\":{\"type\":\"task_complete\",\"status\":\"Completed\"}}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = run(stream, RawExit::Code(0)).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-2"));
         assert_eq!(res.turn_status, CodexTurnStatus::Completed);
     }
@@ -421,7 +426,7 @@ mod tests {
             "{\"type\":\"item.completed\",\"item\":{\"id\":\"item-1\",\"type\":\"agent_message\",\"text\":\"done from flat stream\"}}\n",
             "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":17}}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = run(stream, RawExit::Code(0)).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("thread-139"));
         assert_eq!(res.turn_status, CodexTurnStatus::Completed);
         assert_eq!(res.final_message.as_deref(), Some("done from flat stream"));
@@ -435,7 +440,7 @@ mod tests {
             "{\"type\":\"item.completed\",\"item\":{\"id\":\"item-1\",\"type\":\"agent_message\",\"text\":\"source mentions context window\"}}\n",
             "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"cached_input_tokens\":0,\"output_tokens\":1}}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = run(stream, RawExit::Code(0)).expect("ok");
         assert_eq!(res.turn_status, CodexTurnStatus::Completed);
         assert_eq!(
             res.final_message.as_deref(),
@@ -450,7 +455,7 @@ mod tests {
             "{\"type\":\"turn.started\"}\n",
             "{\"type\":\"turn.failed\",\"error\":{\"message\":\"tool failed\"}}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = run(stream, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             CodexError::Reported { ref status, will_retry: false, exit_code: Some(1) }
@@ -464,7 +469,7 @@ mod tests {
             "{\"type\":\"error\",\"message\":\"boom\",\"will_retry\":true}\n",
             "{\"type\":\"task_complete\",\"status\":\"failed\"}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = run(stream, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             CodexError::Reported { ref status, will_retry: true, exit_code: Some(1) }
@@ -478,36 +483,31 @@ mod tests {
             "{\"type\":\"error\",\"message\":\"You've hit your usage limit.\"}\n",
             "{\"type\":\"task_complete\",\"status\":\"failed\"}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = run(stream, RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CodexError::TokenLimit(_)));
     }
 
     #[test]
     fn context_window_without_terminal_record_is_token_limit() {
-        let err = interpret(&output(
-            "fatal: context window exceeded\n",
-            RawExit::Code(1),
-        ))
-        .expect_err("err");
+        let err = run("fatal: context window exceeded\n", RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CodexError::TokenLimit(_)));
     }
 
     #[test]
     fn bad_args_exit_maps_to_bad_args() {
-        let err =
-            interpret(&output("error: unexpected argument\n", RawExit::Code(2))).expect_err("err");
+        let err = run("error: unexpected argument\n", RawExit::Code(2)).expect_err("err");
         assert!(matches!(err, CodexError::BadArgs));
     }
 
     #[test]
     fn no_terminal_record_on_nonzero_exit_is_no_result() {
-        let err = interpret(&output("garbage\n", RawExit::Code(1))).expect_err("err");
+        let err = run("garbage\n", RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CodexError::NoResult { exit_code: Some(1) }));
     }
 
     #[test]
     fn signal_without_record_maps_to_signal() {
-        let err = interpret(&output("", RawExit::Signal(2))).expect_err("err");
+        let err = run("", RawExit::Signal(2)).expect_err("err");
         assert!(matches!(err, CodexError::Signal(2)));
     }
 }

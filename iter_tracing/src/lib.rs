@@ -7,6 +7,10 @@
 //! Deciding a telemetry *value* (such as the `service.name`) is policy each
 //! binary owns; this crate never invents one.
 
+mod iteration;
+
+pub use iteration::{IterationAttrs, current_iteration_attrs, iteration_scope};
+
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 

@@ -1,4 +1,4 @@
-//! Project-local Stop hook for [`CodexAgent`](crate::agent::CodexAgent)'s
+//! Project-local Stop hook for [`CodexDriver`](crate::agent::CodexDriver)'s
 //! interactive/TUI mode.
 //!
 //! The stop hook exists for **one reason**: to terminate the Codex
@@ -50,7 +50,7 @@ fn hook_script_body(user_hooks_script: Option<&Path>) -> String {
     use std::fmt::Write;
     let mut script = String::from(
         "#!/usr/bin/env bash\n\
-         # iter Stop hook for Codex — installed by iter_core::agent::CodexAgent.\n\
+         # iter Stop hook for Codex — installed by iter_core::agent::CodexDriver.\n\
          #\n\
          # Terminates the Codex TUI session after the agent finishes its task.\n\
          # Runs any pre-existing user Stop Hook commands first, then sends\n\
@@ -91,6 +91,27 @@ pub(crate) struct HookBundle {
 }
 
 impl HookBundle {
+    /// Reconstruct the bundle handle for `cwd` without touching the
+    /// filesystem.
+    ///
+    /// Every field is a pure path derivation from `cwd` and module
+    /// constants, so a bundle installed by [`install`](Self::install) can be
+    /// finalized later by a fresh handle — the cleanup step of the agent
+    /// cycle uses this so the driver stays stateless between `prepare` and
+    /// `cleanup`. Safe even when nothing was installed:
+    /// [`finalize`](Self::finalize) restores nothing when neither a backup
+    /// nor an absent-marker exists.
+    pub(crate) fn reattach(cwd: &Path) -> Self {
+        let codex_dir = cwd.join(CODEX_DIR);
+        let bundle_dir = codex_dir.join(BUNDLE_DIR);
+        let hooks_path = codex_dir.join(HOOKS_FILE);
+        let hooks_slot = BackupSlot::new(&bundle_dir, hooks_path, HOOKS_BACKUP_NAME);
+        Self {
+            codex_dir,
+            hooks_slot,
+        }
+    }
+
     /// Install the workspace-local Stop hook bundle under `cwd`.
     ///
     /// `isolation_key` is the per-exploration hook isolation key.
@@ -112,9 +133,6 @@ impl HookBundle {
         let hooks_slot = BackupSlot::new(&bundle_dir, hooks_path.clone(), HOOKS_BACKUP_NAME);
         hooks_slot.snapshot().await?;
 
-        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
-        let user_hooks_script = extract_user_hooks(&hooks_path, "Stop", &hooks_dir).await?;
-
         let hook_cmd = hook_script
             .to_str()
             .ok_or_else(|| {
@@ -124,6 +142,13 @@ impl HookBundle {
                 ))
             })?
             .to_owned();
+
+        // Skip iter's own hook when extracting so a reinstall over a leaked
+        // prior install does not capture it as a "user hook".
+        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
+        let user_hooks_script =
+            extract_user_hooks(&hooks_path, "Stop", &hooks_dir, &hook_cmd).await?;
+
         let hooks_payload = json!({
             "hooks": {
                 "Stop": [

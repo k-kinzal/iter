@@ -1,22 +1,22 @@
 //! Stop-hook installation and workspace-scoped state directory
 //! helpers for the per-agent hook modules.
 //!
-//! All four hook-based agents — [`ClaudeAgent`](crate::agent::ClaudeAgent),
-//! [`CodexAgent`](crate::agent::CodexAgent), [`GeminiAgent`](crate::agent::GeminiAgent),
-//! and [`CopilotAgent`](crate::agent::CopilotAgent) — install a Stop-style hook
+//! All four hook-based drivers — [`ClaudeCodeDriver`](crate::agent::ClaudeCodeDriver),
+//! [`CodexDriver`](crate::agent::CodexDriver), [`GeminiDriver`](crate::agent::GeminiDriver),
+//! and [`CopilotDriver`](crate::agent::CopilotDriver) — install a Stop-style hook
 //! under a workspace-local directory (`${cwd}/.claude/`, `${cwd}/.codex/`,
-//! `${cwd}/.gemini/`, `${cwd}/.github/hooks/` respectively), let the
-//! interactive CLI run, then finalize: restore any user-authored files the
-//! installer overwrote and remove every scratch file produced by the install
-//! path.
+//! `${cwd}/.gemini/`, `${cwd}/.github/hooks/` respectively) in their
+//! `prepare`, let the interactive CLI run, then restore in their `cleanup`:
+//! any user-authored files the installer overwrote come back and every
+//! scratch file produced by the install path is removed.
 //!
 //! Hook installation files (backed-up user hooks, installed scripts that need
-//! to survive across the install → run → finalize boundary) live outside the
+//! to survive across the prepare → run → cleanup boundary) live outside the
 //! workspace, under
 //! `~/.iter/projects/<workspace-id>/<isolation-key>/hooks/`. The
 //! `<workspace-id>` is the [`WorkspaceIdentity`] and `<isolation-key>` is the
-//! per-exploration `AgentInvocation::hook_isolation_key`. See
-//! [`workspace_hooks_dir`] for the directory layout.
+//! per-exploration hook isolation key carried on each hook-capable driver.
+//! See [`workspace_hooks_dir`] for the directory layout.
 //!
 //! This module contains only the shared low-level installation pieces:
 //!
@@ -64,11 +64,10 @@ impl WorkspaceIdentity {
 ///
 /// where `<workspace-id>` is the [`WorkspaceIdentity`] of `workspace_path`.
 ///
-/// `workspace_path` is the agent's working directory (the value of
-/// `AgentInvocation::workspace_path`). `isolation_key` is the per-exploration
-/// [`AgentInvocation::hook_isolation_key`](super::AgentInvocation): the
-/// operator-supplied per-exploration value, or `"default"` for
-/// standalone `iter run`.
+/// `workspace_path` is the agent's working directory (the active
+/// workspace's path). `isolation_key` is the per-exploration hook isolation
+/// key carried on the hook-capable driver: the operator-supplied
+/// per-exploration value, or `"default"` for standalone `iter run`.
 ///
 /// # Errors
 ///
@@ -158,9 +157,21 @@ impl BackupSlot {
     /// Back up whatever is currently at the target path. Must be called
     /// before the hook module overwrites the file. Leaves the slot in
     /// either the "pre-existing" (backup present) or "absent" (marker
-    /// present) state. Any stale files from a previous crashed run are
-    /// cleared.
+    /// present) state.
+    ///
+    /// Idempotent by capture: if a backup or absent-marker already exists, a
+    /// prior install captured the pre-install state and never finalized
+    /// (e.g. the iteration was force-aborted past its drain grace, so
+    /// `cleanup`/`finalize` never ran). The file now at `target` is our own
+    /// synthesized content, not the user's original — re-capturing would
+    /// overwrite the real backup and lose the user's settings. Preserve the
+    /// existing capture and return.
     pub(crate) async fn snapshot(&self) -> Result<(), AgentError> {
+        if fs::metadata(&self.backup).await.is_ok()
+            || fs::metadata(&self.absent_marker).await.is_ok()
+        {
+            return Ok(());
+        }
         match fs::read(&self.target).await {
             Ok(bytes) => {
                 fs::write(&self.backup, &bytes)
@@ -280,10 +291,16 @@ pub(crate) async fn remove_if_exists(path: &Path, op: &'static str) -> Result<()
 /// `"AfterAgent"`, `"agentStop"`).
 /// `hooks_dir` is the workspace-scoped hook-installation directory returned
 /// by [`workspace_hooks_dir`].
+/// `own_command` is iter's own hook command for this driver. Any config
+/// entry equal to it is skipped: re-installing over a config that still
+/// holds a prior, unfinalized iter hook (a leaked install — see
+/// [`BackupSlot::snapshot`]) must not capture iter's own hook as a "user
+/// hook", or the freshly written hook script would recurse into itself.
 pub(crate) async fn extract_user_hooks(
     config_path: &Path,
     hook_event: &str,
     hooks_dir: &Path,
+    own_command: &str,
 ) -> Result<Option<PathBuf>, AgentError> {
     let config_bytes = match fs::read(config_path).await {
         Ok(b) => b,
@@ -294,7 +311,10 @@ pub(crate) async fn extract_user_hooks(
     let config: serde_json::Value = serde_json::from_slice(&config_bytes)
         .map_err(|e| AgentError::Launch(format!("parse agent config: {e}")))?;
 
-    let commands = collect_hook_commands(&config, hook_event);
+    let commands: Vec<String> = collect_hook_commands(&config, hook_event)
+        .into_iter()
+        .filter(|cmd| cmd != own_command)
+        .collect();
     if commands.is_empty() {
         return Ok(None);
     }
@@ -376,6 +396,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn backup_slot_second_snapshot_preserves_original_backup() {
+        // A prior install captured the original and never finalized (its
+        // iteration was force-aborted past the drain grace), leaving the
+        // synthesized file on disk. A second install's snapshot must NOT
+        // re-capture the synthesized content over the real backup.
+        let tmp = TempDir::new().expect("tmp");
+        let bundle_dir = tmp.path().join(".bundle");
+        fs::create_dir_all(&bundle_dir).await.expect("mkdir");
+        let target = tmp.path().join("target.json");
+        fs::write(&target, b"original").await.expect("seed");
+
+        let slot = BackupSlot::new(&bundle_dir, target.clone(), "target.json.bak");
+        slot.snapshot().await.expect("first snapshot");
+
+        // First install synthesized its own content; finalize never ran.
+        fs::write(&target, b"synthesized")
+            .await
+            .expect("write synthesized");
+
+        // Second install snapshots again — must be a no-op that keeps the
+        // real backup intact.
+        slot.snapshot().await.expect("second snapshot");
+        slot.restore().await.expect("restore");
+
+        let restored = fs::read(&target).await.expect("read");
+        assert_eq!(
+            restored, b"original",
+            "user's original settings must survive a repeated install"
+        );
+    }
+
+    #[tokio::test]
+    async fn backup_slot_second_snapshot_preserves_absent_marker() {
+        // Same guard for the absent case: the original file did not exist, so
+        // finalize should still delete the synthesized file — the second
+        // snapshot must not turn the absent marker into a content backup.
+        let tmp = TempDir::new().expect("tmp");
+        let bundle_dir = tmp.path().join(".bundle");
+        fs::create_dir_all(&bundle_dir).await.expect("mkdir");
+        let target = tmp.path().join("synth.json");
+
+        let slot = BackupSlot::new(&bundle_dir, target.clone(), "synth.json.bak");
+        slot.snapshot().await.expect("first snapshot absent");
+
+        fs::write(&target, b"synthesized")
+            .await
+            .expect("write synthesized");
+        slot.snapshot().await.expect("second snapshot");
+        slot.restore().await.expect("restore");
+
+        assert!(!target.exists(), "synthesized file should still be removed");
+    }
+
+    #[tokio::test]
     async fn backup_slot_absent_marker_deletes_on_restore() {
         let tmp = TempDir::new().expect("tmp");
         let bundle_dir = tmp.path().join(".bundle");
@@ -449,9 +523,14 @@ mod tests {
     async fn extract_user_hooks_returns_none_for_missing_config() {
         let tmp = TempDir::new().expect("tmp");
         let hooks_dir = tmp.path().join("hooks");
-        let result = extract_user_hooks(&tmp.path().join("nonexistent.json"), "Stop", &hooks_dir)
-            .await
-            .expect("extract");
+        let result = extract_user_hooks(
+            &tmp.path().join("nonexistent.json"),
+            "Stop",
+            &hooks_dir,
+            "iter-own",
+        )
+        .await
+        .expect("extract");
         assert!(result.is_none());
     }
 
@@ -461,7 +540,7 @@ mod tests {
         let config = tmp.path().join("settings.json");
         fs::write(&config, b"{}").await.expect("write");
         let hooks_dir = tmp.path().join("hooks");
-        let result = extract_user_hooks(&config, "Stop", &hooks_dir)
+        let result = extract_user_hooks(&config, "Stop", &hooks_dir, "iter-own")
             .await
             .expect("extract");
         assert!(result.is_none());
@@ -488,7 +567,7 @@ mod tests {
             .await
             .expect("write");
         let hooks_dir = tmp.path().join("hooks");
-        let result = extract_user_hooks(&config, "Stop", &hooks_dir)
+        let result = extract_user_hooks(&config, "Stop", &hooks_dir, "iter-own")
             .await
             .expect("extract");
         assert!(result.is_some());
@@ -514,12 +593,78 @@ mod tests {
             .await
             .expect("write");
         let hooks_dir = tmp.path().join("hooks");
-        let result = extract_user_hooks(&config, "agentStop", &hooks_dir)
+        let result = extract_user_hooks(&config, "agentStop", &hooks_dir, "iter-own")
             .await
             .expect("extract");
         assert!(result.is_some());
         let script_path = result.unwrap();
         let body = fs::read_to_string(&script_path).await.expect("read script");
         assert!(body.contains("./my-hook.sh"));
+    }
+
+    #[tokio::test]
+    async fn extract_user_hooks_skips_iter_own_command() {
+        // Reinstalling over a leaked prior install: the config still holds
+        // iter's own hook alongside a genuine user hook. Only the user hook
+        // is preserved; iter's own command is skipped so the freshly written
+        // hook script cannot recurse into itself.
+        let tmp = TempDir::new().expect("tmp");
+        let config = tmp.path().join("settings.json");
+        let own = "/ws/.claude/hooks/iter-stop-hook.sh";
+        let config_json = serde_json::json!({
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            { "type": "command", "command": own },
+                            { "type": "command", "command": "echo genuine user hook" }
+                        ]
+                    }
+                ]
+            }
+        });
+        fs::write(&config, serde_json::to_vec_pretty(&config_json).unwrap())
+            .await
+            .expect("write");
+        let hooks_dir = tmp.path().join("hooks");
+        let result = extract_user_hooks(&config, "Stop", &hooks_dir, own)
+            .await
+            .expect("extract");
+        let script_path = result.expect("genuine user hook preserved");
+        let body = fs::read_to_string(&script_path).await.expect("read script");
+        assert!(body.contains("echo genuine user hook"));
+        assert!(
+            !body.contains(own),
+            "iter's own hook must not be captured as a user hook: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_user_hooks_returns_none_when_only_iter_own_hook() {
+        // The pure leak-recovery case: the config holds ONLY iter's own hook.
+        // Nothing to preserve — returns None, so the new hook script has no
+        // user-hooks stanza to invoke.
+        let tmp = TempDir::new().expect("tmp");
+        let config = tmp.path().join("settings.json");
+        let own = "/ws/.claude/hooks/iter-stop-hook.sh";
+        let config_json = serde_json::json!({
+            "hooks": {
+                "Stop": [
+                    { "matcher": "", "hooks": [ { "type": "command", "command": own } ] }
+                ]
+            }
+        });
+        fs::write(&config, serde_json::to_vec_pretty(&config_json).unwrap())
+            .await
+            .expect("write");
+        let hooks_dir = tmp.path().join("hooks");
+        let result = extract_user_hooks(&config, "Stop", &hooks_dir, own)
+            .await
+            .expect("extract");
+        assert!(
+            result.is_none(),
+            "only iter's own hook present → nothing to preserve"
+        );
     }
 }

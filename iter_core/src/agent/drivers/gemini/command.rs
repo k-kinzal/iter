@@ -33,7 +33,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 
 /// Fatal startup exit codes (auth / input / sandbox / config / turn-limit);
 /// a process that exits with one never ran a turn → `AgentError::Launch`.
@@ -178,7 +178,7 @@ fn is_context_error_type(error_type: Option<&str>) -> bool {
 }
 
 /// Parse the Gemini CLI's complete print-mode output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<GeminiRun, GeminiError> {
+pub(crate) fn interpret(output: &RawOutput<'_>) -> Result<GeminiRun, GeminiError> {
     let stdout = output.stdout_str();
     let exit_code = match output.exit {
         RawExit::Code(c) => Some(c),
@@ -267,26 +267,34 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<GeminiRun, GeminiError
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    /// Synthesize a completed run's [`std::process::Output`] from a stdout
+    /// stream and an exit disposition, then interpret it. Mirrors what the
+    /// agent cycle hands the driver, with the exit carried faithfully through
+    /// [`RawExit::into_exit_status`].
+    fn run(stdout: &str, exit: RawExit) -> Result<GeminiRun, GeminiError> {
+        let output = std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
-        }
+        };
+        interpret(&RawOutput::from(&output))
     }
 
-    fn output_err(stderr: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    /// Like [`run`], but the synthesized bytes land on stderr instead of
+    /// stdout.
+    fn run_stderr(stderr: &str, exit: RawExit) -> Result<GeminiRun, GeminiError> {
+        let output = std::process::Output {
+            status: exit.into_exit_status(),
             stdout: Vec::new(),
             stderr: stderr.as_bytes().to_vec(),
-        }
+        };
+        interpret(&RawOutput::from(&output))
     }
 
     #[test]
     fn parses_successful_response_and_tokens() {
         let json = r#"{"response":"done","stats":{"tokens":{"input":10,"output":20,"total":30}}}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = run(json, RawExit::Code(0)).expect("ok");
         assert_eq!(res.response.as_deref(), Some("done"));
         assert_eq!(res.session_id, None);
         assert_eq!(res.tokens.input, Some(10));
@@ -297,14 +305,14 @@ mod tests {
     #[test]
     fn parses_session_id_when_present() {
         let json = r#"{"response":"ok","session_id":"conv-1"}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = run(json, RawExit::Code(0)).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("conv-1"));
     }
 
     #[test]
     fn error_field_maps_to_reported() {
         let json = r#"{"error":{"type":"ApiError","message":"boom","code":7}}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             GeminiError::Reported { code: Some(7), ref error_type, .. }
@@ -315,28 +323,28 @@ mod tests {
     #[test]
     fn error_field_falls_back_to_exit_code_when_no_json_code() {
         let json = r#"{"error":{"type":"ApiError","message":"boom"}}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, GeminiError::Reported { code: Some(1), .. }));
     }
 
     #[test]
     fn context_error_type_maps_to_token_limit() {
         let json = r#"{"error":{"type":"ContextLengthExceeded","message":"too big"}}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, GeminiError::TokenLimit(_)));
     }
 
     #[test]
     fn token_limit_in_error_message_is_detected() {
         let json = r#"{"error":{"type":"Other","message":"context window exceeded"}}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, GeminiError::TokenLimit(_)));
     }
 
     #[test]
     fn startup_exit_code_with_error_maps_to_startup() {
         let json = r#"{"error":{"type":"AuthError","message":"not logged in"}}"#;
-        let err = interpret(&output(json, RawExit::Code(41))).expect_err("err");
+        let err = run(json, RawExit::Code(41)).expect_err("err");
         assert!(matches!(
             err,
             GeminiError::Startup { exit_code: 41, ref message }
@@ -347,7 +355,7 @@ mod tests {
     #[test]
     fn each_startup_code_without_json_maps_to_startup() {
         for code in STARTUP_EXIT_CODES {
-            let err = interpret(&output("not json", RawExit::Code(*code))).expect_err("err");
+            let err = run("not json", RawExit::Code(*code)).expect_err("err");
             assert!(
                 matches!(err, GeminiError::Startup { exit_code, .. } if exit_code == *code),
                 "code {code} got {err:?}"
@@ -357,20 +365,19 @@ mod tests {
 
     #[test]
     fn no_json_on_nonzero_exit_maps_to_no_result() {
-        let err = interpret(&output("garbage\n", RawExit::Code(1))).expect_err("err");
+        let err = run("garbage\n", RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, GeminiError::NoResult { exit_code: Some(1) }));
     }
 
     #[test]
     fn signal_without_result_maps_to_signal() {
-        let err = interpret(&output("", RawExit::Signal(9))).expect_err("err");
+        let err = run("", RawExit::Signal(9)).expect_err("err");
         assert!(matches!(err, GeminiError::Signal(9)));
     }
 
     #[test]
     fn token_limit_in_stderr_without_json_is_detected() {
-        let err =
-            interpret(&output_err("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
+        let err = run_stderr("fatal: too many tokens\n", RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, GeminiError::TokenLimit(_)));
     }
 

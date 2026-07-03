@@ -50,7 +50,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 use std::path::Path;
 
 /// Builds the `OpenCode` print-mode argv.
@@ -98,8 +98,7 @@ pub(crate) struct OpenCodeRun {
 /// CLI-shaped error hierarchy for `OpenCode`.
 ///
 /// No `Cancelled` / `Launch` variants live here — those are spawn-level
-/// concerns owned by [`SpawnError`](crate::agent::process::SpawnError) and the
-/// driver, not the output parser.
+/// concerns owned by the agent cycle and the driver, not the output parser.
 #[derive(Debug, Error)]
 pub(crate) enum OpenCodeError {
     /// Context-window / token-limit detected in an error event's message (or
@@ -172,7 +171,7 @@ fn is_error_event(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
 /// The presence of an error event — regardless of the exit code — *is* the
 /// failure signal. Only when no error event is found do we treat the run as a
 /// success and read any session id from the stream.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<OpenCodeRun, OpenCodeError> {
+pub(crate) fn interpret(output: RawOutput<'_>) -> Result<OpenCodeRun, OpenCodeError> {
     let stdout = output.stdout_str();
 
     let exit_code = match output.exit {
@@ -275,18 +274,24 @@ fn final_message_from_stream(stdout: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    fn output(stdout: &str, exit: RawExit) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
         }
     }
 
+    /// Parse a synthesized process output through the `RawOutput` borrow the
+    /// driver hands the parser.
+    fn parse(out: std::process::Output) -> Result<OpenCodeRun, OpenCodeError> {
+        interpret(RawOutput::from(&out))
+    }
+
     #[test]
     fn parses_successful_session_with_id() {
         let json = r#"{"type":"session","id":"sess-1","status":"idle","text":"done"}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.final_message.as_deref(), Some("done"));
     }
@@ -297,13 +302,13 @@ mod tests {
             "{\"type\":\"progress\",\"n\":1}\n",
             "{\"type\":\"session\",\"id\":\"s9\",\"status\":\"idle\"}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("s9"));
     }
 
     #[test]
     fn empty_stream_on_clean_exit_is_ok_without_session() {
-        let res = interpret(&output("", RawExit::Code(0))).expect("ok");
+        let res = parse(output("", RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id, None);
     }
 
@@ -311,7 +316,7 @@ mod tests {
     fn session_error_on_exit_zero_is_a_failure() {
         // The exit code lies: 0 even though the run failed.
         let json = r#"{"type":"session.error","error":{"message":"auth failed"}}"#;
-        let err = interpret(&output(json, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(0))).expect_err("err");
         assert!(matches!(
             err,
             OpenCodeError::Failed { code: None, ref message } if message == "auth failed"
@@ -321,7 +326,7 @@ mod tests {
     #[test]
     fn result_error_on_exit_one_carries_exit_code() {
         let json = r#"{"type":"result.error","error":{"message":"bad flag"}}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             OpenCodeError::Failed { code: Some(1), ref message } if message == "bad flag"
@@ -334,7 +339,7 @@ mod tests {
             "{\"type\":\"session\",\"id\":\"s\",\"status\":\"running\"}\n",
             "{\"type\":\"session.error\",\"error\":{\"message\":\"boom\"}}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(0))).expect_err("err");
         assert!(matches!(
             err,
             OpenCodeError::Failed { code: None, ref message } if message == "boom"
@@ -345,7 +350,7 @@ mod tests {
     fn token_limit_in_error_message_refines_to_token_limit() {
         let json =
             r#"{"type":"session.error","error":{"message":"context window exceeded for model"}}"#;
-        let err = interpret(&output(json, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(0))).expect_err("err");
         assert!(matches!(err, OpenCodeError::TokenLimit(_)));
     }
 
@@ -355,14 +360,14 @@ mod tests {
             "{\"type\":\"log\",\"text\":\"too many tokens in the request\"}\n",
             "{\"type\":\"session.error\",\"error\":{}}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(0))).expect_err("err");
         assert!(matches!(err, OpenCodeError::TokenLimit(_)));
     }
 
     #[test]
     fn flat_message_field_is_recovered() {
         let json = r#"{"type":"session.error","message":"flat failure"}"#;
-        let err = interpret(&output(json, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(0))).expect_err("err");
         assert!(matches!(
             err,
             OpenCodeError::Failed { ref message, .. } if message == "flat failure"
@@ -372,7 +377,7 @@ mod tests {
     #[test]
     fn empty_error_event_gets_placeholder_message() {
         let json = r#"{"type":"session.error"}"#;
-        let err = interpret(&output(json, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(0))).expect_err("err");
         assert!(matches!(
             err,
             OpenCodeError::Failed { ref message, .. } if !message.is_empty()
@@ -381,7 +386,7 @@ mod tests {
 
     #[test]
     fn signal_without_error_event_maps_to_signal() {
-        let err = interpret(&output("", RawExit::Signal(9))).expect_err("err");
+        let err = parse(output("", RawExit::Signal(9))).expect_err("err");
         assert!(matches!(err, OpenCodeError::Signal(9)));
     }
 
@@ -389,7 +394,7 @@ mod tests {
     fn error_event_is_authoritative_over_signal() {
         // An in-band error wins even on a signal exit.
         let json = r#"{"type":"session.error","error":{"message":"nope"}}"#;
-        let err = interpret(&output(json, RawExit::Signal(15))).expect_err("err");
+        let err = parse(output(json, RawExit::Signal(15))).expect_err("err");
         assert!(matches!(err, OpenCodeError::Failed { code: None, .. }));
     }
 
@@ -398,7 +403,7 @@ mod tests {
         // A pre-flight/validation crash exits 1 before writing any
         // `result.error` JSON; trusting the non-zero exit here is the only
         // signal left, and it must NOT be misread as a successful turn.
-        let err = interpret(&output("", RawExit::Code(1))).expect_err("err");
+        let err = parse(output("", RawExit::Code(1))).expect_err("err");
         assert!(
             matches!(err, OpenCodeError::Failed { code: Some(1), .. }),
             "got {err:?}"

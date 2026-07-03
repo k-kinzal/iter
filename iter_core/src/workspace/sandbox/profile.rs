@@ -1,41 +1,49 @@
 //! [`SandboxProfile`] — the OS-level access an agent's child process needs
 //! to function inside a sandboxed workspace, **assembled by the sandbox
-//! layer from the agent's [`AgentKind`]** rather than declared by the agent.
+//! layer from each driver's [`AgentKind`]** rather than declared by the
+//! driver.
 //!
-//! # Where the per-agent policy lives
+//! # Where the per-driver policy lives
 //!
-//! The agent reports only individual, object-safe *facts* — its
-//! [`kind`](crate::Agent::kind), its [`command_path`](crate::Agent::command_path),
-//! and (for a composite) its [`sub_agents`](crate::Agent::sub_agents). The
-//! agent holds **no aggregating sandbox type**. The sandbox-shaped policy
-//! (which network hosts, which env passthrough patterns, which OS holes for
-//! the keychain / shell-tool tmp dirs, whether to broaden signalling) is an
+//! A driver reports only individual, object-safe *facts about itself* — its
+//! [`kind`](crate::agent::AgentDriver::kind), its
+//! [`command_path`](crate::agent::AgentDriver::command_path), and its
+//! [`declared_env`](crate::agent::AgentDriver::declared_env). The driver
+//! holds **no aggregating sandbox type**. The sandbox-shaped policy (which
+//! network hosts, which env passthrough patterns, which OS holes for the
+//! keychain / shell-tool tmp dirs, whether to broaden signalling) is an
 //! environment-shaped concern, so it lives here, keyed off the kind.
 //!
-//! [`SandboxProfile::for_agent`] performs an **exhaustive `match` over the
-//! closed [`AgentKind`]**: adding a new kind without a matching arm is a
-//! non-exhaustive-match compile error — the no-omission guarantee. Each arm
-//! reaches only for object-safe accessors and per-kind constants; there is
-//! no downcast to a concrete driver.
+//! [`SandboxProfile::for_drivers`] performs an **exhaustive `match` over the
+//! closed [`AgentKind`]** per driver: adding a new kind without a matching
+//! arm is a non-exhaustive-match compile error — the no-omission guarantee.
+//! Each arm reaches only for object-safe accessors and per-kind constants;
+//! there is no downcast to a concrete driver.
+//!
+//! The assembly happens at **start time**, where the operator's translation
+//! layer still holds the driver list it is about to compose into an
+//! [`Agent`](crate::agent::Agent) — the assembled agent is never walked
+//! afterwards.
 //!
 //! The fields are deliberately format-agnostic (host names, paths, env-var
-//! patterns) so the same profile can be rendered by a macOS `sandbox-exec`
-//! profile, a Linux `bwrap` argv, or any other [backend](super::backend).
+//! patterns) so the same profile can be rendered onto any confinement
+//! mechanism (macOS `sandbox-exec`, Linux `bwrap` via the `sandbox` crate).
 
 use std::path::PathBuf;
 
-use crate::agent::{Agent, AgentKind, ClaudeAgent, GrokAgent};
+use crate::agent::{AgentDriver, AgentKind, ClaudeCodeDriver, GrokDriver};
 
-/// OS-level access an [`Agent`](crate::Agent)'s child process needs to
-/// function inside a sandboxed workspace.
+/// OS-level access an agent driver's child process needs to function
+/// inside a sandboxed workspace.
 ///
 /// Every field is additive over the workspace's default-deny baseline: an
-/// empty [`SandboxProfile::default`] still works for agents that neither
+/// empty [`SandboxProfile::default`] still works for drivers that neither
 /// read external state nor hit the network (the closed set of CLI drivers
-/// with no special needs — Codex, Gemini, … — and the in-process Noop/Fake
-/// agents). Profiles are assembled by [`for_agent`](Self::for_agent), never
-/// hand-built outside tests; the builder methods exist so the per-kind match
-/// arms read as a fine-grained allow-list rather than a struct literal.
+/// with no special needs — Codex, Gemini, … — and the shell-synthesised
+/// Noop/Fake drivers). Profiles are assembled by
+/// [`for_drivers`](Self::for_drivers), never hand-built outside tests; the
+/// builder methods exist so the per-kind match arms read as a fine-grained
+/// allow-list rather than a struct literal.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SandboxProfile {
     /// Outbound network endpoints the agent must reach.
@@ -118,42 +126,50 @@ impl SandboxProfile {
         Self::default()
     }
 
-    /// Assemble the profile for `agent` via an **exhaustive `match` over the
-    /// closed [`AgentKind`]**.
+    /// Assemble the union profile for a set of drivers via an **exhaustive
+    /// `match` over the closed [`AgentKind`]** per driver.
     ///
     /// This is the single entry point the sandbox layer uses: the
     /// [`SandboxWorkspace`](super::SandboxWorkspace) is constructed with the
     /// result. Adding an [`AgentKind`] variant without a matching arm is a
     /// compile error, which is exactly the coverage guarantee — the sandbox
-    /// can never silently forget an agent.
+    /// can never silently forget a driver.
     ///
-    /// The composite [`Router`](AgentKind::Router) arm unions the profiles of
-    /// the router's [`sub_agents`](crate::Agent::sub_agents), applying each
-    /// sub-agent's arm in turn (recursively, so nested routers compose).
+    /// The caller is the start-time assembler that still holds the driver
+    /// list (a single driver, or a router composition's members in
+    /// declaration order); a composed agent's profile is simply the union
+    /// over its drivers, deduplicated by the final
+    /// [`normalize`](Self::normalize).
     #[must_use]
-    pub fn for_agent(agent: &dyn Agent) -> Self {
+    pub fn for_drivers<'a, I>(drivers: I) -> Self
+    where
+        I: IntoIterator<Item = &'a dyn AgentDriver>,
+    {
         let mut profile = Self::new();
-        profile.apply_agent(agent);
+        for driver in drivers {
+            profile.apply_driver(driver);
+        }
         profile.normalize();
         profile
     }
 
-    /// Apply a single agent's per-kind policy to `self`. Recurses through a
-    /// router's sub-agents. Kept separate from [`for_agent`](Self::for_agent)
-    /// so the union for a [`Router`](AgentKind::Router) can accumulate into
-    /// one profile before a final [`normalize`](Self::normalize).
-    fn apply_agent(&mut self, agent: &dyn Agent) {
+    /// Apply a single driver's per-kind policy to `self`. Kept separate from
+    /// [`for_drivers`](Self::for_drivers) so the union over a composition
+    /// accumulates into one profile before a final
+    /// [`normalize`](Self::normalize).
+    fn apply_driver(&mut self, driver: &dyn AgentDriver) {
         self.declared_env
-            .extend(agent.declared_env().iter().cloned());
-        match agent.kind() {
-            AgentKind::Claude => self.apply_claude(agent),
-            AgentKind::Grok => self.apply_grok(agent),
+            .extend(driver.declared_env().iter().cloned());
+        match driver.kind() {
+            AgentKind::Claude => self.apply_claude(driver),
+            AgentKind::Grok => self.apply_grok(driver),
             // No special OS access beyond the workspace tmpdir. The
             // remaining CLI drivers either talk only to already-allowed
             // hosts or have not yet had their minimal profile characterised
-            // (Codex/Gemini/…); the in-process Noop/Fake agents need
-            // nothing. An empty arm is the correct, intentional baseline —
-            // and the exhaustive match still forces a decision for each.
+            // (Codex/Gemini/…); the shell-synthesised Noop/Fake drivers
+            // need nothing. An empty arm is the correct, intentional
+            // baseline — and the exhaustive match still forces a decision
+            // for each.
             AgentKind::Codex
             | AgentKind::Gemini
             | AgentKind::Hermes
@@ -165,16 +181,6 @@ impl SandboxProfile {
             | AgentKind::Generic
             | AgentKind::Noop
             | AgentKind::Fake => {}
-            AgentKind::Router => {
-                // Invariant: any agent reporting `AgentKind::Router` MUST
-                // override `sub_agents()` (the trait default is empty). A
-                // composite that forgot to would silently union nothing here —
-                // a profile that is too tight, which fails loud (denied
-                // access) rather than silently permissive, but is still wrong.
-                for (_name, sub) in agent.sub_agents() {
-                    self.apply_agent(sub.as_ref());
-                }
-            }
         }
     }
 
@@ -199,7 +205,7 @@ impl SandboxProfile {
     ///   platform-standard variables every CLI expects.
     /// * **Signal**: Claude Code's Bash tool SIGTERMs the shell pipelines it
     ///   spawns when their declared timeout fires.
-    fn apply_claude(&mut self, agent: &dyn Agent) {
+    fn apply_claude(&mut self, driver: &dyn AgentDriver) {
         self.allow_network_host("api.anthropic.com:443")
             .allow_network_host("console.anthropic.com:443")
             .allow_signal();
@@ -227,19 +233,19 @@ impl SandboxProfile {
         // granted for the subtree so the agent cannot read back any past
         // iteration's session log.
         for path in [
-            ClaudeAgent::credentials_path(),
-            ClaudeAgent::settings_path(),
-            ClaudeAgent::user_config_path(),
+            ClaudeCodeDriver::credentials_path(),
+            ClaudeCodeDriver::settings_path(),
+            ClaudeCodeDriver::user_config_path(),
         ]
         .into_iter()
         .flatten()
         {
             self.allow_read(path);
         }
-        if let Some(dir) = ClaudeAgent::home_dir() {
+        if let Some(dir) = ClaudeCodeDriver::home_dir() {
             self.allow_write(dir);
         }
-        if let Some(path) = ClaudeAgent::user_config_path() {
+        if let Some(path) = ClaudeCodeDriver::user_config_path() {
             self.allow_write(path);
         }
 
@@ -260,7 +266,7 @@ impl SandboxProfile {
         // `/private/tmp/claude-<UID>/…`; both read and write are required.
         #[cfg(target_os = "macos")]
         {
-            let dir = ClaudeAgent::bash_tmp_dir();
+            let dir = ClaudeCodeDriver::bash_tmp_dir();
             self.allow_read(dir.clone());
             self.allow_write(dir);
         }
@@ -279,8 +285,9 @@ impl SandboxProfile {
         }
 
         // Resolved binary path (plus canonical target behind a shim) — the
-        // backend must read the executable image to map it into the child.
-        if let Some(cp) = agent.command_path() {
+        // confinement must read the executable image to map it into the
+        // child.
+        if let Some(cp) = driver.command_path() {
             self.allow_reads(cp.reads());
         }
     }
@@ -301,7 +308,7 @@ impl SandboxProfile {
     ///   platform-standard variables.
     /// * **Signal**: Grok's shell tooling SIGTERMs the pipelines it spawns on
     ///   timeout.
-    fn apply_grok(&mut self, agent: &dyn Agent) {
+    fn apply_grok(&mut self, driver: &dyn AgentDriver) {
         self.allow_network_host("api.x.ai:443")
             .allow_network_host("auth.x.ai:443")
             .allow_signal();
@@ -324,16 +331,16 @@ impl SandboxProfile {
             self.pass_env(pat);
         }
 
-        for path in [GrokAgent::auth_path(), GrokAgent::config_path()]
+        for path in [GrokDriver::auth_path(), GrokDriver::config_path()]
             .into_iter()
             .flatten()
         {
             self.allow_read(path);
         }
-        if let Some(dir) = GrokAgent::home_dir() {
+        if let Some(dir) = GrokDriver::home_dir() {
             self.allow_write(dir);
         }
-        if let Some(cp) = agent.command_path() {
+        if let Some(cp) = driver.command_path() {
             self.allow_reads(cp.reads());
         }
     }
@@ -423,34 +430,40 @@ pub fn match_env_pattern(pattern: &str, name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::{AgentMode, AgentRouter, FallbackTriggers, RoutingStrategy};
+    use crate::agent::AgentMode;
     use std::sync::{Mutex, PoisonError};
     use tempfile::TempDir;
 
     /// Serializes the tests that mutate the process-global `HOME` / `PATH`.
-    /// `for_agent` reads those vars (via the agent's config-dir accessors), so
-    /// two env-mutating tests running concurrently would observe each other's
-    /// temp values and fail the exact-path assertions. Every test that calls
-    /// `set_var` acquires this lock for its whole body.
+    /// `for_drivers` reads those vars (via the driver's config-dir
+    /// accessors), so two env-mutating tests running concurrently would
+    /// observe each other's temp values and fail the exact-path assertions.
+    /// Every test that calls `set_var` acquires this lock for its whole body.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn claude_agent(command: impl Into<String>) -> ClaudeAgent {
-        ClaudeAgent {
+    fn claude_driver(command: impl Into<String>) -> ClaudeCodeDriver {
+        ClaudeCodeDriver {
             command: command.into(),
             mode: AgentMode::Headless,
+            args: Vec::new(),
+            session_id_file: None,
+            env: Vec::new(),
+            hook_isolation_key: "default".to_owned(),
+        }
+    }
+
+    fn grok_driver(command: impl Into<String>) -> GrokDriver {
+        GrokDriver {
+            command: command.into(),
             args: Vec::new(),
             session_id_file: None,
             env: Vec::new(),
         }
     }
 
-    fn grok_agent(command: impl Into<String>) -> GrokAgent {
-        GrokAgent {
-            command: command.into(),
-            args: Vec::new(),
-            session_id_file: None,
-            env: Vec::new(),
-        }
+    /// Single-driver shorthand for the union entry point.
+    fn profile_for(driver: &dyn AgentDriver) -> SandboxProfile {
+        SandboxProfile::for_drivers([driver])
     }
 
     // ----- env pattern matching (ported from requirements.rs) -------------
@@ -474,10 +487,10 @@ mod tests {
 
     #[test]
     fn profile_captures_declared_env_separately_from_env_pass() {
-        let mut agent = claude_agent("claude");
+        let mut agent = claude_driver("claude");
         agent.env = vec![("ITER_DECLARED_ONLY".into(), "declared-value".into())];
 
-        let p = SandboxProfile::for_agent(&agent);
+        let p = profile_for(&agent);
 
         assert_eq!(
             p.declared_env,
@@ -490,7 +503,7 @@ mod tests {
 
     #[test]
     fn claude_declares_anthropic_hosts_and_auth_reads() {
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         assert!(
             p.network_hosts
                 .iter()
@@ -533,7 +546,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", home.path());
         }
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
         // state before leaving the test.
         unsafe {
@@ -559,7 +572,7 @@ mod tests {
         // SAFETY: `getuid` cannot fail and returns a process-global value.
         let uid = unsafe { libc::getuid() };
         let expected = PathBuf::from(format!("/private/tmp/claude-{uid}"));
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         assert!(p.file_writes.iter().any(|p| p == &expected));
         assert!(p.file_reads.iter().any(|p| p == &expected));
         assert!(
@@ -571,7 +584,7 @@ mod tests {
 
     #[test]
     fn claude_allow_signal_for_bash_tool_timeouts() {
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         assert!(p.allow_signal);
     }
 
@@ -584,7 +597,7 @@ mod tests {
         let Ok(canonical) = std::fs::canonicalize(&tmpdir) else {
             return;
         };
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         assert!(
             p.file_writes.iter().any(|p| p == &canonical),
             "writes must include canonical $TMPDIR ({canonical:?}), got {:?}",
@@ -601,7 +614,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", home.path());
         }
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
         // state before leaving the test.
         unsafe {
@@ -634,7 +647,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", home.path());
         }
-        let p = SandboxProfile::for_agent(&claude_agent("claude"));
+        let p = profile_for(&claude_driver("claude"));
         // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
         // state before leaving the test.
         unsafe {
@@ -657,7 +670,7 @@ mod tests {
         let tmp = TempDir::new().expect("tmp");
         let bin = tmp.path().join("fake-claude");
         std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").expect("write");
-        let p = SandboxProfile::for_agent(&claude_agent(bin.to_string_lossy()));
+        let p = profile_for(&claude_driver(bin.to_string_lossy()));
         assert!(p.file_reads.iter().any(|p| p == &bin));
     }
 
@@ -672,7 +685,7 @@ mod tests {
         #[cfg(not(unix))]
         std::fs::copy(&target, &symlink).expect("copy fallback");
 
-        let p = SandboxProfile::for_agent(&claude_agent(symlink.to_string_lossy()));
+        let p = profile_for(&claude_driver(symlink.to_string_lossy()));
         assert!(p.file_reads.iter().any(|p| p == &symlink));
         let canonical = std::fs::canonicalize(&target).expect("canonicalize");
         assert!(p.file_reads.iter().any(|p| p == &canonical));
@@ -680,7 +693,7 @@ mod tests {
 
     #[test]
     fn claude_omits_missing_command() {
-        let p = SandboxProfile::for_agent(&claude_agent("/nonexistent/definitely-not/claude-xyz"));
+        let p = profile_for(&claude_driver("/nonexistent/definitely-not/claude-xyz"));
         assert!(
             !p.file_reads
                 .iter()
@@ -702,7 +715,7 @@ mod tests {
         unsafe {
             std::env::set_var("PATH", bin_dir.as_os_str());
         }
-        let p = SandboxProfile::for_agent(&claude_agent("claude-path-lookup-probe"));
+        let p = profile_for(&claude_driver("claude-path-lookup-probe"));
         // SAFETY: protected by ENV_LOCK; restore PATH to its prior process
         // state before leaving the test.
         unsafe {
@@ -718,7 +731,7 @@ mod tests {
 
     #[test]
     fn grok_declares_xai_hosts_and_env_passthrough() {
-        let p = SandboxProfile::for_agent(&grok_agent("grok"));
+        let p = profile_for(&grok_driver("grok"));
         assert!(p.network_hosts.iter().any(|h| h.starts_with("api.x.ai")));
         assert!(p.network_hosts.iter().any(|h| h.starts_with("auth.x.ai")));
         assert!(p.env_matches("XAI_API_KEY"));
@@ -735,7 +748,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", home.path());
         }
-        let p = SandboxProfile::for_agent(&grok_agent("grok"));
+        let p = profile_for(&grok_driver("grok"));
         // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
         // state before leaving the test.
         unsafe {
@@ -764,7 +777,7 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", home.path());
         }
-        let p = SandboxProfile::for_agent(&grok_agent("grok"));
+        let p = profile_for(&grok_driver("grok"));
         // SAFETY: protected by ENV_LOCK; restore HOME to its prior process
         // state before leaving the test.
         unsafe {
@@ -780,7 +793,7 @@ mod tests {
 
     #[test]
     fn grok_allow_signal_for_shell_tool_timeouts() {
-        let p = SandboxProfile::for_agent(&grok_agent("grok"));
+        let p = profile_for(&grok_driver("grok"));
         assert!(p.allow_signal);
     }
 
@@ -789,13 +802,13 @@ mod tests {
         let tmp = TempDir::new().expect("tmp");
         let bin = tmp.path().join("fake-grok");
         std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").expect("write");
-        let p = SandboxProfile::for_agent(&grok_agent(bin.to_string_lossy()));
+        let p = profile_for(&grok_driver(bin.to_string_lossy()));
         assert!(p.file_reads.iter().any(|p| p == &bin));
     }
 
     #[test]
     fn grok_omits_missing_command() {
-        let p = SandboxProfile::for_agent(&grok_agent("/nonexistent/definitely-not/grok-xyz"));
+        let p = profile_for(&grok_driver("/nonexistent/definitely-not/grok-xyz"));
         assert!(
             !p.file_reads
                 .iter()
@@ -818,7 +831,7 @@ mod tests {
         unsafe {
             std::env::set_var("PATH", bin_dir.as_os_str());
         }
-        let p = SandboxProfile::for_agent(&grok_agent("grok-path-lookup-probe"));
+        let p = profile_for(&grok_driver("grok-path-lookup-probe"));
         // SAFETY: protected by ENV_LOCK; restore PATH to its prior process
         // state before leaving the test.
         unsafe {
@@ -834,29 +847,22 @@ mod tests {
         );
     }
 
-    // ----- Default-arm agents and Router merge ----------------------------
+    // ----- Default-arm drivers and multi-driver union ----------------------
 
     #[test]
-    fn noop_agent_has_empty_profile() {
-        let p = SandboxProfile::for_agent(&crate::agent::NoopAgent);
+    fn noop_driver_has_empty_profile() {
+        let p = profile_for(&crate::agent::NoopDriver);
         assert_eq!(p, SandboxProfile::default());
     }
 
-    /// A router's profile is the union of its sub-agents' profiles, so a
-    /// router over `[claude, grok]` requests both backends' hosts. This is
-    /// the sandbox-side replacement for the old CLI router-profile merge.
+    /// A composed agent's profile is the union over its drivers, so a
+    /// composition over `[claude, grok]` requests both vendors' hosts. This
+    /// is what the start-time assembler computes before building a router.
     #[test]
-    fn router_unions_claude_and_grok_profiles() {
-        let agents: Vec<(String, Box<dyn Agent>)> = vec![
-            ("c".into(), Box::new(claude_agent("claude"))),
-            ("g".into(), Box::new(grok_agent("grok"))),
-        ];
-        let router = AgentRouter::new(
-            agents,
-            RoutingStrategy::Fallback,
-            FallbackTriggers::AnyFailure,
-        );
-        let p = SandboxProfile::for_agent(&router);
+    fn union_over_drivers_merges_both_vendors() {
+        let c = claude_driver("claude");
+        let g = grok_driver("grok");
+        let p = SandboxProfile::for_drivers([&c as &dyn AgentDriver, &g]);
         assert!(
             p.network_hosts
                 .iter()
@@ -874,50 +880,21 @@ mod tests {
         assert!(p.allow_signal);
     }
 
-    /// The `Router` arm recurses, so a router whose sub-agent is itself a
-    /// router still unions the nested leaves. Structured as
-    /// `Router[ Router[Claude], Claude, Grok ]` so that two Claude leaves
-    /// (one nested, one direct) both contribute `api.anthropic.com:443` — the
-    /// single end-of-tree `normalize()` must collapse that to one entry, which
-    /// is the assertion that genuinely exercises cross-tree dedup.
+    /// Two claude drivers in one composition both contribute
+    /// `api.anthropic.com:443`; the single end-of-union `normalize()` must
+    /// collapse that to one entry — the assertion that genuinely exercises
+    /// cross-driver dedup (the successor of the old nested-router test).
     #[test]
-    fn nested_router_unions_recursively() {
-        let inner: Vec<(String, Box<dyn Agent>)> =
-            vec![("c".into(), Box::new(claude_agent("claude")))];
-        let inner_router = AgentRouter::new(
-            inner,
-            RoutingStrategy::Fallback,
-            FallbackTriggers::AnyFailure,
-        );
-
-        let outer: Vec<(String, Box<dyn Agent>)> = vec![
-            ("nested".into(), Box::new(inner_router)),
-            ("c2".into(), Box::new(claude_agent("claude"))),
-            ("g".into(), Box::new(grok_agent("grok"))),
-        ];
-        let outer_router = AgentRouter::new(
-            outer,
-            RoutingStrategy::Fallback,
-            FallbackTriggers::AnyFailure,
-        );
-
-        let p = SandboxProfile::for_agent(&outer_router);
-        // Recursion: the nested Claude's host surfaces through the inner router.
-        assert!(
-            p.network_hosts
-                .iter()
-                .any(|h| h.starts_with("api.anthropic.com")),
-            "nested claude host must surface through the inner router, got {:?}",
-            p.network_hosts,
-        );
-        // Distinct leaf: grok's host is present too.
+    fn union_over_drivers_dedups_repeated_hosts() {
+        let c1 = claude_driver("claude");
+        let c2 = claude_driver("claude");
+        let g = grok_driver("grok");
+        let p = SandboxProfile::for_drivers([&c1 as &dyn AgentDriver, &c2, &g]);
         assert!(
             p.network_hosts.iter().any(|h| h.starts_with("api.x.ai")),
-            "outer grok host must be present, got {:?}",
+            "grok host must be present, got {:?}",
             p.network_hosts,
         );
-        // Dedup across the tree: the nested Claude and the direct Claude both
-        // contribute api.anthropic.com:443; normalize() collapses it to one.
         let anthropic = p
             .network_hosts
             .iter()
@@ -925,7 +902,7 @@ mod tests {
             .count();
         assert_eq!(
             anthropic, 1,
-            "duplicate host from two claude leaves must be deduped, got {:?}",
+            "duplicate host from two claude drivers must be deduped, got {:?}",
             p.network_hosts,
         );
     }

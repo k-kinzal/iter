@@ -4,9 +4,9 @@
 //! Both code paths translate language declarations into a
 //! [`RunnerBuilder`] — each of the Runner's collaborators is made from
 //! its definition by the per-noun `*_from_def` fns, and this module
-//! composes them in one place: make the agent, make the workspace
-//! supply, compile prompts, wire event handlers — expressed once and
-//! evolved in lockstep.
+//! composes them in one place: assemble the agent (which also yields the
+//! sandbox profile), make the workspace, compile prompts, wire event
+//! handlers — expressed once and evolved in lockstep.
 
 use std::sync::Arc;
 
@@ -22,9 +22,8 @@ use crate::agent::{AgentBuildError, agent_from_def};
 use crate::events::register_event_actions_from_events;
 use crate::prompt::{PromptBuildError, prompt_selector_from_defs};
 use crate::runner_policy::runner_policy_from_def;
-use crate::workspace::workspaces_from_def;
+use crate::workspace::workspace_from_def;
 use iter_core::Queue;
-use iter_core::SandboxProfile;
 
 /// Errors produced by [`runner_builder_from_plan`].
 #[derive(Debug, Error)]
@@ -72,16 +71,16 @@ pub(crate) fn runner_builder_from_plan(
     events: &[Spanned<EventHandlerDef>],
     once: bool,
 ) -> Result<RunnerBuilder, StartError> {
-    let agent = agent_from_def(agent_decl)?;
-    // The sandbox profile is derived from the built agent via an exhaustive
-    // match over its `AgentKind` (see `SandboxProfile::for_agent`). Build it
-    // before the agent is moved onto the builder below.
-    let workspaces = workspaces_from_def(workspace_decl, SandboxProfile::for_agent(&*agent));
+    // Agent assembly also yields the sandbox profile — the union over the
+    // driver list, computed while that list is still in hand (see
+    // `SandboxProfile::for_drivers`). The workspace translation consumes it.
+    let (agent, profile) = agent_from_def(agent_decl)?;
+    let workspace = workspace_from_def(workspace_decl, profile);
     let prompt_selector = prompt_selector_from_defs(prompts)?;
     let runner_config = runner_policy_from_def(runner_decl, once);
 
     let mut builder = Runner::builder()
-        .workspaces(workspaces)
+        .workspace(workspace)
         .agent(agent)
         .prompt_selector(prompt_selector)
         .config(runner_config);

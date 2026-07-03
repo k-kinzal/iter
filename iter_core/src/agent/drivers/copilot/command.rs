@@ -33,7 +33,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 use std::path::Path;
 
 /// Builds the Copilot CLI print-mode argv.
@@ -204,7 +204,7 @@ fn is_type(obj: &serde_json::Map<String, serde_json::Value>, marker: &str) -> bo
 /// The `session.error` record — when present — is authoritative: its presence
 /// *is* the failure signal, regardless of any terminal `result` that may also
 /// appear. Otherwise the terminal `result` record carries the success path.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<CopilotRun, CopilotError> {
+pub(crate) fn interpret(output: &RawOutput<'_>) -> Result<CopilotRun, CopilotError> {
     let stdout = output.stdout_str();
 
     let exit_code = match output.exit {
@@ -290,19 +290,24 @@ fn classify_session_error(record: SessionError, stdout: &str) -> CopilotError {
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    /// Synthesize a completed run's [`std::process::Output`] from a stdout
+    /// stream and an exit disposition, then interpret it. Mirrors what the
+    /// agent cycle hands the driver, with the exit carried faithfully through
+    /// [`RawExit::into_exit_status`].
+    fn run(stdout: &str, exit: RawExit) -> Result<CopilotRun, CopilotError> {
+        let output = std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
-        }
+        };
+        interpret(&RawOutput::from(&output))
     }
 
     #[test]
     fn parses_successful_result_with_session_and_usage() {
         let json =
             r#"{"type":"result","sessionId":"sess-1","exitCode":0,"usage":{"premiumRequests":2}}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = run(json, RawExit::Code(0)).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.exit_code, Some(0));
         assert_eq!(res.usage.premium_requests, Some(2));
@@ -314,14 +319,14 @@ mod tests {
             "{\"type\":\"progress\",\"n\":1}\n",
             "{\"type\":\"result\",\"sessionId\":\"s9\",\"exitCode\":0}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = run(stream, RawExit::Code(0)).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("s9"));
     }
 
     #[test]
     fn quota_error_maps_to_quota_exhausted() {
         let json = r#"{"type":"session.error","errorType":"quota_exceeded","statusCode":402}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             CopilotError::QuotaExhausted {
@@ -334,7 +339,7 @@ mod tests {
     #[test]
     fn rate_error_maps_to_rate_limited() {
         let json = r#"{"type":"session.error","errorType":"rate_limited","statusCode":429}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             CopilotError::RateLimited {
@@ -349,7 +354,7 @@ mod tests {
         for code in [401u16, 403] {
             let json =
                 format!(r#"{{"type":"session.error","errorType":"auth","statusCode":{code}}}"#);
-            let err = interpret(&output(&json, RawExit::Code(1))).expect_err("err");
+            let err = run(&json, RawExit::Code(1)).expect_err("err");
             assert!(
                 matches!(err, CopilotError::Auth { .. }),
                 "code {code}: {err:?}"
@@ -360,7 +365,7 @@ mod tests {
     #[test]
     fn server_error_maps_to_network() {
         let json = r#"{"type":"session.error","errorType":"upstream","statusCode":503}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             CopilotError::Network {
@@ -373,7 +378,7 @@ mod tests {
     #[test]
     fn unknown_status_error_maps_to_reported() {
         let json = r#"{"type":"session.error","errorType":"weird","statusCode":418}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(
             err,
             CopilotError::Reported { status: Some(418), ref error_type } if error_type == "weird"
@@ -383,7 +388,7 @@ mod tests {
     #[test]
     fn session_error_with_token_limit_text_refines_to_token_limit() {
         let json = r#"{"type":"session.error","errorType":"context window exceeded for model"}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = run(json, RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CopilotError::TokenLimit(_)));
     }
 
@@ -393,26 +398,25 @@ mod tests {
             "{\"type\":\"result\",\"sessionId\":\"s\",\"exitCode\":0}\n",
             "{\"type\":\"session.error\",\"errorType\":\"quota\",\"statusCode\":402}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = run(stream, RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CopilotError::QuotaExhausted { .. }));
     }
 
     #[test]
     fn no_terminal_result_on_nonzero_exit() {
-        let err = interpret(&output("garbage\n", RawExit::Code(1))).expect_err("err");
+        let err = run("garbage\n", RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CopilotError::NoResult { exit_code: Some(1) }));
     }
 
     #[test]
     fn signal_without_result_maps_to_signal() {
-        let err = interpret(&output("", RawExit::Signal(9))).expect_err("err");
+        let err = run("", RawExit::Signal(9)).expect_err("err");
         assert!(matches!(err, CopilotError::Signal(9)));
     }
 
     #[test]
     fn token_limit_without_result_object_is_detected() {
-        let err =
-            interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
+        let err = run("fatal: too many tokens\n", RawExit::Code(1)).expect_err("err");
         assert!(matches!(err, CopilotError::TokenLimit(_)));
     }
 }

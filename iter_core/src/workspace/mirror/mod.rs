@@ -96,14 +96,46 @@ impl Mirror {
             .map_err(io::Error::other)??;
         let temp_path = temp.path().to_path_buf();
 
-        materialize::copy_dir_recursive(
+        if let Err(e) = materialize::copy_dir_recursive(
             &base,
             &temp_path,
             clone_filter,
             preserve_mtime,
             clock.as_ref(),
         )
-        .await?;
+        .await
+        {
+            // A failed clone leaves a partially-populated `TempDir`. Letting
+            // it drop inline here would run the blocking `remove_dir_all` on
+            // the async reactor thread; route that cleanup onto the blocking
+            // pool instead. This mirrors `close_best_effort` on the success
+            // path: try the blocking `TempDir::close`, and if that fails fall
+            // back to a direct `remove_dir_all` so a partial clone never leaks
+            // its temp tree on disk. Cleanup is best-effort — the materialise
+            // error is what the caller needs, so surface `e` regardless of how
+            // the removal fares.
+            let closed = tokio::task::spawn_blocking(move || temp.close())
+                .await
+                .map_err(io::Error::other)
+                .and_then(|inner| inner);
+            if let Err(close_err) = closed {
+                tracing::warn!(
+                    path = %temp_path.display(),
+                    error = %close_err,
+                    "temp close failed after a materialise error; removing directly",
+                );
+                match tokio::fs::remove_dir_all(&temp_path).await {
+                    Ok(()) => {}
+                    Err(e2) if e2.kind() == io::ErrorKind::NotFound => {}
+                    Err(e2) => tracing::warn!(
+                        path = %temp_path.display(),
+                        error = %e2,
+                        "fallback temp removal also failed after a materialise error",
+                    ),
+                }
+            }
+            return Err(e);
+        }
 
         Ok(Self {
             base,

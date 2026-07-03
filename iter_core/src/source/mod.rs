@@ -447,7 +447,7 @@ async fn dispose_with(
                     return Ok(());
                 }
                 let filter =
-                    ApplyBackFilter::compile_with_workspace_excludes(excludes, includes, &[])?;
+                    ApplyBackFilter::compile_with_workspace_excludes(excludes, includes, &[], &[])?;
                 merge_back_impl(canonical, &provisioned.base_path, &filter).await?;
                 Ok(())
             }
@@ -505,7 +505,8 @@ async fn dispose_with(
             if *passthrough {
                 return Ok(());
             }
-            let filter = ApplyBackFilter::compile_with_workspace_excludes(excludes, includes, &[])?;
+            let filter =
+                ApplyBackFilter::compile_with_workspace_excludes(excludes, includes, &[], &[])?;
             sync_back_impl(canonical, &provisioned.base_path, &filter).await?;
             discard_base(provisioned).await
         }

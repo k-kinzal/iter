@@ -35,7 +35,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 use std::path::Path;
 
 /// Builds the Cline oneshot-mode argv.
@@ -173,7 +173,7 @@ fn event_message(value: &Value) -> String {
 }
 
 /// Parse Cline's complete oneshot output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<ClineRun, ClineError> {
+pub(crate) fn interpret(output: RawOutput<'_>) -> Result<ClineRun, ClineError> {
     let stdout = output.stdout_str();
 
     let exit_code = match output.exit {
@@ -244,12 +244,18 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<ClineRun, ClineError> 
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    fn output(stdout: &str, exit: RawExit) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
         }
+    }
+
+    /// Parse a synthesized process output through the `RawOutput` borrow the
+    /// driver hands the parser.
+    fn parse(out: std::process::Output) -> Result<ClineRun, ClineError> {
+        interpret(RawOutput::from(&out))
     }
 
     #[test]
@@ -258,7 +264,7 @@ mod tests {
             "{\"type\":\"progress\",\"n\":1}\n",
             "{\"type\":\"run_result\",\"finishReason\":\"completed\",\"sessionId\":\"sess-1\",\"message\":\"done\"}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.finish_reason, ClineFinishReason::Completed);
         assert_eq!(res.final_message.as_deref(), Some("done"));
@@ -267,7 +273,7 @@ mod tests {
     #[test]
     fn completed_without_session_is_ok() {
         let stream = "{\"type\":\"run_result\",\"finishReason\":\"completed\"}\n";
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, RawExit::Code(0))).expect("ok");
         assert!(res.session_id.is_none());
         assert_eq!(res.finish_reason, ClineFinishReason::Completed);
     }
@@ -275,7 +281,7 @@ mod tests {
     #[test]
     fn non_completed_finish_reason_maps_to_not_completed() {
         let stream = "{\"type\":\"run_result\",\"finishReason\":\"max_turns\"}\n";
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             ClineError::NotCompleted { ref finish_reason, exit_code: Some(1) }
@@ -286,14 +292,14 @@ mod tests {
     #[test]
     fn token_limit_in_run_result_message_is_detected() {
         let stream = "{\"type\":\"run_result\",\"finishReason\":\"error\",\"message\":\"context window exceeded\"}\n";
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, ClineError::TokenLimit(_)));
     }
 
     #[test]
     fn run_aborted_maps_to_reported() {
         let stream = "{\"type\":\"run_aborted\",\"reason\":\"user cancelled\"}\n";
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             ClineError::Reported { ref message, exit_code: Some(1) }
@@ -304,7 +310,7 @@ mod tests {
     #[test]
     fn error_event_maps_to_reported() {
         let stream = "{\"type\":\"error\",\"message\":\"boom\"}\n";
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             ClineError::Reported { ref message, .. } if message == "boom"
@@ -313,20 +319,19 @@ mod tests {
 
     #[test]
     fn token_limit_without_result_is_detected() {
-        let err =
-            interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
+        let err = parse(output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, ClineError::TokenLimit(_)));
     }
 
     #[test]
     fn signal_without_result_maps_to_signal() {
-        let err = interpret(&output("", RawExit::Signal(9))).expect_err("err");
+        let err = parse(output("", RawExit::Signal(9))).expect_err("err");
         assert!(matches!(err, ClineError::Signal(9)));
     }
 
     #[test]
     fn no_result_on_nonzero_exit() {
-        let err = interpret(&output("garbage\n", RawExit::Code(1))).expect_err("err");
+        let err = parse(output("garbage\n", RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, ClineError::NoResult { exit_code: Some(1) }));
     }
 
@@ -338,7 +343,7 @@ mod tests {
             "{\"type\":\"error\",\"message\":\"transient\"}\n",
             "{\"type\":\"run_result\",\"finishReason\":\"completed\",\"sessionId\":\"s\"}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("s"));
     }
 }

@@ -64,7 +64,7 @@ use thiserror::Error;
 use tokio::process::Command;
 
 use crate::agent::cli_json;
-use crate::agent::process::{CommandOutput, RawExit, detect_token_limit};
+use crate::agent::process::{RawExit, RawOutput, detect_token_limit};
 use crate::prompt::Prompt;
 use std::path::Path;
 
@@ -338,7 +338,7 @@ fn reported_error_of(obj: &Value) -> Option<String> {
 }
 
 /// Parse Grok Build's complete headless output into a result or error.
-pub(crate) fn interpret(output: &CommandOutput) -> Result<GrokRun, GrokError> {
+pub(crate) fn interpret(output: RawOutput<'_>) -> Result<GrokRun, GrokError> {
     let stdout = output.stdout_str();
     // Whole-stream JSON object first; then the `streaming-json` terminal
     // event (`type:"end"` in `grok 0.2.45`), then a legacy `result` event.
@@ -406,12 +406,18 @@ pub(crate) fn interpret(output: &CommandOutput) -> Result<GrokRun, GrokError> {
 mod tests {
     use super::*;
 
-    fn output(stdout: &str, exit: RawExit) -> CommandOutput {
-        CommandOutput {
-            exit,
+    fn output(stdout: &str, exit: RawExit) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
             stdout: stdout.as_bytes().to_vec(),
             stderr: Vec::new(),
         }
+    }
+
+    /// Parse a synthesized process output through the `RawOutput` borrow the
+    /// driver hands the parser.
+    fn parse(out: std::process::Output) -> Result<GrokRun, GrokError> {
+        interpret(RawOutput::from(&out))
     }
 
     #[test]
@@ -420,7 +426,7 @@ mod tests {
         // usage/cost fields, `EndTurn` stop reason, `text`/`requestId`/
         // `thought` present.
         let json = r#"{"text":"OK","stopReason":"EndTurn","sessionId":"019eb76b","requestId":"6229237d","thought":"thinking..."}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("019eb76b"));
         assert_eq!(res.request_id.as_deref(), Some("6229237d"));
         assert_eq!(res.final_message.as_deref(), Some("OK"));
@@ -438,7 +444,7 @@ mod tests {
         // Older/alternate field names must still resolve: `response` for the
         // message, `finishReason` for the stop reason.
         let json = r#"{"sessionId":"sess-1","response":"done","finishReason":"stop"}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("sess-1"));
         assert_eq!(res.final_message.as_deref(), Some("done"));
         assert_eq!(res.stop_reason, GrokStopReason::Stop);
@@ -454,7 +460,7 @@ mod tests {
             "usage":{"inputTokens":120,"output_tokens":34,"total_tokens":154},
             "totalCostUsd":0.0123
         }"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_ne!(res.usage, GrokUsage::default());
         assert_eq!(res.usage.input_tokens, Some(120));
         assert_eq!(res.usage.output_tokens, Some(34));
@@ -466,14 +472,14 @@ mod tests {
     fn usage_is_empty_when_fields_absent() {
         // Missing-field tolerance: no usage object, no cost → empty, no panic.
         let json = r#"{"text":"hi","sessionId":"s"}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.usage, GrokUsage::default());
     }
 
     #[test]
     fn end_turn_stop_reason_maps_to_stop() {
         let json = r#"{"text":"x","stopReason":"EndTurn","sessionId":"s"}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.stop_reason, GrokStopReason::Stop);
     }
 
@@ -482,7 +488,7 @@ mod tests {
         // The verified failure shape `{"type":"error","message":"…"}` must
         // become an error, not an `Ok` whose message is read as a result.
         let json = r#"{"type":"error","message":"Couldn't start session: auth"}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             GrokError::Reported { ref message, exit_code: Some(1) }
@@ -498,7 +504,7 @@ mod tests {
             "{\"type\":\"text\",\"data\":\"O\"}\n",
             "{\"type\":\"end\",\"stopReason\":\"EndTurn\",\"sessionId\":\"s3\",\"requestId\":\"r3\"}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("s3"));
         assert_eq!(res.request_id.as_deref(), Some("r3"));
         assert_eq!(res.stop_reason, GrokStopReason::Stop);
@@ -516,7 +522,7 @@ mod tests {
             "{\"type\":\"error\",\"message\":\"rate limit exceeded\"}\n",
             "{\"type\":\"end\",\"stopReason\":\"EndTurn\",\"sessionId\":\"s3\"}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(0))).expect_err("err");
         assert!(matches!(
             err,
             GrokError::Reported { ref message, .. } if message == "rate limit exceeded"
@@ -531,7 +537,7 @@ mod tests {
             "{\"type\":\"end\",\"stopReason\":\"EndTurn\",\"sessionId\":\"s3\"}\n",
             "{\"type\":\"error\",\"message\":\"post-turn failure\"}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(0))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(0))).expect_err("err");
         assert!(matches!(
             err,
             GrokError::Reported { ref message, .. } if message == "post-turn failure"
@@ -550,7 +556,7 @@ mod tests {
             "{\"type\":\"error\",\"message\":\"authentication failed\"}\n",
             "{\"type\":\"end\",\"stopReason\":\"EndTurn\",\"sessionId\":\"s\"}\n",
         );
-        let err = interpret(&output(stream, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(stream, RawExit::Code(1))).expect_err("err");
         assert!(
             matches!(err, GrokError::Reported { ref message, .. } if message == "authentication failed"),
             "got {err:?}",
@@ -562,7 +568,7 @@ mod tests {
         // The `isError` flag path reads the message from `text` (the verified
         // field) when present, mirroring the success-path field priority.
         let json = r#"{"sessionId":"s","isError":true,"text":"refused: policy"}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             GrokError::Reported { ref message, .. } if message == "refused: policy"
@@ -574,7 +580,7 @@ mod tests {
         // Name specificity wins over scope: a generic `cost` nested under
         // `usage` must not shadow a canonical `total_cost_usd` at the top level.
         let json = r#"{"text":"x","sessionId":"s","usage":{"cost":99},"total_cost_usd":0.05}"#;
-        let res = interpret(&output(json, RawExit::Code(0))).expect("ok");
+        let res = parse(output(json, RawExit::Code(0))).expect("ok");
         assert_eq!(res.usage.total_cost_usd, Some(0.05));
     }
 
@@ -584,7 +590,7 @@ mod tests {
             "{\"type\":\"progress\",\"n\":1}\n",
             "{\"type\":\"result\",\"sessionId\":\"s2\",\"response\":\"hi\"}\n",
         );
-        let res = interpret(&output(stream, RawExit::Code(0))).expect("ok");
+        let res = parse(output(stream, RawExit::Code(0))).expect("ok");
         assert_eq!(res.session_id.as_deref(), Some("s2"));
         assert_eq!(res.final_message.as_deref(), Some("hi"));
     }
@@ -592,7 +598,7 @@ mod tests {
     #[test]
     fn error_object_maps_to_reported() {
         let json = r#"{"sessionId":"s","error":{"message":"boom"}}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             GrokError::Reported { ref message, exit_code: Some(1) } if message == "boom"
@@ -602,7 +608,7 @@ mod tests {
     #[test]
     fn error_flag_maps_to_reported() {
         let json = r#"{"sessionId":"s","isError":true,"response":"refused"}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(
             err,
             GrokError::Reported { ref message, .. } if message == "refused"
@@ -612,26 +618,25 @@ mod tests {
     #[test]
     fn token_limit_in_error_result_is_detected() {
         let json = r#"{"error":"Error: context window exceeded"}"#;
-        let err = interpret(&output(json, RawExit::Code(1))).expect_err("err");
+        let err = parse(output(json, RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, GrokError::TokenLimit(_)));
     }
 
     #[test]
     fn no_terminal_result_on_nonzero_exit() {
-        let err = interpret(&output("garbage\n", RawExit::Code(2))).expect_err("err");
+        let err = parse(output("garbage\n", RawExit::Code(2))).expect_err("err");
         assert!(matches!(err, GrokError::NoResult { exit_code: Some(2) }));
     }
 
     #[test]
     fn signal_without_result_maps_to_signal() {
-        let err = interpret(&output("", RawExit::Signal(9))).expect_err("err");
+        let err = parse(output("", RawExit::Signal(9))).expect_err("err");
         assert!(matches!(err, GrokError::Signal(9)));
     }
 
     #[test]
     fn token_limit_without_result_object_is_detected() {
-        let err =
-            interpret(&output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
+        let err = parse(output("fatal: too many tokens\n", RawExit::Code(1))).expect_err("err");
         assert!(matches!(err, GrokError::TokenLimit(_)));
     }
 }

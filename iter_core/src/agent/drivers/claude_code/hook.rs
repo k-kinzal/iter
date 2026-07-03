@@ -1,5 +1,6 @@
-//! Project-local Stop hook for [`ClaudeAgent`](crate::agent::ClaudeAgent)'s
-//! interactive/TUI mode.
+//! Project-local Stop hook for
+//! [`ClaudeCodeDriver`](crate::agent::ClaudeCodeDriver)'s interactive/TUI
+//! mode.
 //!
 //! The stop hook exists for **one reason**: to terminate the Claude Code
 //! interactive TUI session after the agent finishes its task. In print
@@ -65,7 +66,7 @@ fn hook_script_body(user_hooks_script: Option<&Path>) -> String {
     use std::fmt::Write;
     let mut script = String::from(
         "#!/usr/bin/env bash\n\
-         # iter Stop hook for Claude Code — installed by iter_core::agent::ClaudeAgent.\n\
+         # iter Stop hook for Claude Code — installed by iter_core::agent::ClaudeCodeDriver.\n\
          #\n\
          # Terminates the Claude Code TUI session after the agent finishes its\n\
          # task. Runs any pre-existing user Stop Hook commands first, then sends\n\
@@ -109,6 +110,27 @@ pub(crate) struct HookBundle {
 }
 
 impl HookBundle {
+    /// Reconstruct the bundle handle for `cwd` without touching the
+    /// filesystem.
+    ///
+    /// Every field is a pure path derivation from `cwd` and module
+    /// constants, so a bundle installed by [`install`](Self::install) can be
+    /// finalized later by a fresh handle — the cleanup step of the agent
+    /// cycle uses this so the driver stays stateless between `prepare` and
+    /// `cleanup`. Safe even when nothing was installed:
+    /// [`finalize`](Self::finalize) restores nothing when neither a backup
+    /// nor an absent-marker exists.
+    pub(crate) fn reattach(cwd: &Path) -> Self {
+        let claude_dir = cwd.join(CLAUDE_DIR);
+        let bundle_dir = claude_dir.join(BUNDLE_DIR);
+        let settings_path = claude_dir.join(SETTINGS_FILE);
+        let settings_slot = BackupSlot::new(&bundle_dir, settings_path, SETTINGS_BACKUP_NAME);
+        Self {
+            claude_dir,
+            settings_slot,
+        }
+    }
+
     /// Install the project-local Stop hook bundle under `cwd`.
     ///
     /// Creates `${cwd}/.claude/` and its required subdirectories, backs up
@@ -139,10 +161,6 @@ impl HookBundle {
             BackupSlot::new(&bundle_dir, settings_path.clone(), SETTINGS_BACKUP_NAME);
         settings_slot.snapshot().await?;
 
-        // Extract any pre-existing user Stop hooks into a preserved user-hooks script.
-        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
-        let user_hooks_script = extract_user_hooks(&settings_path, "Stop", &hooks_dir).await?;
-
         let hook_cmd = hook_script
             .to_str()
             .ok_or_else(|| {
@@ -152,6 +170,14 @@ impl HookBundle {
                 ))
             })?
             .to_owned();
+
+        // Extract any pre-existing user Stop hooks into a preserved user-hooks
+        // script, skipping iter's own hook so a reinstall over a leaked prior
+        // install does not capture it as a "user hook".
+        let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
+        let user_hooks_script =
+            extract_user_hooks(&settings_path, "Stop", &hooks_dir, &hook_cmd).await?;
+
         let settings_payload = json!({
             "hooks": {
                 "Stop": [

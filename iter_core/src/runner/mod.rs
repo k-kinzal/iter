@@ -28,16 +28,17 @@ pub mod observer;
 pub mod policy;
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, field};
 
-use crate::agent::Agent;
+use crate::agent::{Agent, AgentError, AgentRun};
 use crate::prompt::{Prompt, PromptSelector};
 use crate::queue::Queue;
 use crate::signal::{Signal, SignalId};
 use crate::time::{Clock, IdSource};
-use crate::workspace::Workspace;
+use crate::workspace::{ActiveWorkspace, Workspace};
 
 pub use builder::{BuilderError, RunnerBuilder};
 pub use error::{ErrorSource, RunnerError};
@@ -62,8 +63,11 @@ use events::RunnerEmitter;
 /// combination.
 pub struct Runner {
     pub(crate) queue: Option<Arc<dyn Queue>>,
-    pub(crate) workspaces: Arc<dyn Fn() -> Box<dyn Workspace> + Send + Sync>,
-    pub(crate) agent: Box<dyn Agent>,
+    /// The one workspace bound to this runner for the whole exploration.
+    /// Each iteration brackets it with `setup` → agent run → the active
+    /// workspace's `teardown`.
+    pub(crate) workspace: Box<dyn Workspace>,
+    pub(crate) agent: Agent,
     pub(crate) prompt_selector: PromptSelector,
     pub(crate) events: EventDispatcher,
     pub(crate) config: RunnerPolicy,
@@ -75,10 +79,6 @@ pub struct Runner {
     /// tallied separately into the terminal `runner_finished` event; they
     /// never block runner progress.
     pub(crate) observers: Vec<Arc<dyn DynRunnerObserver>>,
-    /// Sink the agent should tee its child stdout/stderr through. Wired
-    /// by [`RunnerBuilder::stdio_sink`]; unset runners get a
-    /// [`crate::log::NoopSink`].
-    pub(crate) stdio_sink: Arc<dyn crate::log::OutputSink>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) id_source: Arc<dyn IdSource>,
 }
@@ -110,13 +110,12 @@ impl Runner {
     pub async fn run(self, cancel: CancellationToken) -> Result<(), RunnerError> {
         let Runner {
             queue,
-            workspaces: workspace_factory,
+            mut workspace,
             agent,
             prompt_selector,
             events: emitter,
             config,
             observers,
-            stdio_sink,
             clock,
             id_source,
         } = self;
@@ -132,12 +131,11 @@ impl Runner {
 
         let loop_result = run_loop(
             queue.as_deref(),
-            &*workspace_factory,
-            agent.as_ref(),
+            workspace.as_mut(),
+            &agent,
             &prompt_selector,
             &config,
             &cancel,
-            &stdio_sink,
             clock.as_ref(),
             id_source.as_ref(),
             &mut events,
@@ -413,17 +411,77 @@ struct AgentRecord {
     exit_code: Option<i32>,
 }
 
-/// Best-effort workspace cleanup after a setup or agent-run failure.
+/// Upper bound on how long the drain window waits for the agent future
+/// after `iteration_timeout` fires. Derived from the agent-side
+/// SIGTERM grace so the drain always exceeds it; if you change one, the
+/// other follows automatically.
+const ITERATION_TIMEOUT_DRAIN_GRACE: Duration =
+    Duration::from_secs(crate::agent::process::AGENT_TERMINATION_GRACE.as_secs() + 5);
+
+/// Run the agent with the runner's optional iteration timeout.
 ///
-/// Calls `Workspace::teardown` once without emitting lifecycle events.
+/// Creates a child cancellation token from `cancel` for the agent. When
+/// `timeout` is `Some(limit)`, the agent future is raced against the
+/// timeout. On expiry the child token is cancelled, giving the agent up to
+/// [`ITERATION_TIMEOUT_DRAIN_GRACE`] to shut down gracefully. During the
+/// drain window, the parent `cancel` token is also watched so an operator
+/// Ctrl-C doesn't hang.
+///
+/// The agent future is pinned across the timeout boundary. On the normal
+/// drain path it is polled to completion — so a graceful shutdown (and the
+/// driver's own `cleanup`) is never cut short by a synchronous
+/// `ProcessGroup::Drop`. Two drain exits are deliberate exceptions: an
+/// operator Ctrl-C during the drain, or the drain grace being exceeded,
+/// each returns while the future is still pending and drops it. That drop
+/// fires `ProcessGroup::Drop`, which sends `SIGKILL` to the process group
+/// synchronously as an OS-level backstop; the agent's async `cleanup` does not run on that
+/// forced path. Bounding the wait is the point — blocking indefinitely on a
+/// stuck agent would hang the operator. (`BackupSlot::snapshot` is
+/// idempotent by capture, so a skipped hook finalize cannot corrupt a later
+/// install.)
+async fn run_agent_with_timeout(
+    agent: &Agent,
+    workspace: &dyn ActiveWorkspace,
+    prompt: &Prompt,
+    cancel: &CancellationToken,
+    timeout: Option<Duration>,
+) -> Result<AgentRun, AgentError> {
+    let iter_cancel = cancel.child_token();
+    match timeout {
+        Some(limit) => {
+            let mut agent_fut =
+                std::pin::pin!(agent.run_on(workspace, prompt, iter_cancel.clone()));
+            tokio::select! {
+                biased;
+                res = agent_fut.as_mut() => res,
+                () = tokio::time::sleep(limit) => {
+                    iter_cancel.cancel();
+                    tokio::select! {
+                        biased;
+                        _ = agent_fut.as_mut() => {}
+                        () = cancel.cancelled() => {}
+                        () = tokio::time::sleep(ITERATION_TIMEOUT_DRAIN_GRACE) => {}
+                    }
+                    Err(AgentError::IterationTimeout(limit))
+                }
+            }
+        }
+        None => agent.run_on(workspace, prompt, iter_cancel).await,
+    }
+}
+
+/// Best-effort workspace cleanup after an agent-run failure.
+///
+/// Consumes the active workspace without emitting lifecycle events (the
+/// silent-teardown contract); the persistent path it returns is discarded.
 /// If teardown also fails, logs via `tracing::warn!`.
 async fn best_effort_teardown(
-    workspace: &mut Box<dyn Workspace>,
+    active: Box<dyn ActiveWorkspace>,
     signal_id: SignalId,
     failed_operation: ErrorSource,
     cancel: &CancellationToken,
 ) {
-    if let Err(teardown_err) = workspace.teardown(cancel.clone()).await {
+    if let Err(teardown_err) = active.teardown(cancel.clone()).await {
         let message = teardown_err.to_string();
         let span = tracing::Span::current();
         iter_tracing::record_span_error(&span, ErrorSource::WorkspaceTeardown.as_str(), &message);
@@ -440,18 +498,16 @@ async fn best_effort_teardown(
 /// Drive the workspace bracket — setup -> agent -> teardown — for one
 /// signal, emitting lifecycle events as it goes.
 async fn drive_workspace(
-    workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
-    agent: &dyn Agent,
+    workspace: &mut dyn Workspace,
+    agent: &Agent,
     config: &RunnerPolicy,
     cancel: &CancellationToken,
-    stdio_sink: &Arc<dyn crate::log::OutputSink>,
     events: &mut RunnerEmitter,
     signal: &SharedSignal,
     prompt: &Prompt,
     snap: &IterationContext,
 ) -> Result<AgentRecord, IterationFailure> {
     let signal_id = signal.id();
-    let mut workspace = (workspace_factory)();
     let workspace_name = workspace.name();
 
     events.workspace_setup_starting(signal, snap).await;
@@ -463,46 +519,44 @@ async fn drive_workspace(
         iter.workspace.name = workspace_name,
         iter.workspace.path = field::Empty,
     );
-    if let Err(err) = workspace
+    // Setup either yields the active workspace or has self-cleaned; a
+    // failed setup leaves nothing to tear down.
+    let active = match workspace
         .setup(cancel.clone())
         .instrument(setup_span.clone())
         .await
     {
-        let message = err.to_string();
-        iter_tracing::record_span_error(
-            &setup_span,
-            ErrorSource::WorkspaceSetup.as_str(),
-            &message,
-        );
-        events
-            .runner_error(
-                ErrorSource::WorkspaceSetup,
-                Some(signal_id),
+        Ok(active) => active,
+        Err(err) => {
+            let message = err.to_string();
+            iter_tracing::record_span_error(
+                &setup_span,
+                ErrorSource::WorkspaceSetup.as_str(),
                 &message,
-                HookEvent::WorkspaceSetupFailed {
-                    signal_id,
-                    error: message.clone(),
-                },
-                snap,
-            )
-            .await;
-        best_effort_teardown(
-            &mut workspace,
-            signal_id,
-            ErrorSource::WorkspaceSetup,
-            cancel,
-        )
-        .await;
-        return Err(IterationFailure {
-            error_source: ErrorSource::WorkspaceSetup,
-            signal_id,
-            source: Box::new(err),
-            message,
-            exit: None,
-        });
-    }
+            );
+            events
+                .runner_error(
+                    ErrorSource::WorkspaceSetup,
+                    Some(signal_id),
+                    &message,
+                    HookEvent::WorkspaceSetupFailed {
+                        signal_id,
+                        error: message.clone(),
+                    },
+                    snap,
+                )
+                .await;
+            return Err(IterationFailure {
+                error_source: ErrorSource::WorkspaceSetup,
+                signal_id,
+                source: Box::new(err),
+                message,
+                exit: None,
+            });
+        }
+    };
 
-    let workspace_path = workspace.path().to_path_buf();
+    let workspace_path = active.path().to_path_buf();
     let workspace_path_attr = workspace_path
         .canonicalize()
         .unwrap_or_else(|_| workspace_path.clone());
@@ -518,33 +572,23 @@ async fn drive_workspace(
         .agent_starting(signal, &workspace_path, prompt, snap)
         .await;
 
-    // Read the sandbox command prefix from the active workspace after setup.
-    // It is empty for `local`/`clone` workspaces and the backend-produced wrap
-    // for a sandbox workspace — typed invocation data, never an env var. The
-    // owned copy decouples its lifetime from the workspace borrow that
-    // teardown reclaims below.
-    let sandbox_command_prefix = workspace.sandbox_command_prefix().to_vec();
-    let agent_ctx =
-        crate::agent::AgentInvocation::new(&workspace_path, prompt, cancel.clone(), signal_id)
-            .with_signal_kind(signal.kind())
-            .with_stdio_sink(stdio_sink.clone())
-            .with_iteration_timeout(config.iteration_timeout)
-            .with_sandbox_command_prefix(&sandbox_command_prefix)
-            .with_declared_env(agent.declared_env());
     let agent_span = tracing::info_span!(
         "iter.agent.run",
         iter.signal.id = %signal_id,
         iter.signal.kind = %signal.kind(),
-        iter.agent.name = agent.name(),
+        // Recorded by the agent per attempt: the label of the driver that
+        // actually ran (a fallback sequence leaves its final attempt).
+        iter.agent.name = field::Empty,
         iter.workspace.path = %workspace_path_attr.display(),
         iter.prompt.bytes = prompt.as_str().len(),
         iter.agent.result = field::Empty,
         iter.agent.exit_code = field::Empty,
         iter.agent.exit_disposition = field::Empty,
     );
-    let agent_result = crate::agent::run_with_timeout(agent, agent_ctx)
-        .instrument(agent_span.clone())
-        .await;
+    let agent_result =
+        run_agent_with_timeout(agent, &*active, prompt, cancel, config.iteration_timeout)
+            .instrument(agent_span.clone())
+            .await;
 
     // The agent result is now a plain `Result`: `Ok` means the agent ran
     // (exit 0), `Err` carries the failure class. The lifecycle label and
@@ -596,7 +640,7 @@ async fn drive_workspace(
                 snap,
             )
             .await;
-        best_effort_teardown(&mut workspace, signal_id, ErrorSource::AgentRun, cancel).await;
+        best_effort_teardown(active, signal_id, ErrorSource::AgentRun, cancel).await;
         return Err(IterationFailure {
             error_source: ErrorSource::AgentRun,
             signal_id,
@@ -617,38 +661,43 @@ async fn drive_workspace(
         iter.workspace.name = workspace_name,
         iter.workspace.path = %workspace_path_attr.display(),
     );
-    if let Err(err) = workspace
+    // Teardown consumes the active workspace and returns the persistent
+    // path — the durable location of the agent's work, carried on the
+    // teardown-finished event for post-teardown handlers.
+    let final_path = match active
         .teardown(cancel.clone())
         .instrument(teardown_span.clone())
         .await
     {
-        let message = err.to_string();
-        iter_tracing::record_span_error(
-            &teardown_span,
-            ErrorSource::WorkspaceTeardown.as_str(),
-            &message,
-        );
-        events
-            .runner_error(
-                ErrorSource::WorkspaceTeardown,
-                Some(signal_id),
+        Ok(final_path) => final_path,
+        Err(err) => {
+            let message = err.to_string();
+            iter_tracing::record_span_error(
+                &teardown_span,
+                ErrorSource::WorkspaceTeardown.as_str(),
                 &message,
-                HookEvent::WorkspaceTeardownFailed {
-                    signal_id,
-                    error: message.clone(),
-                },
-                snap,
-            )
-            .await;
-        return Err(IterationFailure {
-            error_source: ErrorSource::WorkspaceTeardown,
-            signal_id,
-            source: Box::new(err),
-            message,
-            exit: None,
-        });
-    }
-    let final_path = workspace.final_path().to_path_buf();
+            );
+            events
+                .runner_error(
+                    ErrorSource::WorkspaceTeardown,
+                    Some(signal_id),
+                    &message,
+                    HookEvent::WorkspaceTeardownFailed {
+                        signal_id,
+                        error: message.clone(),
+                    },
+                    snap,
+                )
+                .await;
+            return Err(IterationFailure {
+                error_source: ErrorSource::WorkspaceTeardown,
+                signal_id,
+                source: Box::new(err),
+                message,
+                exit: None,
+            });
+        }
+    };
     events
         .workspace_teardown_finished(signal, final_path, snap)
         .await;
@@ -663,12 +712,11 @@ fn agent_result_message(label: &str, exit_code: Option<i32>) -> String {
     }
 }
 async fn run_iteration(
-    workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
-    agent: &dyn Agent,
+    workspace: &mut dyn Workspace,
+    agent: &Agent,
     prompt_selector: &PromptSelector,
     config: &RunnerPolicy,
     cancel: &CancellationToken,
-    stdio_sink: &Arc<dyn crate::log::OutputSink>,
     clock: &dyn Clock,
     events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
@@ -707,15 +755,7 @@ async fn run_iteration(
         }
     };
     let record = drive_workspace(
-        workspace_factory,
-        agent,
-        config,
-        cancel,
-        stdio_sink,
-        events,
-        &signal,
-        &prompt,
-        &snap,
+        workspace, agent, config, cancel, events, &signal, &prompt, &snap,
     )
     .await?;
     iter_state.record_success(signal_id, record.exit_code, clock.now());
@@ -730,12 +770,11 @@ async fn run_iteration(
 /// `run_iteration` errors bump the counter and update streak state.
 async fn run_loop(
     queue: Option<&dyn Queue>,
-    workspace_factory: &(dyn Fn() -> Box<dyn Workspace> + Send + Sync),
-    agent: &dyn Agent,
+    workspace: &mut dyn Workspace,
+    agent: &Agent,
     prompt_selector: &PromptSelector,
     config: &RunnerPolicy,
     cancel: &CancellationToken,
-    stdio_sink: &Arc<dyn crate::log::OutputSink>,
     clock: &dyn Clock,
     id_source: &dyn IdSource,
     events: &mut RunnerEmitter,
@@ -810,20 +849,31 @@ async fn run_loop(
                 if let Some(span_context) = crate::telemetry::span_context_from_signal(&signal) {
                     iter_tracing::add_span_link(&span, span_context);
                 }
-                match run_iteration(
-                    workspace_factory,
-                    agent,
-                    prompt_selector,
-                    config,
-                    cancel,
-                    stdio_sink,
-                    clock,
-                    events,
-                    iter_state,
-                    *iteration_count,
-                    signal,
+                // Open the ambient iteration scope around the whole
+                // iteration future: setup, the agent (and its child-process
+                // env injection), and teardown all read the signal
+                // correlation attributes from here instead of carrying them
+                // through call signatures.
+                let iteration_attrs = iter_tracing::IterationAttrs::new(
+                    signal_id.to_string(),
+                    signal.kind().to_string(),
+                );
+                match iter_tracing::iteration_scope(
+                    iteration_attrs,
+                    run_iteration(
+                        workspace,
+                        agent,
+                        prompt_selector,
+                        config,
+                        cancel,
+                        clock,
+                        events,
+                        iter_state,
+                        *iteration_count,
+                        signal,
+                    )
+                    .instrument(span.clone()),
                 )
-                .instrument(span.clone())
                 .await
                 {
                     Ok(()) => {

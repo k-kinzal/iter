@@ -1,10 +1,12 @@
-//! Test-only helpers for building fake agent binaries at runtime.
+//! Test-only helpers for exercising drivers through the real agent cycle.
 //!
-//! The crate's agents all shell out to a real CLI binary; exercising them in
+//! The crate's drivers all shell out to a real CLI binary; exercising them in
 //! unit tests without `claude` / `codex` / `gemini` / etc. installed requires
-//! writing a disposable shell script to a tempdir and pointing the agent's
+//! writing a disposable shell script to a tempdir and pointing the driver's
 //! `command` field at the script path. [`fake_binary_script`] wraps that
-//! pattern.
+//! pattern, and [`drive`] / [`drive_capturing`] run a driver through the
+//! full skeleton — a real [`LocalWorkspace`] active workspace, a
+//! [`SingleAgentRouter`], and a fresh cancellation token.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,20 +17,41 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::AgentInvocation;
+use crate::agent::agent::Agent;
+use crate::agent::driver::AgentDriver;
+use crate::agent::router::SingleAgentRouter;
+use crate::agent::{AgentError, AgentRun};
 use crate::log::OutputSink;
 use crate::prompt::Prompt;
-use crate::signal::SignalId;
+use crate::workspace::{ActiveWorkspace, LocalWorkspace, Workspace};
 
-/// Build an [`AgentInvocation`] for unit tests with a fresh
-/// [`CancellationToken`] and [`SignalId`].
-pub(crate) fn ctx<'a>(path: &'a Path, prompt: &'a Prompt) -> AgentInvocation<'a> {
-    AgentInvocation::new(path, prompt, CancellationToken::new(), SignalId::new())
+/// Set up a [`LocalWorkspace`] over `path` and return its active form.
+pub(crate) async fn active_local(path: &Path) -> Box<dyn ActiveWorkspace> {
+    let mut ws = LocalWorkspace::new(path);
+    // Call through the trait: the inherent `setup` returns the concrete
+    // active type.
+    Workspace::setup(&mut ws, CancellationToken::new())
+        .await
+        .expect("test workspace setup")
+}
+
+/// Run `driver` once through the full agent cycle on a local workspace at
+/// `path`.
+pub(crate) async fn drive(
+    driver: impl AgentDriver + 'static,
+    path: &Path,
+    prompt: &Prompt,
+) -> Result<AgentRun, AgentError> {
+    let active = active_local(path).await;
+    let agent = Agent::new(Box::new(SingleAgentRouter::new(Box::new(driver))));
+    agent
+        .run_on(&*active, prompt, CancellationToken::new())
+        .await
 }
 
 /// An [`OutputSink`] that records everything teed through it, so driver
-/// tests can assert on the child's stdout/stderr now that the agent result
-/// no longer carries an output tail. Mirrors what `log.ndjson` would see.
+/// tests can assert on the child's stdout/stderr. Mirrors what `log.ndjson`
+/// would see.
 #[derive(Default)]
 pub(crate) struct CaptureSink {
     stdout: Mutex<Vec<u8>>,
@@ -59,16 +82,21 @@ impl CaptureSink {
     }
 }
 
-/// Build an [`AgentInvocation`] whose stdio sink captures teed output.
-/// Returns the context and the shared [`CaptureSink`] for later assertions.
-pub(crate) fn ctx_capturing<'a>(
-    path: &'a Path,
-    prompt: &'a Prompt,
-) -> (AgentInvocation<'a>, Arc<CaptureSink>) {
+/// Like [`drive`], but with a capturing stdio sink. Returns the run result
+/// and the shared [`CaptureSink`] for assertions on the teed output.
+pub(crate) async fn drive_capturing(
+    driver: impl AgentDriver + 'static,
+    path: &Path,
+    prompt: &Prompt,
+) -> (Result<AgentRun, AgentError>, Arc<CaptureSink>) {
     let sink = Arc::new(CaptureSink::default());
-    let ctx = AgentInvocation::new(path, prompt, CancellationToken::new(), SignalId::new())
+    let active = active_local(path).await;
+    let agent = Agent::new(Box::new(SingleAgentRouter::new(Box::new(driver))))
         .with_stdio_sink(sink.clone());
-    (ctx, sink)
+    let result = agent
+        .run_on(&*active, prompt, CancellationToken::new())
+        .await;
+    (result, sink)
 }
 
 /// Create an executable shell script in a fresh temp directory.

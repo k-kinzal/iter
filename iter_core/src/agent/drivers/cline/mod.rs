@@ -1,16 +1,16 @@
-//! [`ClineAgent`] — Cline CLI integration.
+//! [`ClineDriver`] — Cline CLI integration.
 //!
 //! Cline is process-restart based: each invocation runs the agent to
 //! completion with no hook installation. This driver is print-only — it drives
 //! the CLI's `--oneshot` mode and reads the machine-readable `--json` stream.
 //!
-//! # Three-layer split
+//! # Two-layer split
 //!
 //! * **Command** ([`command`]) — owns the `cline --oneshot --json` argv and
 //!   parses the complete output into a CLI-shaped [`command::ClineRun`] /
 //!   [`command::ClineError`].
-//! * **Driver/Adapter** (this module) — implements iter's [`Agent`] trait,
-//!   projecting the Command result/error onto iter's domain
+//! * **Driver/Adapter** (this module) — implements iter's [`AgentDriver`]
+//!   trait, projecting the Command result/error onto iter's domain
 //!   [`AgentRun`] / [`AgentError`] (see [`From<ClineError>`]).
 //!
 //! # Assumed CLI shape
@@ -31,17 +31,22 @@
 //!
 //! # Construction
 //!
-//! [`ClineAgent`] exposes no defaults. Every field is required because the
+//! [`ClineDriver`] exposes no defaults. Every field is required because the
 //! value is a project-shaped decision iter cannot honestly pick on the
-//! operator's behalf. The agent is constructed directly from its fields.
+//! operator's behalf. The driver is constructed directly from its fields.
 
-use crate::{Agent, AgentInvocation, AgentRun};
+use std::path::Path;
+
 use async_trait::async_trait;
+
+use crate::agent::driver::{AgentCommand, AgentDriver};
+use crate::agent::process::{RawOutput, apply_user_env};
+use crate::agent::{AgentError, AgentKind, AgentRun};
+use crate::prompt::Prompt;
+use crate::workspace::StdioMode;
 
 mod command;
 
-use crate::agent::AgentError;
-use crate::agent::process::{PromptDelivery, apply_user_env, spawn_capture};
 use command::{ClineCommand, ClineError};
 
 impl From<ClineError> for AgentError {
@@ -72,9 +77,9 @@ impl From<ClineError> for AgentError {
     }
 }
 
-/// Cline CLI agent configuration.
+/// Cline CLI driver configuration.
 #[derive(Debug, Clone)]
-pub struct ClineAgent {
+pub struct ClineDriver {
     /// Binary name or path. Required.
     pub command: String,
     /// Additional arguments appended after the built-in `--oneshot --json`
@@ -85,146 +90,178 @@ pub struct ClineAgent {
 }
 
 #[async_trait]
-impl Agent for ClineAgent {
-    fn name(&self) -> &'static str {
-        "cline"
+impl AgentDriver for ClineDriver {
+    fn command(
+        &self,
+        path: &Path,
+        prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        let mut process = ClineCommand {
+            program: &self.command,
+            args: &self.args,
+        }
+        .build(path);
+        apply_user_env(&mut process, &self.env);
+        Ok(AgentCommand {
+            process,
+            stdin: Some(prompt.as_str().to_owned()),
+            io: StdioMode::Piped,
+        })
     }
 
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::Cline
+    fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
+        // Adapter: project the Command's CLI-shaped result/error onto iter's
+        // domain. `?` runs the `From<ClineError>` above.
+        let result = command::interpret(RawOutput::from(output))?;
+        Ok(AgentRun {
+            session_id: result.session_id,
+        })
+    }
+
+    fn kind(&self) -> AgentKind {
+        AgentKind::Cline
+    }
+
+    /// Resolved on-disk location of the configured binary, or `None` when
+    /// nothing on `$PATH` or the supplied path matches an existing file.
+    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
+        crate::agent::command_path::CommandPath::resolve(&self.command)
     }
 
     fn declared_env(&self) -> &[(String, String)] {
         &self.env
-    }
-
-    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
-        let AgentInvocation {
-            workspace_path,
-            prompt,
-            cancel,
-            stdio_sink,
-            sandbox_command_prefix,
-            declared_env,
-            ..
-        } = ctx;
-
-        let mut command = ClineCommand {
-            program: &self.command,
-            args: &self.args,
-        }
-        .build(workspace_path);
-        apply_user_env(&mut command, declared_env);
-
-        let output = spawn_capture(
-            command,
-            PromptDelivery::Stdin(prompt.as_str()),
-            cancel,
-            stdio_sink,
-            sandbox_command_prefix,
-        )
-        .await?;
-        // Adapter: project the Command's CLI-shaped result/error onto iter's
-        // domain. `?` runs the `From<ClineError>` above.
-        let result = command::interpret(&output)?;
-        Ok(AgentRun {
-            session_id: result.session_id,
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Prompt;
-    use crate::agent::testutil::{ctx_capturing, fake_binary_script};
-    use std::path::Path;
+    use crate::agent::process::RawExit;
+    use crate::agent::testutil::{drive_capturing, fake_binary_script};
+    use tempfile::TempDir;
 
-    fn cline_agent(command: impl Into<String>) -> ClineAgent {
-        ClineAgent {
+    fn driver(command: impl Into<String>) -> ClineDriver {
+        ClineDriver {
             command: command.into(),
             args: Vec::new(),
             env: Vec::new(),
         }
     }
 
+    fn argv(command: &AgentCommand) -> Vec<String> {
+        command
+            .process
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn synth_output(exit: RawExit, stdout: &str) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    // ----- command(): outbound translation ---------------------------------
+
+    #[test]
+    fn command_emits_oneshot_json_and_stdin_prompt() {
+        let d = driver("cline");
+        let prompt = Prompt::from("hello-cline");
+        let command = d.command(Path::new("."), &prompt, None).expect("command");
+        let args = argv(&command);
+        assert!(args.contains(&"--oneshot".to_owned()), "got {args:?}");
+        assert!(args.contains(&"--json".to_owned()), "got {args:?}");
+        assert_eq!(command.stdin.as_deref(), Some("hello-cline"));
+        assert_eq!(command.io, StdioMode::Piped);
+    }
+
+    #[test]
+    fn extra_args_are_appended_after_managed_flags() {
+        let mut d = driver("cline");
+        d.args = vec!["--model".into(), "sonnet".into()];
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        assert!(args.contains(&"--oneshot".to_owned()), "got {args:?}");
+        assert!(args.contains(&"--model".to_owned()), "got {args:?}");
+        assert!(args.contains(&"sonnet".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn declared_env_is_set_on_the_command() {
+        let mut d = driver("cline");
+        d.env = vec![("CLINE_TEST_ENV_VAR".into(), "env-value".into())];
+        let prompt = Prompt::from("x");
+        let command = d.command(Path::new("."), &prompt, None).expect("command");
+        let has = command.process.as_std().get_envs().any(|(k, v)| {
+            k == std::ffi::OsStr::new("CLINE_TEST_ENV_VAR")
+                && v == Some(std::ffi::OsStr::new("env-value"))
+        });
+        assert!(has, "declared env must be applied to the child command");
+    }
+
+    // ----- interpret(): inbound projection onto the domain ------------------
+
+    #[test]
+    fn interpret_completed_run_extracts_session_id() {
+        let d = driver("cline");
+        let body = r#"{"type":"run_result","finishReason":"completed","sessionId":"sess-x"}"#;
+        let run = d
+            .interpret(&synth_output(RawExit::Code(0), body))
+            .expect("ok");
+        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+    }
+
+    #[test]
+    fn interpret_non_completed_run_maps_to_failed() {
+        let d = driver("cline");
+        let body = r#"{"type":"run_result","finishReason":"max_turns"}"#;
+        let err = d
+            .interpret(&synth_output(RawExit::Code(1), body))
+            .expect_err("must fail");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), .. }),
+            "got {err:?}",
+        );
+    }
+
+    #[test]
+    fn interpret_no_result_maps_to_failed() {
+        let d = driver("cline");
+        let err = d
+            .interpret(&synth_output(RawExit::Code(1), "garbage"))
+            .expect_err("must fail");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), .. }),
+            "got {err:?}",
+        );
+    }
+
+    // ----- through the full cycle -------------------------------------------
+
     /// Fake `cline` binary: echoes each argv arg and its stdin to *stderr* (so
-    /// a `CaptureSink` can observe them), then prints a valid terminal
-    /// `run_result` record to stdout so the Command parses an `Ok`.
+    /// the capture sink can observe them), then prints a valid terminal
+    /// `run_result` record to stdout.
     const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
 cat 1>&2
 printf '%s' '{"type":"run_result","finishReason":"completed","sessionId":"sess-x"}'"#;
 
     #[tokio::test]
-    async fn passes_oneshot_and_json_flags_and_stdin_prompt() {
+    async fn oneshot_passes_through_flags_and_stdin() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = cline_agent(bin.to_string_lossy());
+        let d = driver(bin.to_string_lossy());
         let prompt = Prompt::from("hello-cline");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let run = agent.run(ctx).await.expect("run ok");
+        let dir = TempDir::new().expect("tmp");
+        let (result, sink) = drive_capturing(d, dir.path(), &prompt).await;
+        let run = result.expect("run ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
         let echoed = sink.stderr().await;
         assert!(echoed.lines().any(|l| l == "--oneshot"), "got {echoed:?}");
         assert!(echoed.lines().any(|l| l == "--json"), "got {echoed:?}");
         assert!(echoed.contains("hello-cline"), "got {echoed:?}");
-    }
-
-    #[tokio::test]
-    async fn extra_args_are_forwarded_after_managed_flags() {
-        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = cline_agent(bin.to_string_lossy());
-        s.args = vec!["--model".into(), "sonnet".into()];
-        let agent = s;
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        let echoed = sink.stderr().await;
-        let args: Vec<&str> = echoed.lines().collect();
-        assert!(args.contains(&"--oneshot"), "got {args:?}");
-        assert!(args.contains(&"--model"), "got {args:?}");
-        assert!(args.contains(&"sonnet"), "got {args:?}");
-    }
-
-    #[tokio::test]
-    async fn env_is_forwarded_to_child() {
-        let script = "printf 'ENV=%s\\n' \"$CLINE_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"run_result\",\"finishReason\":\"completed\"}'";
-        let (_guard, bin) = fake_binary_script(script);
-        let mut s = cline_agent(bin.to_string_lossy());
-        s.env = vec![("CLINE_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = s;
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        assert!(sink.stderr().await.contains("ENV=env-value"));
-    }
-
-    #[tokio::test]
-    async fn non_completed_run_is_an_error() {
-        let script = r#"printf '%s' '{"type":"run_result","finishReason":"max_turns"}'
-exit 1"#;
-        let (_guard, bin) = fake_binary_script(script);
-        let agent = cline_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
-        let err = agent.run(ctx).await.expect_err("must fail");
-        assert!(
-            matches!(err, AgentError::Failed { code: Some(1), .. }),
-            "got {err:?}",
-        );
-    }
-
-    #[tokio::test]
-    async fn no_result_on_nonzero_exit_is_an_error() {
-        let (_guard, bin) = fake_binary_script("printf 'garbage\\n'\nexit 1");
-        let agent = cline_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
-        let err = agent.run(ctx).await.expect_err("must fail");
-        assert!(
-            matches!(err, AgentError::Failed { code: Some(1), .. }),
-            "got {err:?}",
-        );
     }
 }

@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/claude_code",
+    "crates/sandbox",
     "iter_core",
     "iter_tracing",
     "iter_language",
@@ -44,6 +45,7 @@ iter_command_cli = { path = "iter_command_cli", version = "0.1.0" }
 iter_files_cli = { path = "iter_files_cli", version = "0.1.0" }
 iter_webhook_cli = { path = "iter_webhook_cli", version = "0.1.0" }
 claude_code = { path = "crates/claude_code", version = "0.1.0" }
+sandbox = { path = "crates/sandbox", version = "0.1.0" }
 
 # Error handling
 thiserror = "2"

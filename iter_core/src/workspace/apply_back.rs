@@ -28,5 +28,15 @@ pub enum ApplyBackMode {
     /// is deleted. Useful when the caller intends to review or further
     /// process the result of the agent's work and does not want an
     /// accidental rm-in-temp to delete files in the base.
+    ///
+    /// **Depends on `preserve_mtime`.** The mtime comparison is only
+    /// meaningful when the temp tree carries the source files' real mtimes.
+    /// With `preserve_mtime = false`, every clone-time copy is stamped with
+    /// a single clone timestamp, so an *untouched* temp file compares as
+    /// strictly newer than its base counterpart and is copied back
+    /// wholesale — degrading `Merge` into an indiscriminate copy-everything
+    /// (still non-deleting, so no data loss, but the mtime gate is a no-op).
+    /// Pair `Merge` with `preserve_mtime = true`; the workspace logs a
+    /// warning when it sees the incoherent combination.
     Merge,
 }

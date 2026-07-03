@@ -1,99 +1,23 @@
-//! The per-iteration workspace supply: `workspaces_from_def` translates a
-//! [`WorkspaceDef`] into a closure that mints a fresh `Box<dyn Workspace>` for
-//! every signal.
+//! Definition → workspace translation (`workspace_from_def`).
+//!
+//! Translates a [`WorkspaceDef`] into the single `Box<dyn Workspace>` the
+//! [`Runner`](iter_core::Runner) holds for the whole exploration. Each
+//! iteration brackets the instance with
+//! [`Workspace::setup`](iter_core::Workspace::setup) →
+//! [`ActiveWorkspace::teardown`](iter_core::ActiveWorkspace::teardown).
 //!
 //! The runtime workspace axis is a trait object (R18): the closed set of
 //! workspace kinds lives at the definition layer ([`WorkspaceDef`]); at run
-//! time the runner only needs "something that sets up", so the supply yields
-//! `Box<dyn Workspace>`. There is no run-time enum wrapper.
+//! time the runner only needs "something that sets up". There is no run-time
+//! enum wrapper.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use iter_core::workspace::{
     ApplyBackMode, CloneSettings, CloneWorkspace, LocalWorkspace, SandboxPolicy, SandboxWorkspace,
 };
 use iter_core::{SandboxProfile, Workspace};
 use iter_language::{ApplyBackDef, CloneApplyBackMode, WorkspaceDef};
-
-/// Frozen workspace configuration extracted from an [`Iterfile`](iter_language::Iterfile).
-///
-/// We snapshot the AST values into a `Send + Sync` payload so the
-/// workspace supply closure can be cloned across threads
-/// without holding a reference to the AST itself.
-///
-/// Every project-shaped knob is stored unconditionally here — there are
-/// no `Option`s. The AST already enforces explicit values (iter ships no
-/// project-shaped defaults), so the compose layer is a straight 1:1 copy.
-#[derive(Debug, Clone)]
-struct SandboxSpec {
-    base: PathBuf,
-    excludes: Vec<String>,
-    includes: Vec<String>,
-    preserve_mtime: bool,
-    apply_back: ApplyBackMode,
-    apply_back_excludes: Vec<String>,
-    apply_back_includes: Vec<String>,
-    policy: SandboxPolicy,
-    profile: SandboxProfile,
-}
-
-#[derive(Debug, Clone)]
-enum WorkspaceSpec {
-    Local {
-        base: PathBuf,
-    },
-    Clone {
-        base: PathBuf,
-        excludes: Vec<String>,
-        includes: Vec<String>,
-        preserve_mtime: bool,
-        apply_back: ApplyBackMode,
-        apply_back_excludes: Vec<String>,
-        apply_back_includes: Vec<String>,
-    },
-    Sandbox(Box<SandboxSpec>),
-}
-
-impl WorkspaceSpec {
-    fn instantiate(&self) -> Box<dyn Workspace> {
-        match self {
-            Self::Local { base } => Box::new(LocalWorkspace::new(base.clone())),
-            Self::Clone {
-                base,
-                excludes,
-                includes,
-                preserve_mtime,
-                apply_back,
-                apply_back_excludes,
-                apply_back_includes,
-            } => Box::new(CloneWorkspace::new(
-                base.clone(),
-                CloneSettings {
-                    excludes: excludes.clone(),
-                    includes: includes.clone(),
-                    preserve_mtime: *preserve_mtime,
-                    apply_back: *apply_back,
-                    apply_back_excludes: apply_back_excludes.clone(),
-                    apply_back_includes: apply_back_includes.clone(),
-                },
-            )),
-            Self::Sandbox(spec) => Box::new(SandboxWorkspace::new(
-                spec.base.clone(),
-                CloneSettings {
-                    excludes: spec.excludes.clone(),
-                    includes: spec.includes.clone(),
-                    preserve_mtime: spec.preserve_mtime,
-                    apply_back: spec.apply_back,
-                    apply_back_excludes: spec.apply_back_excludes.clone(),
-                    apply_back_includes: spec.apply_back_includes.clone(),
-                },
-                spec.policy.clone(),
-                spec.profile.clone(),
-            )),
-        }
-    }
-}
 
 fn map_apply_back_mode(mode: CloneApplyBackMode) -> ApplyBackMode {
     match mode {
@@ -119,33 +43,28 @@ fn map_sandbox_policy(decl: &iter_language::SandboxPolicyDef) -> SandboxPolicy {
     }
 }
 
-/// Build the per-iteration workspace supply from a [`WorkspaceDef`].
+/// Build the runner's workspace from a [`WorkspaceDef`].
 ///
-/// The returned closure clones the captured spec on every call so that each
-/// signal sees a fresh, not-yet-set-up `Box<dyn Workspace>` — exactly the
-/// contract demanded by [`iter_core::Runner`].
+/// A pure selection-by-variant followed by a mechanical field move: every
+/// project-shaped knob flows straight from the declaration (the AST already
+/// enforces explicit values — iter ships no project-shaped defaults).
 ///
-/// `profile` is the agent's lower bound (the OS access the agent needs to
-/// function), derived by
-/// [`SandboxProfile::for_agent`](iter_core::SandboxProfile::for_agent) and
-/// carried into every
-/// [`SandboxWorkspace`](iter_core::workspace::SandboxWorkspace) the supply
-/// yields. The workspace policy (the project's upper bound) comes from the
-/// DSL; the profile comes from the agent. For non-sandbox workspaces the
-/// parameter is unused.
+/// `profile` is the agent's lower bound (the OS access its drivers need to
+/// function), derived at agent-assembly time by
+/// [`SandboxProfile::for_drivers`](iter_core::SandboxProfile::for_drivers)
+/// and carried into a [`SandboxWorkspace`](iter_core::workspace::SandboxWorkspace).
+/// The workspace policy (the project's upper bound) comes from the DSL; for
+/// non-sandbox workspaces the parameter is unused.
 ///
-/// The closure is constructed eagerly here; setup-time validation is deferred
-/// to [`Workspace::setup`] on the produced workspace, which is why this
-/// function is infallible.
-#[must_use = "the returned workspace supply closure is not useful unless called"]
-pub(crate) fn workspaces_from_def(
+/// Setup-time validation is deferred to
+/// [`Workspace::setup`](iter_core::Workspace::setup) on the produced
+/// workspace, which is why this function is infallible.
+pub(crate) fn workspace_from_def(
     decl: &WorkspaceDef,
     profile: SandboxProfile,
-) -> impl Fn() -> Box<dyn Workspace> + Send + Sync + use<> {
-    let spec = match decl {
-        WorkspaceDef::Local { base, .. } => WorkspaceSpec::Local {
-            base: PathBuf::from(base),
-        },
+) -> Box<dyn Workspace> {
+    match decl {
+        WorkspaceDef::Local { base, .. } => Box::new(LocalWorkspace::new(PathBuf::from(base))),
         WorkspaceDef::Clone {
             base,
             source: _,
@@ -159,15 +78,17 @@ pub(crate) fn workspaces_from_def(
                     excludes: ab_excludes,
                     includes: ab_includes,
                 },
-        } => WorkspaceSpec::Clone {
-            base: PathBuf::from(base),
-            excludes: excludes.clone(),
-            includes: includes.clone(),
-            preserve_mtime: *preserve_mtime,
-            apply_back: map_apply_back_mode(*mode),
-            apply_back_excludes: ab_excludes.clone(),
-            apply_back_includes: ab_includes.clone(),
-        },
+        } => Box::new(CloneWorkspace::new(
+            PathBuf::from(base),
+            CloneSettings {
+                excludes: excludes.clone(),
+                includes: includes.clone(),
+                preserve_mtime: *preserve_mtime,
+                apply_back: map_apply_back_mode(*mode),
+                apply_back_excludes: ab_excludes.clone(),
+                apply_back_includes: ab_includes.clone(),
+            },
+        )),
         WorkspaceDef::Sandbox {
             base,
             source: _,
@@ -181,21 +102,20 @@ pub(crate) fn workspaces_from_def(
                     includes: ab_includes,
                 },
             policy,
-        } => WorkspaceSpec::Sandbox(Box::new(SandboxSpec {
-            base: PathBuf::from(base),
-            excludes: excludes.clone(),
-            includes: includes.clone(),
-            preserve_mtime: *preserve_mtime,
-            apply_back: map_apply_back_mode(*mode),
-            apply_back_excludes: ab_excludes.clone(),
-            apply_back_includes: ab_includes.clone(),
-            policy: map_sandbox_policy(policy),
+        } => Box::new(SandboxWorkspace::new(
+            PathBuf::from(base),
+            CloneSettings {
+                excludes: excludes.clone(),
+                includes: includes.clone(),
+                preserve_mtime: *preserve_mtime,
+                apply_back: map_apply_back_mode(*mode),
+                apply_back_excludes: ab_excludes.clone(),
+                apply_back_includes: ab_includes.clone(),
+            },
+            map_sandbox_policy(policy),
             profile,
-        })),
-    };
-
-    let spec = Arc::new(spec);
-    move || spec.instantiate()
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -204,18 +124,15 @@ mod tests {
     use iter_language::{SandboxNetworkDef, SandboxPolicyDef, WorkspaceDef};
 
     #[test]
-    fn workspaces_from_def_yields_distinct_local_instances() {
+    fn workspace_from_def_handles_local_decl() {
         let decl = WorkspaceDef::Local {
             base: "/tmp/iter-cli-test".into(),
             source: None,
         };
-        let supply = workspaces_from_def(&decl, SandboxProfile::default());
-        let a = supply();
-        let b = supply();
-        // The supply yields trait objects; each carries the workspace-kind
-        // label rather than a concrete type the caller can match on.
-        assert_eq!(a.name(), "local");
-        assert_eq!(b.name(), "local");
+        let w = workspace_from_def(&decl, SandboxProfile::default());
+        // The translation yields a trait object; it carries the
+        // workspace-kind label rather than a concrete type to match on.
+        assert_eq!(w.name(), "local");
     }
 
     fn sync_apply_back() -> ApplyBackDef {
@@ -227,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn workspaces_from_def_handles_clone_decl() {
+    fn workspace_from_def_handles_clone_decl() {
         let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
             source: None,
@@ -237,13 +154,12 @@ mod tests {
             preserve_mtime: true,
             apply_back: sync_apply_back(),
         };
-        let supply = workspaces_from_def(&decl, SandboxProfile::default());
-        let w = supply();
+        let w = workspace_from_def(&decl, SandboxProfile::default());
         assert_eq!(w.name(), "clone");
     }
 
     #[test]
-    fn workspaces_from_def_handles_clone_with_remote() {
+    fn workspace_from_def_handles_clone_with_remote() {
         let decl = WorkspaceDef::Clone {
             base: "/tmp/iter-cli-test".into(),
             source: None,
@@ -253,13 +169,12 @@ mod tests {
             preserve_mtime: true,
             apply_back: sync_apply_back(),
         };
-        let supply = workspaces_from_def(&decl, SandboxProfile::default());
-        let w = supply();
+        let w = workspace_from_def(&decl, SandboxProfile::default());
         assert_eq!(w.name(), "clone");
     }
 
     #[test]
-    fn workspaces_from_def_handles_sandbox_decl() {
+    fn workspace_from_def_handles_sandbox_decl() {
         let decl = WorkspaceDef::Sandbox {
             base: "/tmp/iter-cli-test".into(),
             source: None,
@@ -275,8 +190,7 @@ mod tests {
                 allow_exec: Vec::new(),
             },
         };
-        let supply = workspaces_from_def(&decl, SandboxProfile::default());
-        let w = supply();
+        let w = workspace_from_def(&decl, SandboxProfile::default());
         assert_eq!(w.name(), "sandbox");
     }
 }

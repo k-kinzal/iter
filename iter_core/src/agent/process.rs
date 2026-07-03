@@ -1,49 +1,47 @@
-//! Shared subprocess primitive for running a CLI-backed agent.
+//! Shared child-process machinery for the agent cycle.
 //!
-//! This is infrastructure shared by the **Command level** of every driver.
-//! It owns the parts of spawning a child that are identical across CLIs —
-//! sandbox-prefix wrapping, process-group setup, stdin delivery, stdout/
-//! stderr teeing into `log.ndjson`, cancellation, and platform exit-status
-//! mapping — and hands back a [`CommandOutput`] (full captured output + a
-//! [`RawExit`]). It does **not** interpret that output: turning
-//! `(exit, stdout, stderr)` into a CLI-shaped result or error is each
-//! per-CLI Command's job (`drivers/<cli>/command.rs`).
+//! This is plumbing, not a concept: the [`Agent`](crate::agent::Agent)'s
+//! private helpers for driving a **spawned** child through one exchange.
+//! Creation belongs to the workspace seam
+//! ([`ActiveWorkspace::spawn`](crate::workspace::ActiveWorkspace::spawn));
+//! everything from birth to reaping lives here:
 //!
-//! Two entry points:
+//! * [`feed_and_capture`] — piped exchange: deliver the stdin payload, tee
+//!   stdout/stderr line-by-line into the output sink while accumulating the
+//!   **complete** streams, honour cancellation with a graceful
+//!   SIGTERM→SIGKILL window, and report the exit faithfully.
+//! * [`wait_inherited`] — interactive exchange: the child owns the
+//!   terminal; only wait for its exit (same cancellation discipline).
 //!
-//! * [`spawn_capture`] — non-interactive/print mode: pipes stdio, captures
-//!   the child's **complete** stdout/stderr so a Command can parse the
-//!   machine-readable stream, and returns a [`CommandOutput`].
-//! * [`drive_interactive`] / [`drive_interactive_with_finalize`] — hook-based
-//!   interactive (TUI) mode: inherits stdio (no capture) and returns just the
-//!   [`RawExit`], optionally finalizing a hook bundle first.
+//! Both return a plain [`std::process::Output`] for the driver's
+//! [`interpret`](crate::agent::AgentDriver::interpret) to read; signal
+//! terminations survive the trip through
+//! [`ExitStatus`](std::process::ExitStatus) on Unix.
+//!
+//! The module also keeps the env-injection helpers drivers opt into while
+//! building their commands, and the shared token-limit detector.
 
-use std::ffi::{OsStr, OsString};
-use std::fmt;
-use std::future::Future;
-use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::log::{LogStream, OutputSink};
-use crate::process_group::{self, ProcessGroup};
+use crate::process_group::ProcessGroup;
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio_util::sync::CancellationToken;
 
 use super::AgentError;
-use crate::signal::{SignalId, SignalKind};
 
 /// Grace period applied between SIGTERM and SIGKILL when the runner cancels
 /// an agent process tree. Five seconds matches the upper bound most CLI
 /// agents use for their own shutdown handlers; anything longer just keeps
 /// the runner blocked.
 ///
-/// `ITERATION_TIMEOUT_DRAIN_GRACE` (in `agent/inner.rs`) is derived from
-/// this constant so the iteration-timeout drain window always exceeds the
-/// SIGTERM grace; if you change one, the other follows automatically.
+/// The runner's iteration-timeout drain window is derived from this constant
+/// so it always exceeds the SIGTERM grace; if you change one, the other
+/// follows automatically.
 pub(crate) const AGENT_TERMINATION_GRACE: Duration = Duration::from_secs(5);
 
 /// Bound on how long the stdio tee tasks are awaited after the agent
@@ -65,12 +63,12 @@ const CANCEL_TEE_DRAIN: Duration = Duration::from_secs(1);
 /// redacted here; they already transit the process log sink unchanged today.
 pub(crate) const RAW_AGENT_STDIO_TAIL_BYTES: usize = 64 * 1024;
 
-/// Platform exit disposition of an agent child process, as observed by the
-/// shared spawn primitive — *before* any CLI-specific interpretation.
+/// Platform exit disposition of an agent child process — *before* any
+/// CLI-specific interpretation.
 ///
 /// `Code(0)` is the only success disposition; a non-zero code, a terminating
 /// signal, or an indeterminate status are all reported faithfully and left
-/// for the Command/Adapter to interpret.
+/// for the driver's `interpret` to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum RawExit {
     /// Process exited with the given code (`0` = clean exit).
@@ -99,7 +97,7 @@ impl RawExit {
         }
     }
 
-    /// Map a non-success exit to an [`AgentError`] for Commands whose mode
+    /// Map a non-success exit to an [`AgentError`] for drivers whose mode
     /// produces no richer in-band signal (interactive TUI runs, and the
     /// text-only CLIs once their scanners find nothing). Returns `None` for a
     /// clean exit.
@@ -120,9 +118,9 @@ impl RawExit {
 
     /// Convert this observed platform exit into an [`std::process::ExitStatus`].
     ///
-    /// This is used when a caller runs a process through iter's execution
-    /// layer, then hands the captured output back to a library API that
-    /// decodes standard process output.
+    /// The capture helpers use this to hand drivers a standard
+    /// [`std::process::Output`]; on Unix a signal termination survives the
+    /// round trip (`ExitStatusExt::signal`).
     pub(crate) fn into_exit_status(self) -> std::process::ExitStatus {
         #[cfg(unix)]
         {
@@ -147,51 +145,36 @@ impl RawExit {
     }
 }
 
-/// Complete captured output of a non-interactive agent child.
-///
-/// Carries the full stdout and stderr byte streams (so a Command can parse
-/// the CLI's machine-readable result, however far into the stream the
-/// terminal event lands) plus the platform [`RawExit`]. Nothing is
-/// discarded at this layer — lossy projection happens in the Command/Adapter.
-#[derive(Debug, Clone)]
-pub(crate) struct CommandOutput {
+/// Borrowed view of a completed run's output for a driver's `interpret`:
+/// the platform exit re-read as [`RawExit`] plus the raw byte streams.
+pub(crate) struct RawOutput<'a> {
     /// Platform exit disposition.
     pub(crate) exit: RawExit,
-    /// Complete captured stdout.
-    pub(crate) stdout: Vec<u8>,
-    /// Complete captured stderr.
-    pub(crate) stderr: Vec<u8>,
+    /// Complete captured stdout (empty for inherited-stdio runs).
+    pub(crate) stdout: &'a [u8],
+    /// Complete captured stderr (empty for inherited-stdio runs).
+    pub(crate) stderr: &'a [u8],
 }
 
-impl CommandOutput {
+impl<'a> From<&'a std::process::Output> for RawOutput<'a> {
+    fn from(output: &'a std::process::Output) -> Self {
+        Self {
+            exit: map_exit_status(output.status),
+            stdout: &output.stdout,
+            stderr: &output.stderr,
+        }
+    }
+}
+
+impl RawOutput<'_> {
     /// Borrow stdout as a UTF-8 string (lossy).
     pub(crate) fn stdout_str(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.stdout)
+        String::from_utf8_lossy(self.stdout)
     }
 
     /// Borrow stderr as a UTF-8 string (lossy).
     pub(crate) fn stderr_str(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.stderr)
-    }
-
-    /// Convert iter's captured process output into the standard output shape.
-    pub(crate) fn into_std_output(self) -> Output {
-        Output {
-            status: self.exit.into_exit_status(),
-            stdout: self.stdout,
-            stderr: self.stderr,
-        }
-    }
-}
-
-struct NullableExitCode(Option<i32>);
-
-impl fmt::Display for NullableExitCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            Some(code) => write!(f, "{code}"),
-            None => f.write_str("null"),
-        }
+        String::from_utf8_lossy(self.stderr)
     }
 }
 
@@ -200,7 +183,21 @@ fn raw_stdio_tail_lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
-fn record_raw_agent_process(exit: RawExit, stdout: &[u8], stderr: &[u8]) {
+struct NullableExitCode(Option<i32>);
+
+impl std::fmt::Display for NullableExitCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(code) => write!(f, "{code}"),
+            None => f.write_str("null"),
+        }
+    }
+}
+
+/// Emit the raw-process telemetry event and record the exit attributes on
+/// the current span. Fired once per child on every path — clean exit,
+/// failure, cancellation, and even launch failure (with `Unknown`).
+pub(crate) fn record_raw_agent_process(exit: RawExit, stdout: &[u8], stderr: &[u8]) {
     let exit_code = exit.exit_code();
     let exit_disposition = exit.disposition();
     let span = tracing::Span::current();
@@ -224,52 +221,6 @@ fn record_raw_agent_process(exit: RawExit, stdout: &[u8], stderr: &[u8]) {
         },
         "agent raw process output captured"
     );
-}
-
-fn record_raw_agent_command_output(output: &CommandOutput) {
-    record_raw_agent_process(output.exit, &output.stdout, &output.stderr);
-}
-
-fn spawn_child_recording_launch_failure(command: &mut Command) -> Result<Child, SpawnError> {
-    match command.spawn() {
-        Ok(child) => Ok(child),
-        Err(err) => {
-            record_raw_agent_process(RawExit::Unknown, &[], &[]);
-            Err(SpawnError::Launch(err))
-        }
-    }
-}
-
-/// Failure of the shared spawn primitive itself — *before* a Command gets to
-/// interpret any output. Either the run was cancelled, or the child could
-/// not be launched / its streams could not be driven.
-#[derive(Debug)]
-pub(crate) enum SpawnError {
-    /// Cancellation fired before or during the run; the child (if any) has
-    /// been killed.
-    Cancelled,
-    /// The child could not be spawned, or an I/O error occurred while
-    /// writing the prompt / draining its streams.
-    Launch(std::io::Error),
-}
-
-impl From<SpawnError> for AgentError {
-    fn from(err: SpawnError) -> Self {
-        match err {
-            SpawnError::Cancelled => Self::Cancelled,
-            SpawnError::Launch(io) => Self::Launch(io.to_string()),
-        }
-    }
-}
-
-/// How the prompt should be delivered to the child process.
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum PromptDelivery<'a> {
-    /// Write the prompt to the child's stdin (then close stdin).
-    Stdin(&'a str),
-    /// The prompt was already embedded in `command.arg(...)` by the caller;
-    /// no stdin data is sent and the child's stdin is closed immediately.
-    Inline,
 }
 
 /// Apply user-declared environment variables to an agent [`Command`].
@@ -314,16 +265,27 @@ pub(crate) fn inject_copilot_trace_parent_env(command: &mut Command) -> bool {
 /// fresh agent process for each signal, dynamic identifiers such as
 /// `iter.signal.id` are safe and make the agent trace joinable with the
 /// runner trace even when the agent starts a separate trace.
+///
+/// The signal correlation attributes are read from the ambient
+/// [`iter_tracing::iteration_scope`] the runner opens around each iteration;
+/// outside any scope (standalone driver tests, direct library use) they are
+/// simply omitted.
 pub(crate) fn inject_agent_otel_resource_attrs(
     command: &mut Command,
-    signal_id: SignalId,
-    signal_kind: SignalKind,
     workspace_path: &Path,
     driver: &'static str,
 ) {
     let mut attrs = command_or_process_resource_attrs(command);
-    attrs.insert("iter.signal.id".to_string(), signal_id.to_string());
-    attrs.insert("iter.signal.kind".to_string(), signal_kind.to_string());
+    if let Some(iteration) = iter_tracing::current_iteration_attrs() {
+        attrs.insert("iter.signal.id".to_string(), iteration.signal_id);
+        attrs.insert("iter.signal.kind".to_string(), iteration.signal_kind);
+    } else {
+        tracing::debug!(
+            target: "iter::agent",
+            driver,
+            "no iteration scope active; omitting iter.signal.* resource attributes",
+        );
+    }
     attrs.insert("iter.agent.driver".to_string(), driver.to_string());
     attrs.insert(
         "iter.workspace.path".to_string(),
@@ -389,125 +351,25 @@ fn parse_traceparent_ids(traceparent: &str) -> Option<(&str, &str)> {
     Some((trace_id, span_id))
 }
 
-/// Splice the sandbox argv `prefix` in front of the caller's `command` and
-/// return a new [`Command`] that invokes the original program under that
-/// prefix.
+/// Drive a **spawned** piped child through one exchange: feed the stdin
+/// payload, tee stdout/stderr into `sink` while capturing the complete
+/// streams, and report the exit as a standard [`std::process::Output`].
 ///
-/// The `prefix` is the typed command-construction data the runner reads from
-/// the active workspace via
-/// [`Workspace::sandbox_command_prefix`](crate::workspace::Workspace::sandbox_command_prefix)
-/// and threads onto the agent invocation — it is **not** read from the
-/// process environment.
+/// Cancellation terminates the child's whole process group (SIGTERM, a
+/// [`AGENT_TERMINATION_GRACE`] window, then SIGKILL), drains the tee tasks
+/// for up to [`CANCEL_TEE_DRAIN`] so the agent's last words still reach the
+/// sink, and returns [`AgentError::Cancelled`].
 ///
-/// The rebuilt command preserves everything the caller already
-/// configured *that can be introspected*: program, args, environment
-/// variables, working directory, process-group inheritance semantics.
+/// # Errors
 ///
-/// Two child attributes have no `std`/`tokio` getter and therefore
-/// **cannot** be carried across the rebuild — stdio disposition and
-/// `kill_on_drop`. The spawning helper re-asserts both on the returned
-/// command after the wrap: [`spawn_capture`] sets piped stdio +
-/// `kill_on_drop(true)`, [`drive_interactive`] inherits stdio (the default)
-/// and sets `kill_on_drop(true)`. Callers must not rely on either attribute
-/// surviving a non-empty-prefix wrap.
-///
-/// When `prefix` is empty (the common `local`/`clone` workspace case) the
-/// function is a pure pass-through — the caller's command is returned
-/// verbatim, so any stdio / `kill_on_drop` it set is retained.
-pub(crate) fn apply_sandbox_prefix(command: Command, prefix: &[OsString]) -> Command {
-    if prefix.is_empty() {
-        // Pass-through: the caller's command runs verbatim, but we still
-        // install the process-group attribute so the resulting child is
-        // the leader of its own group. This is what
-        // `ProcessGroup::from_child` later relies on to `killpg` the
-        // whole tree on cancel.
-        let mut command = command;
-        process_group::configure(&mut command);
-        return command;
-    }
-
-    let std_cmd = command.as_std();
-    let program = std_cmd.get_program().to_os_string();
-    let args: Vec<OsString> = std_cmd.get_args().map(OsStr::to_os_string).collect();
-    let envs: Vec<(OsString, Option<OsString>)> = std_cmd
-        .get_envs()
-        .map(|(k, v)| (k.to_os_string(), v.map(OsStr::to_os_string)))
-        .collect();
-    let cwd: Option<PathBuf> = std_cmd.get_current_dir().map(Path::to_path_buf);
-
-    let mut wrapped = Command::new(&prefix[0]);
-    for part in prefix.iter().skip(1) {
-        wrapped.arg(part);
-    }
-    wrapped.arg(&program);
-    for arg in &args {
-        wrapped.arg(arg);
-    }
-    // Re-apply envs. `None` as the value carries over the `env_remove`
-    // semantics the caller originally expressed.
-    for (key, value) in envs {
-        match value {
-            Some(v) => {
-                wrapped.env(key, v);
-            }
-            None => {
-                wrapped.env_remove(key);
-            }
-        }
-    }
-    if let Some(cwd) = cwd {
-        wrapped.current_dir(cwd);
-    }
-    // Install the process-group attribute on the rebuilt command so the
-    // sandbox host (bwrap / sandbox-exec) becomes the group leader; every
-    // descendant — including the inner program and the tools it spawns —
-    // inherits the same pgid and can be reaped in one `killpg` call.
-    process_group::configure(&mut wrapped);
-    wrapped
-}
-
-/// Drive a prepared [`tokio::process::Command`] to completion and capture its
-/// **complete** stdout/stderr plus platform exit status into a
-/// [`CommandOutput`].
-///
-/// The caller is responsible for pre-populating the command with its program
-/// name, arguments, working directory, and environment variables. This
-/// helper only:
-///
-/// 1. Configures stdio (stdin piped, stdout/stderr piped).
-/// 2. Spawns the child.
-/// 3. Writes the prompt on stdin when `delivery` is
-///    [`PromptDelivery::Stdin`], then closes stdin so the child sees EOF.
-/// 4. Tees the child's stdout/stderr line-by-line through `sink` so every
-///    line lands in `log.ndjson`, while accumulating the full byte streams
-///    for the Command to parse.
-/// 5. Maps the resulting [`std::process::ExitStatus`] to [`RawExit`].
-///
-/// Interpretation of `(exit, stdout, stderr)` — success vs. failure, error
-/// class, session id — is **not** done here; that is the per-CLI Command's
-/// job. This function only fails for spawn/cancel reasons ([`SpawnError`]).
-pub(crate) async fn spawn_capture(
-    command: Command,
-    delivery: PromptDelivery<'_>,
-    cancel: CancellationToken,
-    sink: Arc<dyn OutputSink>,
-    sandbox_prefix: &[OsString],
-) -> Result<CommandOutput, SpawnError> {
-    let mut command = apply_sandbox_prefix(command, sandbox_prefix);
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Guarantee the child is killed if this future is dropped on cancel.
-        .kill_on_drop(true);
-
-    // Fast-path: if cancellation already fired before we spawn, don't even
-    // launch the process.
-    if cancel.is_cancelled() {
-        return Err(SpawnError::Cancelled);
-    }
-
-    let mut child = spawn_child_recording_launch_failure(&mut command)?;
+/// Returns [`AgentError::Cancelled`] on cooperative cancellation and
+/// [`AgentError::Launch`] when the child's streams cannot be driven.
+pub(crate) async fn feed_and_capture(
+    mut child: Child,
+    stdin: Option<&str>,
+    cancel: &CancellationToken,
+    sink: &Arc<dyn OutputSink>,
+) -> Result<std::process::Output, AgentError> {
     // Record the spawned tree by its pgid so cancel can reap the entire
     // group (including grandchildren spawned by the agent's tool calls).
     let mut group = ProcessGroup::from_child(&child);
@@ -515,27 +377,35 @@ pub(crate) async fn spawn_capture(
     // Take stdin up front so we can write and drop it regardless of delivery
     // mode. Closing stdin via drop is what signals EOF to readers like Claude
     // Code's `--print` loop.
-    if let Some(mut stdin) = child.stdin.take() {
-        if let PromptDelivery::Stdin(text) = delivery {
+    if let Some(mut stdin_pipe) = child.stdin.take() {
+        if let Some(text) = stdin {
             tokio::select! {
                 biased;
                 () = cancel.cancelled() => {
                     group.terminate(AGENT_TERMINATION_GRACE).await;
-                    drop(child.wait().await);
-                    return Err(SpawnError::Cancelled);
+                    let exit = child
+                        .wait()
+                        .await
+                        .map(map_exit_status)
+                        .unwrap_or(RawExit::Unknown);
+                    // The tee tasks have not been spawned yet, so there is
+                    // no captured output to attach — but the once-per-child
+                    // raw-telemetry contract still holds on this path.
+                    record_raw_agent_process(exit, &[], &[]);
+                    return Err(AgentError::Cancelled);
                 }
-                res = stdin.write_all(text.as_bytes()) => {
+                res = stdin_pipe.write_all(text.as_bytes()) => {
                     if let Err(err) = res {
                         group.terminate(AGENT_TERMINATION_GRACE).await;
                         drop(child.wait().await);
                         record_raw_agent_process(RawExit::Unknown, &[], &[]);
-                        return Err(SpawnError::Launch(err));
+                        return Err(AgentError::Launch(err.to_string()));
                     }
                 }
             }
         }
         // Dropping here closes the pipe and delivers EOF.
-        drop(stdin);
+        drop(stdin_pipe);
     }
 
     let stdout = child.stdout.take();
@@ -562,11 +432,9 @@ pub(crate) async fn spawn_capture(
     // select below. If the cancel arm wins, we still give the tee tasks a
     // bounded window to flush already-buffered bytes — the agent's last words
     // before SIGTERM.
-    let stdout_handle = tokio::spawn(stdout_future);
-    let stderr_handle = tokio::spawn(stderr_future);
+    let mut stdout_handle = Some(tokio::spawn(stdout_future));
+    let mut stderr_handle = Some(tokio::spawn(stderr_future));
 
-    let mut stdout_handle = Some(stdout_handle);
-    let mut stderr_handle = Some(stderr_handle);
     let (status, stdout_buf, stderr_buf) = tokio::select! {
         biased;
         () = cancel.cancelled() => {
@@ -579,7 +447,7 @@ pub(crate) async fn spawn_capture(
             let stdout_buf = drain_tee_on_cancel(stdout_handle.take()).await;
             let stderr_buf = drain_tee_on_cancel(stderr_handle.take()).await;
             record_raw_agent_process(exit, &stdout_buf, &stderr_buf);
-            return Err(SpawnError::Cancelled);
+            return Err(AgentError::Cancelled);
         }
         res = async {
             let status = child.wait().await?;
@@ -596,18 +464,64 @@ pub(crate) async fn spawn_capture(
             Ok(output) => output,
             Err(err) => {
                 record_raw_agent_process(RawExit::Unknown, &[], &[]);
-                return Err(SpawnError::Launch(err));
+                return Err(AgentError::Launch(err.to_string()));
             }
         },
     };
 
-    let output = CommandOutput {
-        exit: map_exit_status(status),
+    let exit = map_exit_status(status);
+    record_raw_agent_process(exit, &stdout_buf, &stderr_buf);
+    Ok(std::process::Output {
+        status,
         stdout: stdout_buf,
         stderr: stderr_buf,
+    })
+}
+
+/// Wait out a **spawned** child whose stdio is inherited (interactive TUI).
+///
+/// Nothing is captured — the child owns the terminal; only the exit status
+/// speaks, returned inside an [`std::process::Output`] with empty streams.
+/// Cancellation follows the same group-terminate discipline as
+/// [`feed_and_capture`].
+///
+/// # Errors
+///
+/// Returns [`AgentError::Cancelled`] on cooperative cancellation and
+/// [`AgentError::Launch`] when the child cannot be awaited.
+pub(crate) async fn wait_inherited(
+    mut child: Child,
+    cancel: &CancellationToken,
+) -> Result<std::process::Output, AgentError> {
+    let mut group = ProcessGroup::from_child(&child);
+
+    let status = tokio::select! {
+        biased;
+        () = cancel.cancelled() => {
+            group.terminate(AGENT_TERMINATION_GRACE).await;
+            let exit = child
+                .wait()
+                .await
+                .map(map_exit_status)
+                .unwrap_or(RawExit::Unknown);
+            record_raw_agent_process(exit, &[], &[]);
+            return Err(AgentError::Cancelled);
+        }
+        res = child.wait() => match res {
+            Ok(status) => status,
+            Err(err) => {
+                record_raw_agent_process(RawExit::Unknown, &[], &[]);
+                return Err(AgentError::Launch(err.to_string()));
+            }
+        },
     };
-    record_raw_agent_command_output(&output);
-    Ok(output)
+
+    record_raw_agent_process(map_exit_status(status), &[], &[]);
+    Ok(std::process::Output {
+        status,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    })
 }
 
 async fn drain_tee_on_cancel(handle: Option<tokio::task::JoinHandle<Vec<u8>>>) -> Vec<u8> {
@@ -628,7 +542,7 @@ enum Direction {
 
 /// Tee one piped stream from the child line-by-line into `sink` (so every
 /// line reaches `log.ndjson`) while accumulating the **complete** byte stream
-/// in `buf` for the Command to parse.
+/// in `buf` for the driver to parse.
 ///
 /// Sink errors are swallowed (the agent run must not abort just because the
 /// log writer is gone); read errors end the loop early. After EOF the
@@ -714,7 +628,7 @@ where
 ///
 /// This is inherently heuristic — each CLI surfaces the error differently.
 /// Patterns are intentionally conservative to avoid false positives. It is
-/// the primary success/fail classifier for the text-only Commands
+/// the primary success/fail classifier for the text-only drivers
 /// (Antigravity, Hermes `-z`) and a fallback refiner for the JSON ones.
 pub(crate) fn detect_token_limit(output: &str) -> Option<String> {
     const PATTERNS: &[&str] = &[
@@ -742,99 +656,12 @@ pub(crate) fn detect_token_limit(output: &str) -> Option<String> {
     None
 }
 
-/// Drive an interactive child to completion (or cancellation) and map the
-/// resulting platform status onto [`RawExit`].
-///
-/// Unlike [`spawn_capture`], this helper assumes the caller has already
-/// configured stdio (typically `Stdio::inherit()` so the TUI renders to the
-/// parent terminal) and does **not** touch stdin or capture output. Hook-
-/// bundle lifecycle is the caller's responsibility — pair this with
-/// [`drive_interactive_with_finalize`] to get both concerns handled in a
-/// single place.
-pub(crate) async fn drive_interactive(
-    command: Command,
-    cancel: &CancellationToken,
-    sandbox_prefix: &[OsString],
-) -> Result<RawExit, SpawnError> {
-    let mut command = apply_sandbox_prefix(command, sandbox_prefix);
-    // Re-assert kill-on-drop after the wrap: a non-empty prefix rebuilds the
-    // command, and `kill_on_drop` cannot be read back to carry it over. The
-    // caller already set it on the pre-wrap command (preserved in the
-    // pass-through case); this guarantees it on the wrapped command too, so a
-    // dropped future kills the sandbox host directly even if the process-group
-    // teardown does not run. Mirrors `spawn_capture`.
-    command.kill_on_drop(true);
-    if cancel.is_cancelled() {
-        return Err(SpawnError::Cancelled);
-    }
-
-    let mut child = spawn_child_recording_launch_failure(&mut command)?;
-    let mut group = ProcessGroup::from_child(&child);
-
-    let status = tokio::select! {
-        biased;
-        () = cancel.cancelled() => {
-            group.terminate(AGENT_TERMINATION_GRACE).await;
-            let exit = child
-                .wait()
-                .await
-                .map(map_exit_status)
-                .unwrap_or(RawExit::Unknown);
-            record_raw_agent_process(exit, &[], &[]);
-            return Err(SpawnError::Cancelled);
-        }
-        res = child.wait() => match res {
-            Ok(status) => status,
-            Err(err) => {
-                record_raw_agent_process(RawExit::Unknown, &[], &[]);
-                return Err(SpawnError::Launch(err));
-            }
-        },
-    };
-
-    let exit = map_exit_status(status);
-    record_raw_agent_process(exit, &[], &[]);
-    Ok(exit)
-}
-
-/// Drive a pre-configured interactive child to completion, then finalize the
-/// hook bundle regardless of whether the child succeeded or errored, and
-/// return the child's [`RawExit`].
-///
-/// 1. Run the child via [`drive_interactive`]. Record the result but do not
-///    propagate it yet — the bundle must still be finalized.
-/// 2. Await the caller-supplied `finalize` future (typically
-///    `bundle.finalize()`).
-/// 3. If finalize failed, surface whichever error is *causal*: the run error
-///    if the run itself failed, otherwise the finalize error.
-/// 4. Otherwise return the child's [`RawExit`] for the caller to interpret.
-pub(crate) async fn drive_interactive_with_finalize<Fut>(
-    command: Command,
-    cancel: CancellationToken,
-    sandbox_prefix: &[OsString],
-    finalize: Fut,
-) -> Result<RawExit, AgentError>
-where
-    Fut: Future<Output = Result<(), AgentError>> + Send,
-{
-    let run_result = drive_interactive(command, &cancel, sandbox_prefix).await;
-
-    if let Err(finalize_err) = finalize.await {
-        return Err(match run_result {
-            Err(run_err) => run_err.into(),
-            Ok(_) => finalize_err,
-        });
-    }
-
-    Ok(run_result?)
-}
-
 /// Map a platform [`std::process::ExitStatus`] onto [`RawExit`].
 ///
 /// On Unix a process may terminate via a signal without ever producing an
 /// exit code; `Command::status.code()` returns `None` in that case and we
 /// consult `ExitStatusExt::signal()` to synthesize [`RawExit::Signal`].
-fn map_exit_status(status: std::process::ExitStatus) -> RawExit {
+pub(crate) fn map_exit_status(status: std::process::ExitStatus) -> RawExit {
     if let Some(code) = status.code() {
         return RawExit::Code(code);
     }
@@ -851,18 +678,8 @@ fn map_exit_status(status: std::process::ExitStatus) -> RawExit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::testutil::ctx;
-    use crate::agent::{Agent, GenericAgent};
-    use crate::prompt::Prompt;
     use async_trait::async_trait;
-    use std::collections::BTreeMap;
     use std::sync::Mutex;
-    use tracing::Instrument;
-    use tracing::field::{Field, Visit};
-    use tracing_subscriber::Layer;
-    use tracing_subscriber::layer::Context;
-    use tracing_subscriber::prelude::*;
-    use tracing_subscriber::registry::LookupSpan;
 
     #[test]
     fn raw_exit_into_failure_maps_each_disposition() {
@@ -879,6 +696,17 @@ mod tests {
             RawExit::Unknown.into_failure(),
             Some(AgentError::Failed { code: None, .. })
         ));
+    }
+
+    /// The plan's risk item: signal terminations must survive the
+    /// `RawExit` → `ExitStatus` → `RawExit` round trip that carries a run's
+    /// exit into the driver's `interpret`.
+    #[cfg(unix)]
+    #[test]
+    fn raw_exit_exit_status_round_trip_preserves_code_and_signal() {
+        for exit in [RawExit::Code(0), RawExit::Code(7), RawExit::Signal(9)] {
+            assert_eq!(map_exit_status(exit.into_exit_status()), exit);
+        }
     }
 
     #[test]
@@ -907,6 +735,10 @@ mod tests {
         assert_eq!(parse_traceparent_ids("not-a-traceparent"), None);
     }
 
+    // The OTel resource-attribute tests mutate the process-wide
+    // `OTEL_RESOURCE_ATTRIBUTES` env var; this mutex ensures they never race.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn inject_agent_otel_resource_attrs_preserves_static_attrs() {
         let _guard = ENV_LOCK
@@ -920,16 +752,9 @@ mod tests {
             );
         }
         let tmp = tempfile::tempdir().expect("tempdir");
-        let signal_id = SignalId::new();
         let mut command = Command::new("/bin/echo");
 
-        inject_agent_otel_resource_attrs(
-            &mut command,
-            signal_id,
-            SignalKind::Work,
-            tmp.path(),
-            "copilot",
-        );
+        inject_agent_otel_resource_attrs(&mut command, tmp.path(), "copilot");
 
         // SAFETY: serialised via ENV_LOCK.
         unsafe {
@@ -942,199 +767,37 @@ mod tests {
             attrs.get("deployment.environment"),
             Some(&"staging".to_string())
         );
-        assert_eq!(attrs.get("iter.signal.id"), Some(&signal_id.to_string()));
-        assert_eq!(attrs.get("iter.signal.kind"), Some(&"work".to_string()));
         assert_eq!(attrs.get("iter.agent.driver"), Some(&"copilot".to_string()));
         assert_eq!(
             attrs.get("iter.workspace.path"),
             Some(&tmp.path().canonicalize().unwrap().display().to_string())
         );
+        // Outside any iteration scope, the signal attributes are omitted.
+        assert_eq!(attrs.get("iter.signal.id"), None);
+        assert_eq!(attrs.get("iter.signal.kind"), None);
     }
 
-    // Both the OTel resource-attribute test and the legacy-protocol
-    // regression test below mutate process-wide env vars; this mutex ensures
-    // they never race each other. The remaining prefix-wrapping tests touch no
-    // environment at all and take no lock.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    #[derive(Default)]
-    struct TelemetryCapture {
-        events: Mutex<Vec<BTreeMap<String, String>>>,
-        span_records: Mutex<Vec<BTreeMap<String, String>>>,
-    }
-
-    struct CaptureLayer {
-        capture: Arc<TelemetryCapture>,
-    }
-
-    impl<S> Layer<S> for CaptureLayer
-    where
-        S: tracing::Subscriber,
-        S: for<'lookup> LookupSpan<'lookup>,
-    {
-        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
-            if event.metadata().target() != "iter::agent" {
-                return;
-            }
-            let mut visitor = FieldVisitor::default();
-            event.record(&mut visitor);
-            self.capture.events.lock().unwrap().push(visitor.fields);
-        }
-
-        fn on_record(
-            &self,
-            id: &tracing::span::Id,
-            values: &tracing::span::Record<'_>,
-            ctx: Context<'_, S>,
-        ) {
-            let Some(span) = ctx.span(id) else {
-                return;
-            };
-            if span.metadata().name() != "iter.agent.run" {
-                return;
-            }
-            let mut visitor = FieldVisitor::default();
-            values.record(&mut visitor);
-            self.capture
-                .span_records
-                .lock()
-                .unwrap()
-                .push(visitor.fields);
-        }
-    }
-
-    #[derive(Default)]
-    struct FieldVisitor {
-        fields: BTreeMap<String, String>,
-    }
-
-    impl FieldVisitor {
-        fn insert(&mut self, field: &Field, value: String) {
-            self.fields.insert(field.name().to_owned(), value);
-        }
-    }
-
-    impl Visit for FieldVisitor {
-        fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-            self.insert(field, format!("{value:?}"));
-        }
-
-        fn record_str(&mut self, field: &Field, value: &str) {
-            self.insert(field, value.to_owned());
-        }
-
-        fn record_i64(&mut self, field: &Field, value: i64) {
-            self.insert(field, value.to_string());
-        }
-
-        fn record_u64(&mut self, field: &Field, value: u64) {
-            self.insert(field, value.to_string());
-        }
-
-        fn record_bool(&mut self, field: &Field, value: bool) {
-            self.insert(field, value.to_string());
-        }
-    }
-
-    fn raw_process_event(capture: &TelemetryCapture) -> BTreeMap<String, String> {
-        capture
-            .events
-            .lock()
-            .unwrap()
-            .iter()
-            .find(|event| {
-                event
-                    .get("iter.agent.event")
-                    .is_some_and(|value| value == "raw_process_output")
-            })
-            .cloned()
-            .expect("raw process telemetry event")
-    }
-
-    fn assert_field_contains(fields: &BTreeMap<String, String>, key: &str, needle: &str) {
-        let value = fields
-            .get(key)
-            .unwrap_or_else(|| panic!("missing field {key}; fields: {fields:?}"));
-        assert!(
-            value.contains(needle),
-            "field {key} value {value:?} did not contain {needle:?}"
-        );
-    }
-
+    /// Sync test + hand-built runtime so the env lock is held in the sync
+    /// frame, never across an await point inside an async body.
     #[test]
-    fn apply_sandbox_prefix_passes_through_when_empty() {
-        // The verbatim (`local`/`clone`) case: an empty invocation prefix
-        // leaves the caller's program and args untouched.
-        let mut original = Command::new("/bin/echo");
-        original.arg("hi");
-        let wrapped = apply_sandbox_prefix(original, &[]);
-        let std_cmd = wrapped.as_std();
-        assert_eq!(std_cmd.get_program(), "/bin/echo");
-        let args: Vec<_> = std_cmd.get_args().map(OsStr::to_os_string).collect();
-        assert_eq!(args, vec![OsString::from("hi")]);
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn raw_process_event_survives_token_limit_classification() {
-        let stdout = "stdout before context window after";
-        let stderr = "stderr side channel";
-        let script = format!("printf '%s' '{stdout}'; printf '%s' '{stderr}' >&2; exit 7");
+    fn inject_agent_otel_resource_attrs_reads_iteration_scope() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let tmp = tempfile::tempdir().expect("tempdir");
-        let agent = GenericAgent::new(vec!["sh".into(), "-c".into(), script]);
-        let prompt = Prompt::from("ignored");
-        let ctx = ctx(tmp.path(), &prompt).with_declared_env(agent.declared_env());
-        let capture = Arc::new(TelemetryCapture::default());
-        let subscriber = tracing_subscriber::registry().with(CaptureLayer {
-            capture: capture.clone(),
-        });
-        let _guard = tracing::subscriber::set_default(subscriber);
-        let agent_span = tracing::info_span!(
-            "iter.agent.run",
-            iter.agent.exit_code = tracing::field::Empty,
-            iter.agent.exit_disposition = tracing::field::Empty,
-        );
-
-        let err = async { agent.run(ctx).await }
-            .instrument(agent_span)
-            .await
-            .expect_err("token-limit text on nonzero exit is an error");
-
-        assert!(
-            matches!(err, AgentError::TokenLimit(_)),
-            "expected token-limit classification, got {err:?}"
-        );
-        let event = raw_process_event(&capture);
-        let stdout_len = stdout.len().to_string();
-        let stderr_len = stderr.len().to_string();
-        assert_eq!(
-            event.get("iter.agent.exit_disposition").map(String::as_str),
-            Some("exited")
-        );
-        assert_eq!(
-            event.get("iter.agent.stdout.bytes").map(String::as_str),
-            Some(stdout_len.as_str())
-        );
-        assert_eq!(
-            event.get("iter.agent.stderr.bytes").map(String::as_str),
-            Some(stderr_len.as_str())
-        );
-        assert_field_contains(&event, "iter.agent.exit_code", "7");
-        assert_field_contains(&event, "iter.agent.stdout.tail", stdout);
-        assert_field_contains(&event, "iter.agent.stderr.tail", stderr);
-
-        let records = capture.span_records.lock().unwrap();
-        assert!(
-            records.iter().any(|fields| fields
-                .get("iter.agent.exit_disposition")
-                .is_some_and(|value| value == "exited")),
-            "span did not record raw exit disposition: {records:?}"
-        );
-        assert!(
-            records.iter().any(|fields| fields
-                .get("iter.agent.exit_code")
-                .is_some_and(|value| value == "7")),
-            "span did not record raw exit code: {records:?}"
-        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        let attrs = runtime.block_on(iter_tracing::iteration_scope(
+            iter_tracing::IterationAttrs::new("sig-abc", "work"),
+            async {
+                let mut command = Command::new("/bin/echo");
+                inject_agent_otel_resource_attrs(&mut command, tmp.path(), "claude");
+                command_or_process_resource_attrs(&command)
+            },
+        ));
+        assert_eq!(attrs.get("iter.signal.id"), Some(&"sig-abc".to_string()));
+        assert_eq!(attrs.get("iter.signal.kind"), Some(&"work".to_string()));
     }
 
     #[test]
@@ -1218,7 +881,7 @@ mod tests {
         assert_eq!(stdout_writes[0], b"partial-no-newline");
         assert_eq!(
             buf, b"partial-no-newline",
-            "the capture buffer must observe the same bytes for the Command to parse"
+            "the capture buffer must observe the same bytes for the driver to parse"
         );
     }
 
@@ -1244,106 +907,5 @@ mod tests {
         let input = format!("{prefix}context window exceeded");
         let detail = detect_token_limit(&input).expect("should match");
         assert!(detail.contains("context window"));
-    }
-
-    #[test]
-    fn apply_sandbox_prefix_splices_invocation_prefix() {
-        // Wrapping is driven entirely by the prefix argument — the typed
-        // command-construction data the runner threads onto the agent
-        // invocation. No environment is consulted.
-        let prefix = vec![
-            OsString::from("sandbox-exec"),
-            OsString::from("-f"),
-            OsString::from("/tmp/p.sb"),
-        ];
-        let mut original = Command::new("/bin/echo");
-        original.arg("hi").arg("there");
-        let wrapped = apply_sandbox_prefix(original, &prefix);
-        let std_cmd = wrapped.as_std();
-        assert_eq!(std_cmd.get_program(), "sandbox-exec");
-        let args: Vec<_> = std_cmd.get_args().map(OsStr::to_os_string).collect();
-        assert_eq!(
-            args,
-            vec![
-                OsString::from("-f"),
-                OsString::from("/tmp/p.sb"),
-                OsString::from("/bin/echo"),
-                OsString::from("hi"),
-                OsString::from("there"),
-            ]
-        );
-    }
-
-    #[test]
-    fn apply_sandbox_prefix_ignores_legacy_env_protocol() {
-        // Regression guard: the sandbox prefix used to cross from workspace
-        // setup to command launch through the `ITER_SANDBOX_COMMAND_PREFIX`
-        // process-global env var. That protocol is gone — wrapping reads only
-        // the invocation argument. Even with the old variable set to a hostile
-        // value, an empty prefix passes through verbatim and a real prefix
-        // wins.
-        let _guard = ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // SAFETY: serialised via ENV_LOCK so no concurrent reader observes it.
-        unsafe {
-            std::env::set_var("ITER_SANDBOX_COMMAND_PREFIX", "bwrap\x1f--bind\x1f/evil");
-        }
-
-        let mut verbatim = Command::new("/bin/echo");
-        verbatim.arg("hi");
-        let passthrough = apply_sandbox_prefix(verbatim, &[]);
-
-        let prefix = vec![OsString::from("sandbox-exec"), OsString::from("/tmp/ok.sb")];
-        let wrapped = apply_sandbox_prefix(Command::new("/bin/echo"), &prefix);
-
-        // SAFETY: serialised via ENV_LOCK; restore before assertions so a
-        // panic cannot leak state into the OTel test.
-        unsafe {
-            std::env::remove_var("ITER_SANDBOX_COMMAND_PREFIX");
-        }
-
-        assert_eq!(passthrough.as_std().get_program(), "/bin/echo");
-        assert_eq!(wrapped.as_std().get_program(), "sandbox-exec");
-    }
-
-    #[test]
-    fn concurrent_prefixes_do_not_cross_contaminate() {
-        // Acceptance: concurrent runners cannot race through process-global
-        // sandbox-prefix state, because no such global exists. Each call
-        // carries its own prefix; wrapping many commands in parallel yields a
-        // result that reflects only that call's prefix.
-        use std::thread;
-        let handles: Vec<_> = (0..8)
-            .map(|i| {
-                thread::spawn(move || {
-                    let prefix = vec![
-                        OsString::from(format!("sandbox-{i}")),
-                        OsString::from("-f"),
-                        OsString::from(format!("/tmp/{i}.sb")),
-                    ];
-                    let wrapped = apply_sandbox_prefix(Command::new("/bin/echo"), &prefix);
-                    let std_cmd = wrapped.as_std();
-                    let program = std_cmd.get_program().to_os_string();
-                    let args: Vec<OsString> = std_cmd.get_args().map(OsStr::to_os_string).collect();
-                    (i, program, args)
-                })
-            })
-            .collect();
-        for handle in handles {
-            let (i, program, args) = handle.join().expect("worker thread");
-            // Both the program *and* every arg must reflect only this thread's
-            // prefix — a partial isolation that co-mingled the argv tail would
-            // pass a program-only assertion.
-            assert_eq!(program, OsString::from(format!("sandbox-{i}")));
-            assert_eq!(
-                args,
-                vec![
-                    OsString::from("-f"),
-                    OsString::from(format!("/tmp/{i}.sb")),
-                    OsString::from("/bin/echo"),
-                ]
-            );
-        }
     }
 }

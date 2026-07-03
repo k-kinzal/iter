@@ -1,6 +1,6 @@
-//! [`OpenCodeAgent`] — `OpenCode` CLI integration (print-only).
+//! [`OpenCodeDriver`] — `OpenCode` CLI integration (print-only).
 //!
-//! Spawns:
+//! Assembles:
 //!
 //! ```text
 //! opencode run [args...] --format json <prompt>
@@ -15,19 +15,31 @@
 //! output stream, not the process exit code. See `command.rs` for the full
 //! contract.
 //!
+//! # `OTel`
+//!
+//! Unlike the other print-only drivers, this driver **does** inject
+//! per-iteration `OTEL_RESOURCE_ATTRIBUTES` via
+//! [`inject_agent_otel_resource_attrs`]: `OpenCode` emits its own telemetry and
+//! reads that carrier before starting its spans, so tagging the resource makes
+//! the agent's trace joinable with the runner's. W3C `TRACEPARENT` injection is
+//! still omitted — `OpenCode`'s consumption of it is unverified, so iter does
+//! not make its trace *look* correlated without confirming propagation.
+//!
 //! # Construction
 //!
-//! [`OpenCodeAgent`] exposes no defaults. Every field is required because the
+//! [`OpenCodeDriver`] exposes no defaults. Every field is required because the
 //! value is a project-shaped decision iter cannot honestly pick on the
-//! operator's behalf. The agent is constructed directly from its fields.
+//! operator's behalf. The driver is constructed directly from its fields.
 
-use crate::{Agent, AgentInvocation, AgentRun};
+use std::path::Path;
+
 use async_trait::async_trait;
 
-use crate::agent::AgentError;
-use crate::agent::process::{
-    PromptDelivery, apply_user_env, inject_agent_otel_resource_attrs, spawn_capture,
-};
+use crate::agent::driver::{AgentCommand, AgentDriver};
+use crate::agent::process::{RawOutput, apply_user_env, inject_agent_otel_resource_attrs};
+use crate::agent::{AgentError, AgentKind, AgentRun};
+use crate::prompt::Prompt;
+use crate::workspace::StdioMode;
 
 mod command;
 
@@ -49,9 +61,9 @@ impl From<OpenCodeError> for AgentError {
     }
 }
 
-/// `OpenCode` CLI agent configuration.
+/// `OpenCode` CLI driver configuration.
 #[derive(Debug, Clone)]
-pub struct OpenCodeAgent {
+pub struct OpenCodeDriver {
     /// Binary name or path. Required.
     pub command: String,
     /// Additional arguments inserted between the `run` subcommand and the
@@ -62,192 +74,215 @@ pub struct OpenCodeAgent {
 }
 
 #[async_trait]
-impl Agent for OpenCodeAgent {
-    fn name(&self) -> &'static str {
-        "opencode"
-    }
-
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::OpenCode
-    }
-
-    fn declared_env(&self) -> &[(String, String)] {
-        &self.env
-    }
-
-    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
-        let AgentInvocation {
-            workspace_path,
-            prompt,
-            cancel,
-            stdio_sink,
-            signal_id,
-            signal_kind,
-            sandbox_command_prefix,
-            declared_env,
-            ..
-        } = ctx;
-
-        let mut command = OpenCodeCommand {
+impl AgentDriver for OpenCodeDriver {
+    fn command(
+        &self,
+        path: &Path,
+        prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        let mut process = OpenCodeCommand {
             program: &self.command,
             args: &self.args,
             prompt: prompt.as_str(),
         }
-        .build(workspace_path);
-        apply_user_env(&mut command, declared_env);
-        inject_agent_otel_resource_attrs(
-            &mut command,
-            signal_id,
-            signal_kind,
-            workspace_path,
-            "opencode",
-        );
+        .build(path);
+        apply_user_env(&mut process, &self.env);
+        inject_agent_otel_resource_attrs(&mut process, path, "opencode");
         // Trace-context env (W3C `TRACEPARENT`) injection is deliberately
         // omitted: `OpenCode`'s consumption of it is unverified, and injecting a
         // carrier would make the agent's trace *look* correlated without it
         // actually participating in propagation.
 
         // The prompt is embedded in the argv, so no stdin payload is sent.
-        let output = spawn_capture(
-            command,
-            PromptDelivery::Inline,
-            cancel,
-            stdio_sink,
-            sandbox_command_prefix,
-        )
-        .await?;
+        Ok(AgentCommand {
+            process,
+            stdin: None,
+            io: StdioMode::Piped,
+        })
+    }
+
+    fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
         // Adapter: project the Command's CLI-shaped result/error onto iter's
         // domain. `?` runs the `From<OpenCodeError>` above.
-        let result = command::interpret(&output)?;
+        let result = command::interpret(RawOutput::from(output))?;
         Ok(AgentRun {
             session_id: result.session_id,
         })
+    }
+
+    fn kind(&self) -> AgentKind {
+        AgentKind::OpenCode
+    }
+
+    /// Resolved on-disk location of the configured binary, or `None` when
+    /// nothing on `$PATH` or the supplied path matches an existing file.
+    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
+        crate::agent::command_path::CommandPath::resolve(&self.command)
+    }
+
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Prompt;
-    use crate::agent::testutil::{ctx_capturing, fake_binary_script};
-    use std::path::Path;
+    use crate::agent::process::RawExit;
+    use crate::agent::testutil::{drive_capturing, fake_binary_script};
+    use std::ffi::OsStr;
     use tempfile::TempDir;
 
-    fn opencode_agent(command: impl Into<String>) -> OpenCodeAgent {
-        OpenCodeAgent {
+    fn driver(command: impl Into<String>) -> OpenCodeDriver {
+        OpenCodeDriver {
             command: command.into(),
             args: Vec::new(),
             env: Vec::new(),
         }
     }
 
-    /// Fake `opencode` binary: echoes each argv arg (one per line) to *stderr*
-    /// so a [`CaptureSink`] can observe the flags, then prints a clean session
-    /// record to stdout so the Command parses an `Ok`.
-    const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
-printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
+    fn argv(command: &AgentCommand) -> Vec<String> {
+        command
+            .process
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
 
-    #[tokio::test]
-    async fn passes_run_subcommand_and_inline_prompt() {
-        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = opencode_agent(bin.to_string_lossy());
+    fn synth_output(exit: RawExit, stdout: &str) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn env_of(command: &AgentCommand, key: &str) -> Option<String> {
+        command
+            .process
+            .as_std()
+            .get_envs()
+            .find(|(k, _)| *k == OsStr::new(key))
+            .and_then(|(_, v)| v)
+            .map(|v| v.to_string_lossy().into_owned())
+    }
+
+    // ----- command(): outbound translation ---------------------------------
+
+    #[test]
+    fn command_emits_run_json_and_inline_prompt() {
+        let d = driver("opencode");
         let prompt = Prompt::from("hello-opencode");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let run = agent.run(ctx).await.expect("run ok");
-        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
-        let echoed = sink.stderr().await;
-        let args: Vec<&str> = echoed.lines().collect();
-        assert_eq!(args.first(), Some(&"run"), "got {args:?}");
-        assert!(args.contains(&"hello-opencode"), "got {args:?}");
-    }
-
-    #[tokio::test]
-    async fn requests_json_format() {
-        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = opencode_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        let echoed = sink.stderr().await;
-        let args: Vec<&str> = echoed.lines().collect();
-        assert!(args.contains(&"--format"), "got {args:?}");
-        assert!(args.contains(&"json"), "got {args:?}");
-    }
-
-    #[tokio::test]
-    async fn extra_args_are_forwarded_before_format_flag() {
-        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = opencode_agent(bin.to_string_lossy());
-        s.args = vec!["--model".into(), "sonnet".into()];
-        let agent = s;
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        let echoed = sink.stderr().await;
-        let args: Vec<&str> = echoed.lines().collect();
-        assert!(args.contains(&"--model"), "got {args:?}");
-        assert!(args.contains(&"sonnet"), "got {args:?}");
-    }
-
-    #[tokio::test]
-    async fn env_is_forwarded_to_child() {
-        let script = "printf 'ENV=%s\\n' \"$OPENCODE_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"type\":\"session\",\"id\":\"s\",\"status\":\"idle\"}'";
-        let (_guard, bin) = fake_binary_script(script);
-        let mut s = opencode_agent(bin.to_string_lossy());
-        s.env = vec![("OPENCODE_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = s;
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        assert!(sink.stderr().await.contains("ENV=env-value"));
-    }
-
-    #[tokio::test]
-    async fn injects_signal_resource_attributes() {
-        let (_guard, bin) = fake_binary_script(
-            "printf '%s' \"$OTEL_RESOURCE_ATTRIBUTES\" 1>&2\nprintf '%s' '{\"type\":\"session\",\"id\":\"s\",\"status\":\"idle\"}'",
+        let command = d.command(Path::new("."), &prompt, None).expect("command");
+        let args = argv(&command);
+        assert_eq!(
+            args.first().map(String::as_str),
+            Some("run"),
+            "got {args:?}"
         );
+        assert!(args.contains(&"--format".to_owned()), "got {args:?}");
+        assert!(args.contains(&"json".to_owned()), "got {args:?}");
+        assert!(args.contains(&"hello-opencode".to_owned()), "got {args:?}");
+        assert_eq!(command.stdin, None, "prompt is inline, not stdin");
+        assert_eq!(command.io, StdioMode::Piped);
+    }
+
+    #[test]
+    fn extra_args_are_forwarded_before_format_flag() {
+        let mut d = driver("opencode");
+        d.args = vec!["--model".into(), "sonnet".into()];
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        assert!(args.contains(&"--model".to_owned()), "got {args:?}");
+        assert!(args.contains(&"sonnet".to_owned()), "got {args:?}");
+        assert!(args.contains(&"--format".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn declared_env_is_set_on_the_command() {
+        let mut d = driver("opencode");
+        d.env = vec![("OPENCODE_TEST_ENV_VAR".into(), "env-value".into())];
+        let prompt = Prompt::from("x");
+        let command = d.command(Path::new("."), &prompt, None).expect("command");
+        assert_eq!(
+            env_of(&command, "OPENCODE_TEST_ENV_VAR").as_deref(),
+            Some("env-value"),
+            "declared env must be applied to the child command",
+        );
+    }
+
+    #[test]
+    fn command_injects_agent_otel_resource_attrs() {
+        let d = driver("opencode");
+        let prompt = Prompt::from("x");
         let tmp = TempDir::new().expect("tmp");
-        let agent = opencode_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        let echoed = sink.stderr().await;
-        assert!(echoed.contains("iter.signal.id="), "got {echoed:?}");
-        assert!(echoed.contains("iter.signal.kind=work"), "got {echoed:?}");
+        let command = d.command(tmp.path(), &prompt, None).expect("command");
+        let attrs = env_of(&command, "OTEL_RESOURCE_ATTRIBUTES")
+            .expect("OTEL_RESOURCE_ATTRIBUTES must be injected");
         assert!(
-            echoed.contains("iter.agent.driver=opencode"),
-            "got {echoed:?}"
+            attrs.contains("iter.agent.driver=opencode"),
+            "got {attrs:?}",
         );
     }
 
-    #[tokio::test]
-    async fn session_error_on_exit_zero_is_a_failure() {
+    // ----- interpret(): inbound projection onto the domain ------------------
+
+    #[test]
+    fn interpret_clean_session_extracts_session_id() {
+        let d = driver("opencode");
+        let body = r#"{"type":"session","id":"sess-x","status":"idle"}"#;
+        let run = d
+            .interpret(&synth_output(RawExit::Code(0), body))
+            .expect("ok");
+        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+    }
+
+    #[test]
+    fn interpret_session_error_on_exit_zero_is_a_failure() {
         // `OpenCode` exits 0 even on failure — the error event is authoritative.
-        let script = r#"printf '%s' '{"type":"session.error","error":{"message":"auth failed"}}'"#;
-        let (_guard, bin) = fake_binary_script(script);
-        let agent = opencode_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
-        let err = agent.run(ctx).await.expect_err("must fail");
+        let d = driver("opencode");
+        let body = r#"{"type":"session.error","error":{"message":"auth failed"}}"#;
+        let err = d
+            .interpret(&synth_output(RawExit::Code(0), body))
+            .expect_err("must fail");
         assert!(
             matches!(err, AgentError::Failed { code: None, ref message } if message == "auth failed"),
             "got {err:?}",
         );
     }
 
-    #[tokio::test]
-    async fn token_limit_error_event_maps_to_token_limit() {
-        let script = r#"printf '%s' '{"type":"session.error","error":{"message":"context window exceeded"}}'"#;
-        let (_guard, bin) = fake_binary_script(script);
-        let agent = opencode_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, _sink) = ctx_capturing(Path::new("."), &prompt);
-        let err = agent.run(ctx).await.expect_err("must fail");
+    #[test]
+    fn interpret_token_limit_error_event_maps_to_token_limit() {
+        let d = driver("opencode");
+        let body = r#"{"type":"session.error","error":{"message":"context window exceeded"}}"#;
+        let err = d
+            .interpret(&synth_output(RawExit::Code(0), body))
+            .expect_err("must fail");
         assert!(matches!(err, AgentError::TokenLimit(_)), "got {err:?}");
+    }
+
+    // ----- through the full cycle -------------------------------------------
+
+    /// Fake `opencode` binary: echoes each argv arg (one per line) to *stderr*
+    /// so the capture sink can observe the flags, then prints a clean session
+    /// record to stdout so the Command parses an `Ok`.
+    const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
+printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
+
+    #[tokio::test]
+    async fn run_passes_subcommand_and_inline_prompt() {
+        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
+        let d = driver(bin.to_string_lossy());
+        let prompt = Prompt::from("hello-opencode");
+        let dir = TempDir::new().expect("tmp");
+        let (result, sink) = drive_capturing(d, dir.path(), &prompt).await;
+        let run = result.expect("run ok");
+        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        let echoed = sink.stderr().await;
+        let args: Vec<&str> = echoed.lines().collect();
+        assert_eq!(args.first(), Some(&"run"), "got {args:?}");
+        assert!(args.contains(&"hello-opencode"), "got {args:?}");
     }
 }

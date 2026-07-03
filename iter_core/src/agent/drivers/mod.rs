@@ -1,11 +1,11 @@
 //! Agent driver implementations.
 //!
 //! Each subdirectory is a self-contained driver that implements
-//! [`crate::agent::Agent`]. All drivers are currently process-based
-//! (no external SDK dependencies) and always compiled.
+//! [`crate::agent::AgentDriver`] — one CLI, one bidirectional translator.
+//! All drivers are process-based and always compiled.
 
 pub mod antigravity;
-pub mod claude;
+pub mod claude_code;
 pub mod cline;
 pub mod codex;
 pub mod copilot;

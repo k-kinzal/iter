@@ -4,8 +4,6 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use super::backend::BackendError;
-
 /// Errors produced by [`SandboxWorkspace`](super::SandboxWorkspace).
 #[derive(Debug, Error)]
 pub enum SandboxWorkspaceError {
@@ -15,12 +13,6 @@ pub enum SandboxWorkspaceError {
     /// The configured base path exists but is not a directory.
     #[error("sandbox workspace base path is not a directory: {}", .0.display())]
     NotADirectory(PathBuf),
-    /// The workspace has not been set up.
-    #[error("sandbox workspace has not been set up")]
-    NotSetUp,
-    /// The sandbox backend failed to prepare.
-    #[error("sandbox backend error: {0}")]
-    Backend(#[from] BackendError),
     /// One of the configured glob patterns failed to compile.
     #[error("sandbox workspace glob pattern is invalid: {0}")]
     InvalidGlobPattern(#[from] globset::Error),

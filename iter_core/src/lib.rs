@@ -39,7 +39,10 @@ pub mod template;
 pub mod time;
 pub mod workspace;
 
-pub use agent::{Agent, AgentInvocation, AgentRun};
+pub use agent::{
+    Agent, AgentCommand, AgentDriver, AgentRun, FallbackRouter, FallbackTriggers, RotateRouter,
+    Route, Router, SingleAgentRouter,
+};
 pub use prompt::{
     CmpOp, IterationField, Prompt, PromptGuard, PromptSelector, PromptTemplate, SelectorError,
 };
@@ -56,4 +59,4 @@ pub use template::{
     IterationRenderContext, RunnerRenderContext, SignalContext, Template, TemplateError,
 };
 pub use time::{Clock, DeterministicIdSource, FixedClock, IdSource, SystemClock, SystemIdSource};
-pub use workspace::{SandboxProfile, Workspace, match_env_pattern};
+pub use workspace::{ActiveWorkspace, SandboxProfile, StdioMode, Workspace, match_env_pattern};

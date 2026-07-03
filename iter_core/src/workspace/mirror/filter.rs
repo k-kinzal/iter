@@ -21,6 +21,18 @@
 //!   *rescue*: an include overrides a matching exclude, and a path matching
 //!   neither list always materialises. At apply-back time a non-empty
 //!   `includes` is a *whitelist*: only matching paths pass.
+//! * **Rescue is leaf-scoped; any exclude that matches a directory entry
+//!   prunes its whole subtree.** The clone walk (`copy_dir_recursive`) skips
+//!   an excluded directory and never descends into it, so a child negation or
+//!   include cannot reach inside a directory whose *own path* an exclude
+//!   matches — whether by bare name (`vendor`) or anchored path (`a/b`).
+//!   `["vendor", "!vendor/keep"]` drops all of `vendor` and the negation is
+//!   moot. The apply-back [`ApplyBackFilter`] workspace gate mirrors this — a
+//!   child of a clone-excluded directory stays masked — so the rule is uniform
+//!   across both phases. To drop a directory's *contents* while keeping one
+//!   child, match the contents but not the directory entry itself, then negate
+//!   the child — `["vendor/*", "!vendor/keep"]` — which the walk descends into
+//!   normally (`vendor/*` never matches the bare `vendor` entry).
 
 use std::path::Path;
 
@@ -38,6 +50,7 @@ struct GlobPair {
     negations: GlobSet,
     includes: GlobSet,
     has_includes: bool,
+    has_negations: bool,
 }
 
 impl GlobPair {
@@ -48,6 +61,7 @@ impl GlobPair {
             negations: GlobSet::empty(),
             includes: GlobSet::empty(),
             has_includes: false,
+            has_negations: false,
         }
     }
 
@@ -68,6 +82,7 @@ impl GlobPair {
             negations: compile_patterns(&neg_patterns)?,
             includes: compile_patterns(includes)?,
             has_includes: !includes.is_empty(),
+            has_negations: !neg_patterns.is_empty(),
         })
     }
 
@@ -145,13 +160,24 @@ impl CloneFilter {
 /// to base.
 ///
 /// A path is dropped from the apply-back walk iff [`is_excluded`] returns
-/// `true`. When `includes` is non-empty it acts as a whitelist — only matching
-/// paths pass. Otherwise `excludes` applies, with `!pattern` negation support.
+/// `true`. Two layers combine:
+///
+/// 1. A **workspace gate** built from the clone-time [`CloneFilter`]'s
+///    exclude/include lists. It masks exactly the paths the clone-time walk
+///    would *not* have materialised — a path is gated iff some
+///    ancestor-or-self prefix is excluded by the clone filter, mirroring the
+///    walk's directory-granular pruning. This lets a genuine file-pattern
+///    include rescue (whose leaf has no excluded ancestor) propagate back,
+///    while a child of an excluded directory — never copied into the sandbox
+///    — stays masked and can never become a deletion candidate.
+/// 2. The apply-back `excludes`/`includes` pair. When `includes` is
+///    non-empty it acts as a whitelist — only matching paths pass.
+///    Otherwise `excludes` applies, with `!pattern` negation support.
 ///
 /// [`is_excluded`]: ApplyBackFilter::is_excluded
 #[derive(Debug, Clone)]
 pub(crate) struct ApplyBackFilter {
-    workspace_excludes: GlobSet,
+    workspace_gate: GlobPair,
     inner: GlobPair,
 }
 
@@ -162,23 +188,27 @@ impl ApplyBackFilter {
         includes: &[String],
     ) -> Result<Self, globset::Error> {
         Ok(Self {
-            workspace_excludes: GlobSet::empty(),
+            workspace_gate: GlobPair::empty(),
             inner: GlobPair::compile(excludes, includes)?,
         })
     }
 
-    /// Compile with a separate set of workspace-level excludes that are
-    /// enforced unconditionally — before includes-whitelist or negation
-    /// logic. This ensures files never copied into the sandbox cannot
-    /// become deletion candidates regardless of the user's apply-back
-    /// include/negation configuration.
+    /// Compile with a workspace-level gate that is enforced unconditionally
+    /// — before the apply-back includes-whitelist or negation logic. The
+    /// gate is built from the *same* exclude/include lists the clone-time
+    /// [`CloneFilter`] uses, and [`is_excluded`](Self::is_excluded) applies
+    /// it prefix-wise so it reproduces the clone-time *walk*: a path the walk
+    /// would not have materialised (some ancestor-or-self prefix is excluded)
+    /// cannot become an apply-back candidate, while a path a clone-time
+    /// include genuinely rescued into the sandbox is free to propagate back.
     pub(crate) fn compile_with_workspace_excludes(
         excludes: &[String],
         includes: &[String],
         workspace_excludes: &[String],
+        workspace_includes: &[String],
     ) -> Result<Self, globset::Error> {
         Ok(Self {
-            workspace_excludes: compile_patterns(workspace_excludes)?,
+            workspace_gate: GlobPair::compile(workspace_excludes, workspace_includes)?,
             inner: GlobPair::compile(excludes, includes)?,
         })
     }
@@ -186,13 +216,41 @@ impl ApplyBackFilter {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
-            workspace_excludes: GlobSet::empty(),
+            workspace_gate: GlobPair::empty(),
             inner: GlobPair::empty(),
         }
     }
 
+    /// `true` when the clone-time walk would NOT have materialised any path at
+    /// or below `rel` — i.e. some ancestor-or-self prefix is excluded by the
+    /// workspace gate.
+    ///
+    /// The clone walk (`copy_dir_recursive`) prunes at directory granularity —
+    /// it skips an excluded entry and never descends — so a path is
+    /// materialised iff *no* ancestor-or-self prefix is excluded by the clone
+    /// filter. Testing every prefix (not just the leaf) is what keeps a
+    /// clone-time include that names a *child of an excluded directory* from
+    /// wrongly un-masking that child: the child was never copied in, so it
+    /// stays gated. A genuine file-pattern rescue (e.g. `*.secret` excluded,
+    /// `keep.secret` included) has no excluded ancestor, so it is un-gated.
+    ///
+    /// Shared by [`is_excluded`](Self::is_excluded) (a gated leaf can neither
+    /// be copied back nor deleted from base) and
+    /// [`should_descend`](Self::should_descend) (a gated directory was never
+    /// materialised, so the apply-back walk must not enter it).
+    fn workspace_gate_masks(&self, rel: &Path) -> bool {
+        rel.ancestors()
+            .any(|prefix| !prefix.as_os_str().is_empty() && self.workspace_gate.is_excluded(prefix))
+    }
+
+    /// Whether the leaf `rel` participates in apply-back (copy back / delete
+    /// from base). This is the file-level masking decision — distinct from the
+    /// directory-descent decision in [`should_descend`](Self::should_descend).
     pub(crate) fn is_excluded(&self, rel: &Path) -> bool {
-        if self.workspace_excludes.is_match(rel) {
+        // Workspace gate: mask exactly the paths the clone-time walk would NOT
+        // have materialised, so a file that never entered the sandbox can
+        // neither be copied back nor deleted from base.
+        if self.workspace_gate_masks(rel) {
             return true;
         }
         // The whitelist contract is apply-back-only; clone-side includes
@@ -202,6 +260,42 @@ impl ApplyBackFilter {
             return !self.inner.includes.is_match(rel);
         }
         self.inner.is_excluded(rel)
+    }
+
+    /// Whether the apply-back walk should recurse into directory `rel`.
+    ///
+    /// Directory descent and leaf masking are *different* questions, and
+    /// conflating them (as a single `is_excluded` check for both would)
+    /// silently defeats the "exclude a directory except one file" intent.
+    /// The leaf-level [`is_excluded`](Self::is_excluded) decides whether an
+    /// individual file participates; this decides whether the walk enters a
+    /// directory at all.
+    ///
+    /// They diverge because apply-back's own `!negation` and whitelist
+    /// `includes` can re-include a child *inside* a directory the leaf filter
+    /// excludes. `apply_back_excludes = ["vendor", "!vendor/keep"]` excludes
+    /// the `vendor` directory at the leaf level, yet the walk must still
+    /// descend into it to reach `vendor/keep` — pruning at `vendor` (which the
+    /// leaf `is_excluded` alone would force) would leave the negation dead.
+    /// The same holds for a whitelist include naming a child of an otherwise
+    /// unmatched directory.
+    ///
+    /// The clone-derived workspace gate is different: it reflects a physical
+    /// fact (the subtree was never materialised), so a gated directory is
+    /// skipped unconditionally. And a plain directory exclude carrying neither
+    /// a negation nor a whitelist can be pruned wholesale — nothing inside it
+    /// could ever be re-included — preserving fast subtree pruning for the
+    /// common case.
+    pub(crate) fn should_descend(&self, rel: &Path) -> bool {
+        if self.workspace_gate_masks(rel) {
+            return false;
+        }
+        // Enter an apply-back-excluded directory only when a negation or a
+        // whitelist include could still re-include a child within it.
+        if self.inner.is_excluded(rel) {
+            return self.inner.has_negations || self.inner.has_includes;
+        }
+        true
     }
 }
 
@@ -310,10 +404,123 @@ mod tests {
             &[],
             &["**".to_owned()],
             &[".git".to_owned()],
+            &[],
         )
         .expect("test patterns must compile");
         assert!(f.is_excluded(Path::new(".git/HEAD")));
         assert!(!f.is_excluded(Path::new("src/main.rs")));
+    }
+
+    #[test]
+    fn workspace_gate_honors_clone_includes_rescue() {
+        // A genuinely clone-reachable rescue: the clone filter excludes the
+        // file pattern `*.secret` but a clone-time include rescues
+        // `keep.secret`. Because no *directory* is excluded, the clone walk
+        // descends normally and materialises `keep.secret`, so at teardown the
+        // apply-back gate must let it propagate back — even under a `**`
+        // apply-back whitelist — while its excluded sibling stays gated.
+        let f = ApplyBackFilter::compile_with_workspace_excludes(
+            &[],
+            &["**".to_owned()],
+            &["*.secret".to_owned()],
+            &["keep.secret".to_owned()],
+        )
+        .expect("test patterns must compile");
+        assert!(
+            !f.is_excluded(Path::new("keep.secret")),
+            "a clone-time include rescue must survive the apply-back gate",
+        );
+        assert!(
+            f.is_excluded(Path::new("drop.secret")),
+            "a sibling the clone filter excluded was never copied in and stays gated",
+        );
+        assert!(!f.is_excluded(Path::new("src/main.rs")));
+    }
+
+    #[test]
+    fn workspace_gate_masks_child_of_excluded_dir_despite_include() {
+        // The clone filter excludes the *directory* `vendor` and a clone-time
+        // include names a child, `vendor/keep`. The clone walk prunes at
+        // `vendor/` and never descends, so `vendor/keep` is NOT materialised —
+        // an include cannot rescue a child of an excluded directory. The
+        // apply-back gate must therefore keep the whole subtree masked so a
+        // base file that never entered the sandbox is never deleted, even
+        // under a `**` whitelist.
+        let f = ApplyBackFilter::compile_with_workspace_excludes(
+            &[],
+            &["**".to_owned()],
+            &["vendor".to_owned()],
+            &["vendor/keep".to_owned()],
+        )
+        .expect("test patterns must compile");
+        assert!(
+            f.is_excluded(Path::new("vendor/keep")),
+            "an include cannot un-mask a child of an excluded directory",
+        );
+        assert!(f.is_excluded(Path::new("vendor/other")));
+        assert!(!f.is_excluded(Path::new("src/main.rs")));
+    }
+
+    #[test]
+    fn should_descend_prunes_plain_excluded_dir() {
+        // A plain directory exclude with neither a negation nor a whitelist can
+        // never re-include anything inside it — the walk prunes it wholesale,
+        // preserving fast subtree skipping for the common case.
+        let f = apply_f(&["vendor"], &[]);
+        assert!(!f.should_descend(Path::new("vendor")));
+        assert!(f.should_descend(Path::new("src")));
+    }
+
+    #[test]
+    fn should_descend_enters_excluded_dir_with_negation() {
+        // "exclude `vendor` except `vendor/keep`": the leaf filter excludes the
+        // directory, yet the walk must still descend to reach the negated child
+        // — otherwise the negation is silently dead. The leaf decision then
+        // rescues the child while masking its siblings.
+        let f = apply_f(&["vendor", "!vendor/keep"], &[]);
+        assert!(
+            f.should_descend(Path::new("vendor")),
+            "must descend into an excluded dir to reach its negation-rescued child",
+        );
+        assert!(!f.is_excluded(Path::new("vendor/keep")));
+        assert!(f.is_excluded(Path::new("vendor/other")));
+    }
+
+    #[test]
+    fn should_descend_enters_dir_under_whitelist() {
+        // Whitelist mode: any directory may hold a whitelisted child, so the
+        // walk descends everywhere the gate allows and lets the leaf filter
+        // keep only matching paths.
+        let f = apply_f(&[], &["vendor/keep"]);
+        assert!(f.should_descend(Path::new("vendor")));
+        assert!(!f.is_excluded(Path::new("vendor/keep")));
+        assert!(f.is_excluded(Path::new("vendor/other")));
+    }
+
+    #[test]
+    fn should_descend_skips_workspace_gated_dir_even_with_negation() {
+        // The workspace gate reflects a physical fact — the clone walk never
+        // materialised `vendor` — so the apply-back walk must not enter it even
+        // though the apply-back excludes carry a negation. Nothing was ever
+        // copied in; there is nothing to rescue.
+        let f = ApplyBackFilter::compile_with_workspace_excludes(
+            &["!vendor/keep".to_owned()],
+            &[],
+            &["vendor".to_owned()],
+            &[],
+        )
+        .expect("test patterns must compile");
+        assert!(
+            !f.should_descend(Path::new("vendor")),
+            "a clone-gated subtree was never materialised; do not descend",
+        );
+    }
+
+    #[test]
+    fn should_descend_enters_unexcluded_dir() {
+        let f = apply_f(&["*.md"], &[]);
+        assert!(f.should_descend(Path::new("src")));
+        assert!(f.should_descend(Path::new("docs")));
     }
 
     #[test]

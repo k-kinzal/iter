@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::Workspace;
 use crate::workspace::WorkspaceError;
+use crate::workspace::workspace::{ActiveWorkspace, StdioMode, finish_spawn};
 use async_trait::async_trait;
 use tokio::fs;
 use tokio_util::sync::CancellationToken;
@@ -29,15 +30,15 @@ use super::LocalWorkspaceError;
 /// use tokio_util::sync::CancellationToken;
 ///
 /// let mut ws = LocalWorkspace::new("/tmp/my-project");
-/// ws.setup(CancellationToken::new()).await?;
-/// assert_eq!(ws.path(), std::path::Path::new("/tmp/my-project"));
-/// ws.teardown(CancellationToken::new()).await?;
+/// let active = Workspace::setup(&mut ws, CancellationToken::new()).await?;
+/// assert_eq!(active.path(), std::path::Path::new("/tmp/my-project"));
+/// let persistent = active.teardown(CancellationToken::new()).await?;
+/// assert_eq!(persistent, std::path::PathBuf::from("/tmp/my-project"));
 /// # Ok(()) }
 /// ```
 #[derive(Debug, Clone)]
 pub struct LocalWorkspace {
     base: PathBuf,
-    set_up: bool,
 }
 
 impl LocalWorkspace {
@@ -47,16 +48,7 @@ impl LocalWorkspace {
     /// checked when [`setup`](Workspace::setup) is called.
     #[must_use]
     pub fn new(base: impl Into<PathBuf>) -> Self {
-        Self {
-            base: base.into(),
-            set_up: false,
-        }
-    }
-
-    /// Returns `true` if the workspace has been successfully set up.
-    #[must_use]
-    pub fn is_set_up(&self) -> bool {
-        self.set_up
+        Self { base: base.into() }
     }
 
     /// Materialise the workspace, returning the concrete
@@ -64,11 +56,17 @@ impl LocalWorkspace {
     /// [`WorkspaceError`]; callers holding a concrete `LocalWorkspace` get the
     /// precise error here.
     ///
+    /// Nothing is acquired on the failure path, so the self-cleaning setup
+    /// contract holds trivially.
+    ///
     /// # Errors
     ///
     /// Returns [`LocalWorkspaceError`] when the base path is missing or is not
     /// a directory.
-    pub async fn setup(&mut self, cancel: CancellationToken) -> Result<(), LocalWorkspaceError> {
+    pub async fn setup(
+        &mut self,
+        cancel: CancellationToken,
+    ) -> Result<ActiveLocalWorkspace, LocalWorkspaceError> {
         // LocalWorkspace setup is a quick validate-only step with no
         // natural cancel point; accept the token and drop it.
         drop(cancel);
@@ -82,55 +80,62 @@ impl LocalWorkspace {
         if !meta.is_dir() {
             return Err(LocalWorkspaceError::NotADirectory(self.base.clone()));
         }
-        self.set_up = true;
         tracing::debug!(path = %self.base.display(), "local workspace set up");
-        Ok(())
-    }
-
-    /// Tear the workspace down, returning the concrete [`LocalWorkspaceError`]
-    /// (see [`setup`](Self::setup) for the erasure note).
-    ///
-    /// # Errors
-    ///
-    /// Infallible today (always returns `Ok`); the `Result` and `async` are
-    /// kept to match the [`Workspace`] trait so the trait impl can delegate
-    /// uniformly.
-    pub async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), LocalWorkspaceError> {
-        // The target directory is the source of truth; there is nothing to
-        // clean up. We only flip the set_up flag so that
-        // [`is_set_up`] accurately reflects reality. Pure noop — nothing
-        // to cancel.
-        drop(cancel);
-        self.set_up = false;
-        tracing::debug!(path = %self.base.display(), "local workspace torn down");
-        Ok(())
+        Ok(ActiveLocalWorkspace {
+            path: self.base.clone(),
+        })
     }
 }
 
 #[async_trait]
 impl Workspace for LocalWorkspace {
-    async fn setup(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
+    async fn setup(
+        &mut self,
+        cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
         LocalWorkspace::setup(self, cancel)
             .await
-            .map_err(WorkspaceError::new)
-    }
-
-    async fn teardown(&mut self, cancel: CancellationToken) -> Result<(), WorkspaceError> {
-        LocalWorkspace::teardown(self, cancel)
-            .await
+            .map(|active| Box::new(active) as Box<dyn ActiveWorkspace>)
             .map_err(WorkspaceError::new)
     }
 
     fn name(&self) -> &'static str {
         "local"
     }
+}
 
+/// The active form of a [`LocalWorkspace`]: the validated base directory
+/// itself. The working path *is* the persistent path, so teardown has
+/// nothing to reconcile.
+#[derive(Debug)]
+pub struct ActiveLocalWorkspace {
+    path: PathBuf,
+}
+
+#[async_trait]
+impl ActiveWorkspace for ActiveLocalWorkspace {
     fn path(&self) -> &Path {
-        &self.base
+        &self.path
     }
 
-    fn final_path(&self) -> &Path {
-        self.path()
+    fn spawn(
+        &self,
+        mut command: tokio::process::Command,
+        io: StdioMode,
+    ) -> std::io::Result<tokio::process::Child> {
+        command.current_dir(&self.path);
+        finish_spawn(command, io)
+    }
+
+    async fn teardown(
+        self: Box<Self>,
+        cancel: CancellationToken,
+    ) -> Result<PathBuf, WorkspaceError> {
+        // The target directory is the source of truth; there is nothing to
+        // clean up. Pure noop — nothing to cancel.
+        drop(cancel);
+        tracing::debug!(path = %self.path.display(), "local workspace torn down");
+        Ok(self.path)
     }
 }
 
@@ -140,12 +145,11 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn setup_on_valid_dir_succeeds() {
+    async fn setup_on_valid_dir_yields_active_at_base() {
         let dir = TempDir::new().expect("tempdir");
         let mut ws = LocalWorkspace::new(dir.path());
-        ws.setup(CancellationToken::new()).await.expect("setup ok");
-        assert!(ws.is_set_up());
-        assert_eq!(ws.path(), dir.path());
+        let active = ws.setup(CancellationToken::new()).await.expect("setup ok");
+        assert_eq!(active.path(), dir.path());
     }
 
     #[tokio::test]
@@ -156,7 +160,6 @@ mod tests {
             .await
             .expect_err("should fail");
         assert!(matches!(err, LocalWorkspaceError::NotFound(_)));
-        assert!(!ws.is_set_up());
     }
 
     #[tokio::test]
@@ -173,17 +176,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn teardown_is_noop() {
+    async fn teardown_returns_base_and_deletes_nothing() {
         let dir = TempDir::new().expect("tempdir");
         fs::write(dir.path().join("marker"), b"keep me")
             .await
             .expect("write");
         let mut ws = LocalWorkspace::new(dir.path());
-        ws.setup(CancellationToken::new()).await.expect("setup");
-        ws.teardown(CancellationToken::new())
+        let active = ws.setup(CancellationToken::new()).await.expect("setup");
+        let persistent = Box::new(active)
+            .teardown(CancellationToken::new())
             .await
             .expect("teardown");
-        assert!(!ws.is_set_up());
+        assert_eq!(persistent, dir.path());
         assert!(
             dir.path().join("marker").exists(),
             "teardown must not delete"
@@ -191,8 +195,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn path_returns_configured_path_even_without_setup() {
-        let ws = LocalWorkspace::new("/some/where");
-        assert_eq!(ws.path(), Path::new("/some/where"));
+    async fn repeated_setup_teardown_cycles_on_one_workspace() {
+        // The runner holds one Workspace for the whole exploration and
+        // brackets every iteration with setup/teardown; two full cycles on
+        // the same instance are the regression net for that model.
+        let dir = TempDir::new().expect("tempdir");
+        let mut ws = LocalWorkspace::new(dir.path());
+        for _ in 0..2 {
+            let active = ws.setup(CancellationToken::new()).await.expect("setup");
+            let persistent = Box::new(active)
+                .teardown(CancellationToken::new())
+                .await
+                .expect("teardown");
+            assert_eq!(persistent, dir.path());
+        }
     }
 }

@@ -1,4 +1,4 @@
-//! [`GrokAgent`] — Grok Build (xAI `grok`) CLI integration.
+//! [`GrokDriver`] — Grok Build (xAI `grok`) CLI integration.
 //!
 //! # Headless-first
 //!
@@ -21,7 +21,7 @@
 //!   waiting for an approval that can never arrive. It is emitted before
 //!   user `args` so a caller can still append their own `--permission-mode`
 //!   downstream if a future CLI revision prefers it.
-//! * `-s/--session-id <ID>` is emitted only when [`GrokAgent::session_id_file`]
+//! * `-s/--session-id <ID>` is emitted only when [`GrokDriver::session_id_file`]
 //!   is set. Grok's `-s` flag *creates or resumes* a named headless session,
 //!   so passing the same id across iterations gives the agent continuous
 //!   context — the narrowest exploration mode (see the field docs).
@@ -39,20 +39,22 @@
 //!
 //! # Construction
 //!
-//! [`GrokAgent`] exposes no defaults. Every field is required because the
+//! [`GrokDriver`] exposes no defaults. Every field is required because the
 //! value is a project-shaped decision iter cannot honestly pick on the
-//! operator's behalf. The agent is constructed directly from its fields.
+//! operator's behalf. The driver is constructed directly from its fields.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::{Agent, AgentInvocation, AgentRun};
 use async_trait::async_trait;
+
+use crate::agent::driver::{AgentCommand, AgentDriver};
+use crate::agent::process::{RawOutput, apply_user_env};
+use crate::agent::{AgentError, AgentKind, AgentRun};
+use crate::prompt::Prompt;
+use crate::workspace::StdioMode;
 
 mod command;
 
-use crate::agent::AgentError;
-use crate::agent::process::{PromptDelivery, apply_user_env, spawn_capture};
-use crate::agent::session::SessionIdFile;
 use command::{GrokCommand, GrokError};
 
 impl From<GrokError> for AgentError {
@@ -76,9 +78,9 @@ impl From<GrokError> for AgentError {
     }
 }
 
-/// Grok Build CLI agent configuration.
+/// Grok Build CLI driver configuration.
 #[derive(Debug, Clone)]
-pub struct GrokAgent {
+pub struct GrokDriver {
     /// Binary name or path. Required (no implicit `"grok"` fallback).
     pub command: String,
     /// Additional arguments appended after the iter-managed headless flags.
@@ -113,7 +115,7 @@ fn home_subpath(leaf: &str) -> Option<PathBuf> {
     crate::home::home_dir().map(|h| h.join(leaf))
 }
 
-impl GrokAgent {
+impl GrokDriver {
     /// `${HOME}/.grok` — persistent configuration root and headless session
     /// state sink (sessions under `sessions/`). `None` when `HOME` is unset.
     #[must_use]
@@ -139,60 +141,24 @@ impl GrokAgent {
 }
 
 #[async_trait]
-impl Agent for GrokAgent {
-    fn name(&self) -> &'static str {
-        "grok"
-    }
-
-    fn kind(&self) -> crate::agent::AgentKind {
-        crate::agent::AgentKind::Grok
-    }
-
-    fn declared_env(&self) -> &[(String, String)] {
-        &self.env
-    }
-
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    ///
-    /// The returned handle exposes both the resolved path and its canonical
-    /// target so the sandbox layer can grant read access to a symlink shim
-    /// (volta, nvm, asdf, homebrew cask).
-    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
-    }
-
-    async fn run(&self, ctx: AgentInvocation<'_>) -> Result<AgentRun, AgentError> {
-        let AgentInvocation {
-            workspace_path,
-            prompt,
-            cancel,
-            stdio_sink,
-            sandbox_command_prefix,
-            declared_env,
-            ..
-        } = ctx;
-        // Resolve the session id *before* spawning so a filesystem failure
-        // here surfaces as an `AgentError` instead of a confusing child
-        // startup error. When `session_id_file` is unset this is a no-op and
-        // no `-s` flag is emitted.
-        let session_id = match &self.session_id_file {
-            Some(file) => Some(
-                SessionIdFile::new(file.clone())
-                    .resolve(workspace_path)
-                    .await?,
-            ),
-            None => None,
-        };
-
-        let mut command = GrokCommand {
+impl AgentDriver for GrokDriver {
+    fn command(
+        &self,
+        path: &Path,
+        prompt: &Prompt,
+        session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        // The session id is resolved by the agent cycle (async filesystem
+        // work) and handed in as `session`; when `session_id_file` is unset
+        // the cycle passes `None` and no `-s` flag is emitted.
+        let mut process = GrokCommand {
             program: &self.command,
             prompt,
             args: &self.args,
-            session_id: session_id.as_deref(),
+            session_id: session,
         }
-        .build(workspace_path);
-        apply_user_env(&mut command, declared_env);
+        .build(path);
+        apply_user_env(&mut process, &self.env);
         // OTel trace-context / resource-attribute injection is deliberately
         // omitted — a *verified negative* for `grok 0.2.45`, not an unknown:
         //
@@ -219,17 +185,17 @@ impl Agent for GrokAgent {
         // Re-verify against a newer CLI before enabling either injection.
 
         // The prompt is the value of `-p` (delivered inline), so no stdin.
-        let output = spawn_capture(
-            command,
-            PromptDelivery::Inline,
-            cancel,
-            stdio_sink,
-            sandbox_command_prefix,
-        )
-        .await?;
+        Ok(AgentCommand {
+            process,
+            stdin: None,
+            io: StdioMode::Piped,
+        })
+    }
+
+    fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
         // Adapter: project the Command's CLI-shaped result/error onto iter's
         // domain. `?` runs the `From<GrokError>` impl above.
-        let result = command::interpret(&output)?;
+        let result = command::interpret(RawOutput::from(output))?;
         // Only `session_id` crosses into the domain `AgentRun`. The rich
         // record (`request_id`, `thought`, `stop_reason`, `usage`) stays at the
         // Command layer: `AgentRun` carries only what a Factor consumes, and
@@ -240,19 +206,40 @@ impl Agent for GrokAgent {
             session_id: result.session_id,
         })
     }
+
+    fn kind(&self) -> AgentKind {
+        AgentKind::Grok
+    }
+
+    /// Resolved on-disk location of the configured binary, or `None` when
+    /// nothing on `$PATH` or the supplied path matches an existing file.
+    ///
+    /// The returned handle exposes both the resolved path and its canonical
+    /// target so the sandbox layer can grant read access to a symlink shim
+    /// (volta, nvm, asdf, homebrew cask).
+    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
+        crate::agent::command_path::CommandPath::resolve(&self.command)
+    }
+
+    fn declared_env(&self) -> &[(String, String)] {
+        &self.env
+    }
+
+    fn session_file(&self) -> Option<&Path> {
+        self.session_id_file.as_deref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Prompt;
-    use crate::agent::testutil::{ctx_capturing, fake_binary_script};
-    use std::path::Path;
+    use crate::agent::process::RawExit;
+    use crate::agent::testutil::{drive_capturing, fake_binary_script};
     use tempfile::TempDir;
     use tokio::fs;
 
-    fn grok_agent(command: impl Into<String>) -> GrokAgent {
-        GrokAgent {
+    fn driver(command: impl Into<String>) -> GrokDriver {
+        GrokDriver {
             command: command.into(),
             args: Vec::new(),
             session_id_file: None,
@@ -260,78 +247,156 @@ mod tests {
         }
     }
 
-    /// Fake `grok` binary: echoes each argv arg to *stderr* (so a
-    /// [`CaptureSink`] can observe the flags and the values following them),
-    /// then prints a valid headless result JSON object to stdout so
-    /// [`command::interpret`] parses an `Ok`. Uses the verified `grok 0.2.45`
-    /// shape (`text`/`stopReason`) so these integration tests exercise the
-    /// primary parse path, not the legacy fallback.
+    fn argv(command: &AgentCommand) -> Vec<String> {
+        command
+            .process
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn synth_output(exit: RawExit, stdout: &str) -> std::process::Output {
+        std::process::Output {
+            status: exit.into_exit_status(),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    // ----- command(): outbound translation ---------------------------------
+
+    #[test]
+    fn command_passes_prompt_as_value_of_p_flag() {
+        let d = driver("grok");
+        let prompt = Prompt::from("hello-grok");
+        let command = d.command(Path::new("."), &prompt, None).expect("command");
+        let args = argv(&command);
+        // The prompt is the value of `-p`, immediately following it.
+        let pos = args.iter().position(|a| a == "-p").expect("-p present");
+        assert_eq!(args[pos + 1], "hello-grok", "got {args:?}");
+        assert_eq!(command.stdin, None, "prompt is inline, not stdin");
+        assert_eq!(command.io, StdioMode::Piped);
+    }
+
+    #[test]
+    fn command_emits_always_approve_and_json_format() {
+        let d = driver("grok");
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        assert!(
+            args.contains(&"--always-approve".to_owned()),
+            "got {args:?}"
+        );
+        assert!(args.contains(&"--output-format".to_owned()), "got {args:?}");
+        assert!(args.contains(&"json".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn command_without_session_emits_no_session_flag() {
+        let d = driver("grok");
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        assert!(!args.contains(&"-s".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn command_with_session_emits_session_flag() {
+        let d = driver("grok");
+        let prompt = Prompt::from("x");
+        let args = argv(
+            &d.command(Path::new("."), &prompt, Some("sess-x"))
+                .expect("command"),
+        );
+        let pos = args.iter().position(|a| a == "-s").expect("-s present");
+        assert_eq!(args[pos + 1], "sess-x", "got {args:?}");
+    }
+
+    #[test]
+    fn extra_args_are_forwarded_after_managed_flags() {
+        let mut d = driver("grok");
+        d.args = vec!["--model".into(), "grok-2".into()];
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        assert!(args.contains(&"--model".to_owned()), "got {args:?}");
+        assert!(args.contains(&"grok-2".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn declared_env_is_set_on_the_command() {
+        let mut d = driver("grok");
+        d.env = vec![("GROK_TEST_ENV_VAR".into(), "env-value".into())];
+        let prompt = Prompt::from("x");
+        let command = d.command(Path::new("."), &prompt, None).expect("command");
+        let has = command.process.as_std().get_envs().any(|(k, v)| {
+            k == std::ffi::OsStr::new("GROK_TEST_ENV_VAR")
+                && v == Some(std::ffi::OsStr::new("env-value"))
+        });
+        assert!(has, "declared env must be applied to the child command");
+    }
+
+    // ----- interpret(): inbound projection onto the domain ------------------
+
+    #[test]
+    fn interpret_verified_result_extracts_session_id() {
+        let d = driver("grok");
+        let body = r#"{"text":"OK","stopReason":"EndTurn","sessionId":"sess-x","requestId":"r"}"#;
+        let run = d
+            .interpret(&synth_output(RawExit::Code(0), body))
+            .expect("ok");
+        assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+    }
+
+    #[test]
+    fn interpret_type_error_object_maps_to_failed() {
+        let d = driver("grok");
+        let body = r#"{"type":"error","message":"auth failed"}"#;
+        let err = d
+            .interpret(&synth_output(RawExit::Code(1), body))
+            .expect_err("must fail");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), .. }),
+            "got {err:?}",
+        );
+    }
+
+    #[test]
+    fn interpret_token_limit_in_error_maps_to_token_limit() {
+        let d = driver("grok");
+        let body = r#"{"error":"Error: context window exceeded"}"#;
+        let err = d
+            .interpret(&synth_output(RawExit::Code(1), body))
+            .expect_err("must fail");
+        assert!(matches!(err, AgentError::TokenLimit(_)), "got {err:?}");
+    }
+
+    // ----- through the full cycle -------------------------------------------
+
+    /// Fake `grok` binary: echoes each argv arg to *stderr* (so the capture
+    /// sink can observe the flags and the values following them), then prints
+    /// a valid headless result JSON object to stdout so [`command::interpret`]
+    /// parses an `Ok`. Uses the verified `grok 0.2.45` shape
+    /// (`text`/`stopReason`) so these integration tests exercise the primary
+    /// parse path, not the legacy fallback.
     const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
 printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
 
     #[tokio::test]
-    async fn headless_passes_prompt_as_value_of_p_flag() {
+    async fn headless_passes_prompt_and_flags() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = grok_agent(bin.to_string_lossy());
+        let d = driver(bin.to_string_lossy());
         let prompt = Prompt::from("hello-grok");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let run = agent.run(ctx).await.expect("run ok");
+        let dir = TempDir::new().expect("tmp");
+        let (result, sink) = drive_capturing(d, dir.path(), &prompt).await;
+        let run = result.expect("run ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
         let echoed = sink.stderr().await;
         let mut lines = echoed.lines();
         // First emitted arg must be `-p`, immediately followed by the prompt.
         assert_eq!(lines.next(), Some("-p"), "argv was: {echoed:?}");
         assert_eq!(lines.next(), Some("hello-grok"), "argv was: {echoed:?}");
-    }
-
-    #[tokio::test]
-    async fn headless_emits_always_approve_and_json_format() {
-        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let agent = grok_agent(bin.to_string_lossy());
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
-        assert!(
-            args.contains(&"--always-approve"),
-            "headless mode must auto-approve tool executions, got {args:?}",
-        );
-        assert!(args.contains(&"--output-format"), "got {args:?}");
-        assert!(args.contains(&"json"), "got {args:?}");
-    }
-
-    #[tokio::test]
-    async fn extra_args_are_forwarded_after_managed_flags() {
-        let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-        let mut s = grok_agent(bin.to_string_lossy());
-        s.args = vec!["--model".into(), "grok-2".into()];
-        let agent = s;
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        let echoed = sink.stderr().await;
-        let args: Vec<&str> = echoed.lines().collect();
-        assert!(args.contains(&"--model"), "got {args:?}");
-        assert!(args.contains(&"grok-2"), "got {args:?}");
-    }
-
-    #[tokio::test]
-    async fn env_is_forwarded_to_child() {
-        // Echo the env var to stderr, then emit valid JSON to stdout.
-        let script =
-            "printf 'ENV=%s\\n' \"$GROK_TEST_ENV_VAR\" 1>&2\nprintf '%s' '{\"sessionId\":\"s\"}'";
-        let (_guard, bin) = fake_binary_script(script);
-        let mut s = grok_agent(bin.to_string_lossy());
-        s.env = vec![("GROK_TEST_ENV_VAR".into(), "env-value".into())];
-        let agent = s;
-        let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(Path::new("."), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
-        assert!(sink.stderr().await.contains("ENV=env-value"));
+        assert!(args.contains(&"--always-approve"), "got {args:?}");
     }
 
     // -----------------------------------------------------------------
@@ -342,11 +407,10 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
     async fn without_session_id_file_emits_no_session_flag() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
-        let agent = grok_agent(bin.to_string_lossy());
+        let d = driver(bin.to_string_lossy());
         let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
+        let (result, sink) = drive_capturing(d, tmp.path(), &prompt).await;
+        result.expect("run ok");
         assert!(
             !sink.stderr().await.lines().any(|l| l == "-s"),
             "unset session_id_file must not emit -s",
@@ -368,14 +432,12 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
     async fn generates_and_writes_session_id_on_first_run() {
         let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
         let tmp = TempDir::new().expect("tmp");
-        let mut s = grok_agent(bin.to_string_lossy());
-        s.session_id_file = Some(PathBuf::from(".iter/session-id"));
-        let agent = s;
+        let mut d = driver(bin.to_string_lossy());
+        d.session_id_file = Some(PathBuf::from(".iter/session-id"));
 
         let prompt = Prompt::from("x");
-        let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
-        let ctx = ctx.with_declared_env(agent.declared_env());
-        agent.run(ctx).await.expect("run ok");
+        let (result, sink) = drive_capturing(d, tmp.path(), &prompt).await;
+        result.expect("run ok");
 
         let emitted_uuid =
             session_id_from_argv(&sink.stderr().await).expect("-s <uuid> must appear in argv");
@@ -399,17 +461,13 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
             .await
             .expect("seed session id");
 
-        let mut s = grok_agent("placeholder");
-        s.session_id_file = Some(PathBuf::from(".iter/session-id"));
-
         let prompt = Prompt::from("x");
         for _ in 0..2 {
             let (_guard, bin) = fake_binary_script(FAKE_JSON_OK);
-            s.command = bin.to_string_lossy().into_owned();
-            let agent = s.clone();
-            let (ctx, sink) = ctx_capturing(tmp.path(), &prompt);
-            let ctx = ctx.with_declared_env(agent.declared_env());
-            agent.run(ctx).await.expect("run ok");
+            let mut d = driver(bin.to_string_lossy());
+            d.session_id_file = Some(PathBuf::from(".iter/session-id"));
+            let (result, sink) = drive_capturing(d, tmp.path(), &prompt).await;
+            result.expect("run ok");
             assert_eq!(
                 session_id_from_argv(&sink.stderr().await).as_deref(),
                 Some(fixed),

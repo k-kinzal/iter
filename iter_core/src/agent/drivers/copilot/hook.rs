@@ -1,5 +1,5 @@
 //! Project-local agentStop hook for
-//! [`CopilotAgent`](crate::agent::CopilotAgent)'s interactive/TUI mode.
+//! [`CopilotDriver`](crate::agent::CopilotDriver)'s interactive/TUI mode.
 //!
 //! The stop hook exists for **one reason**: to terminate the Copilot
 //! interactive TUI session after the agent finishes its task.
@@ -67,7 +67,7 @@ fn hook_script_body(user_hooks_script: Option<&Path>) -> String {
     use std::fmt::Write;
     let mut script = String::from(
         "#!/usr/bin/env bash\n\
-         # iter agentStop hook for Copilot — installed by iter_core::agent::CopilotAgent.\n\
+         # iter agentStop hook for Copilot — installed by iter_core::agent::CopilotDriver.\n\
          #\n\
          # Terminates the Copilot TUI session after the agent finishes its task.\n\
          # Runs any pre-existing user agentStop hook commands first, then sends\n\
@@ -112,6 +112,30 @@ pub(crate) struct HookBundle {
 }
 
 impl HookBundle {
+    /// Reconstruct the bundle handle for `cwd` without touching the
+    /// filesystem.
+    ///
+    /// Every field — both backup slots included — is a pure path derivation
+    /// from `cwd` and module constants, so a bundle installed by
+    /// [`install`](Self::install) can be finalized later by a fresh handle —
+    /// the cleanup step of the agent cycle uses this so the driver stays
+    /// stateless between `prepare` and `cleanup`. Safe even when nothing was
+    /// installed: [`finalize`](Self::finalize) restores nothing when neither
+    /// a backup nor an absent-marker exists.
+    pub(crate) fn reattach(cwd: &Path) -> Self {
+        let github_hooks_dir = cwd.join(HOOKS_DIR);
+        let bundle_dir = github_hooks_dir.join(BUNDLE_DIR);
+        let config_path = github_hooks_dir.join(HOOK_CONFIG_FILE);
+        let script_path = github_hooks_dir.join(HOOK_SCRIPT_FILE);
+        let config_slot = BackupSlot::new(&bundle_dir, config_path, CONFIG_BACKUP_NAME);
+        let script_slot = BackupSlot::new(&bundle_dir, script_path, SCRIPT_BACKUP_NAME);
+        Self {
+            github_hooks_dir,
+            config_slot,
+            script_slot,
+        }
+    }
+
     /// Install the workspace-local agentStop hook bundle under `cwd`.
     ///
     /// `isolation_key` is the per-exploration hook isolation key.
@@ -130,8 +154,12 @@ impl HookBundle {
         let script_slot = BackupSlot::new(&bundle_dir, script_path.clone(), SCRIPT_BACKUP_NAME);
         script_slot.snapshot().await?;
 
+        // Skip iter's own hook when extracting so a reinstall over a leaked
+        // prior install does not capture it as a "user hook".
+        let own_hook_cmd = format!("./{HOOKS_DIR}/{HOOK_SCRIPT_FILE}");
         let hooks_dir = workspace_hooks_dir(cwd, isolation_key)?;
-        let user_hooks_script = extract_user_hooks(&config_path, "agentStop", &hooks_dir).await?;
+        let user_hooks_script =
+            extract_user_hooks(&config_path, "agentStop", &hooks_dir, &own_hook_cmd).await?;
 
         let config_payload = json!({
             "version": 1,
@@ -139,7 +167,7 @@ impl HookBundle {
                 "agentStop": [
                     {
                         "type": "command",
-                        "bash": format!("./{HOOKS_DIR}/{HOOK_SCRIPT_FILE}")
+                        "bash": own_hook_cmd
                     }
                 ]
             }

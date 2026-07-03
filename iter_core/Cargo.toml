@@ -18,6 +18,7 @@ driver-redis = ["dep:redis"]
 
 [dependencies]
 claude_code.workspace = true
+sandbox.workspace = true
 iter_tracing.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true }
