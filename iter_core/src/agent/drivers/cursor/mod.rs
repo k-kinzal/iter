@@ -171,10 +171,8 @@ impl AgentDriver for CursorDriver {
         AgentKind::Cursor
     }
 
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Cursor::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {
@@ -187,11 +185,7 @@ impl AgentDriver for CursorDriver {
 /// Refinement order: token-limit (in stdout or stderr) → signal → exit `2`
 /// below-min-version → a generic no-result error carrying the exit code and a
 /// short diagnostic (a `type:"error"` record's message, else the stderr tail).
-fn classify_failure(
-    raw: &RawOutput<'_>,
-    parsed: &PrintOutput,
-    stdout: &str,
-) -> CursorOutputError {
+fn classify_failure(raw: &RawOutput<'_>, parsed: &PrintOutput, stdout: &str) -> CursorOutputError {
     let stderr = raw.stderr_str();
     if let Some(detail) = detect_token_limit(stdout).or_else(|| detect_token_limit(&stderr)) {
         return CursorOutputError::TokenLimit(detail);

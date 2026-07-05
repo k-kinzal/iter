@@ -130,7 +130,11 @@ impl McpSubcommand {
                 match &options.transport {
                     McpTransport::Http { url } => push_pair(args, "--url", url),
                     McpTransport::Preset(preset) => push_pair(args, "--preset", preset),
-                    McpTransport::Stdio { command, env, args: cmd_args } => {
+                    McpTransport::Stdio {
+                        command,
+                        env,
+                        args: cmd_args,
+                    } => {
                         push_pair(args, "--command", command);
                         for (key, value) in env {
                             args.push("--env".into());

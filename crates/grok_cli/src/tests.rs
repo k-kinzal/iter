@@ -106,7 +106,15 @@ fn single_always_approve_and_resume_render_after_output_format() {
         .json();
     assert_eq!(
         argv(&command),
-        ["-p", "hi", "--output-format", "json", "--always-approve", "-r", "s1"]
+        [
+            "-p",
+            "hi",
+            "--output-format",
+            "json",
+            "--always-approve",
+            "-r",
+            "s1"
+        ]
     );
 }
 
@@ -124,7 +132,10 @@ fn resume_most_recent_renders_bare_r() {
     let command = SingleCommand::prompt("hi")
         .resume(ResumeTarget::MostRecent)
         .json();
-    assert_eq!(argv(&command), ["-p", "hi", "--output-format", "json", "-r"]);
+    assert_eq!(
+        argv(&command),
+        ["-p", "hi", "--output-format", "json", "-r"]
+    );
 }
 
 #[test]
@@ -228,7 +239,9 @@ fn mcp_add_stdio_renders_env_name_then_command_and_args_after_dashdash() {
     })));
     assert_eq!(
         argv(&command),
-        ["mcp", "add", "--env", "K=V", "fs", "--", "npx", "-y", "server"]
+        [
+            "mcp", "add", "--env", "K=V", "fs", "--", "npx", "-y", "server"
+        ]
     );
 }
 
@@ -305,14 +318,17 @@ fn plugin_install_renders_trust_then_source() {
         source: "acme/plugin".to_owned(),
         trust: true,
     });
-    assert_eq!(argv(&command), ["plugin", "install", "--trust", "acme/plugin"]);
+    assert_eq!(
+        argv(&command),
+        ["plugin", "install", "--trust", "acme/plugin"]
+    );
 }
 
 #[test]
 fn plugin_marketplace_list_nests_under_marketplace() {
-    let command = PluginCommand::new(PluginSubcommand::Marketplace(
-        MarketplaceSubcommand::List { args: Vec::new() },
-    ));
+    let command = PluginCommand::new(PluginSubcommand::Marketplace(MarketplaceSubcommand::List {
+        args: Vec::new(),
+    }));
     assert_eq!(argv(&command), ["plugin", "marketplace", "list"]);
 }
 
@@ -355,7 +371,10 @@ fn leader_info_renders_pid_then_json() {
         pid: Some(4321),
         json: true,
     });
-    assert_eq!(argv(&command), ["leader", "info", "--pid", "4321", "--json"]);
+    assert_eq!(
+        argv(&command),
+        ["leader", "info", "--pid", "4321", "--json"]
+    );
 }
 
 #[test]
@@ -366,9 +385,9 @@ fn leader_kill_is_bare() {
 
 #[test]
 fn leader_profile_status_nests_under_profile() {
-    let command = LeaderCommand::new(LeaderSubcommand::Profile(
-        LeaderProfileSubcommand::Status { args: Vec::new() },
-    ));
+    let command = LeaderCommand::new(LeaderSubcommand::Profile(LeaderProfileSubcommand::Status {
+        args: Vec::new(),
+    }));
     assert_eq!(argv(&command), ["leader", "profile", "status"]);
 }
 
@@ -407,7 +426,10 @@ fn trace_renders_local_json_then_session_id() {
 
 #[test]
 fn completions_shell_is_a_bare_positional() {
-    assert_eq!(argv(&CompletionsCommand::new(CompletionShell::Zsh)), ["completions", "zsh"]);
+    assert_eq!(
+        argv(&CompletionsCommand::new(CompletionShell::Zsh)),
+        ["completions", "zsh"]
+    );
 }
 
 #[test]
@@ -571,7 +593,13 @@ fn try_from_succeeds_when_terminal_present_even_on_failure_exit() {
 fn try_from_errors_only_when_no_terminal_and_failed() {
     let result = SingleOutput::try_from(output("not json at all\n", 2));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -603,7 +631,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let grok = Grok::new(script.path());
     let result = async_runtime().block_on(grok.execute(&SingleCommand::prompt("hi").json()));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -640,7 +674,13 @@ fn stream_surfaces_failure_exit_after_events() {
         assert_eq!(first.event_type(), EventType::Text);
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });

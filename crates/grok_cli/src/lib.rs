@@ -17,11 +17,11 @@ mod agent;
 mod args;
 mod auth;
 mod cli;
-mod options;
 mod leader;
 mod mcp;
 mod memory;
 mod ops;
+mod options;
 mod output;
 mod plugin;
 mod run;
@@ -34,7 +34,6 @@ pub use agent::{AgentCommand, AgentTransport};
 pub use args::ToArgs;
 pub use auth::{LoginCommand, LogoutCommand};
 pub use cli::{Error, ExecutableCommand, Grok};
-pub use options::GlobalOptions;
 pub use leader::{LeaderCommand, LeaderProfileSubcommand, LeaderSubcommand};
 pub use mcp::{McpAdd, McpCommand, McpSubcommand};
 pub use memory::{MemoryCommand, MemorySubcommand};
@@ -42,6 +41,7 @@ pub use ops::{
     CompletionsCommand, DashboardCommand, InspectCommand, ModelsCommand, SetupCommand,
     UpdateCommand, VersionCommand, WrapCommand,
 };
+pub use options::GlobalOptions;
 pub use output::{Event, EventStream, EventType, SingleOutput, StopReason, Usage};
 pub use plugin::{MarketplaceSubcommand, PluginCommand, PluginSubcommand};
 pub use run::{RunCommand, RunOptions};

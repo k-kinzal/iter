@@ -22,7 +22,7 @@
 //!   so interactive mode invokes the binary as:
 //!
 //!   ```text
-//!   codex -c "features.codex_hooks=true" [extra-args...] <prompt>
+//!   codex --config "features.codex_hooks=true" [extra-args...] <prompt>
 //!   ```
 //!
 //!   The hook's sole purpose is to terminate the TUI session after the
@@ -47,7 +47,7 @@
 //!
 //! - The subcommand for print mode is `exec`. Some Codex builds use
 //!   `run` or a bare prompt.
-//! - `codex` accepts `-c "features.codex_hooks=true"` to enable the Stop
+//! - `codex` accepts `--config "features.codex_hooks=true"` to enable the Stop
 //!   hook protocol in interactive mode.
 //! - The prompt is a positional argument, not a `--prompt=...` flag.
 //!
@@ -67,9 +67,8 @@ use crate::agent::{AgentError, AgentKind, AgentMode, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 use async_trait::async_trait;
-use codex_cli::{Codex, ExecCommand};
+use codex_cli::{Codex, CommonConfig, ConfigOverride, ExecCommand, RunCommand};
 use thiserror::Error;
-use tokio::process::Command;
 
 mod hook;
 
@@ -79,9 +78,9 @@ use crate::agent::process::{
 };
 use hook::HookBundle;
 
-/// `-c` override that enables Codex's Stop hook protocol. Passed to the
-/// interactive-mode command as a separate argument pair.
-const CODEX_HOOKS_FEATURE_FLAG: &str = "features.codex_hooks=true";
+/// Config override that enables Codex's Stop hook protocol in interactive mode.
+const CODEX_HOOKS_FEATURE_CONFIG_KEY: &str = "features.codex_hooks";
+const CODEX_HOOKS_FEATURE_CONFIG_VALUE: &str = "true";
 
 /// Codex's usage-limit message — treated as a token/usage-limit class even
 /// though it is not one of the generic context-window patterns.
@@ -177,7 +176,7 @@ pub struct CodexDriver {
     /// Print vs. interactive mode. Required.
     pub mode: AgentMode,
     /// Additional arguments inserted between the `exec` subcommand (or,
-    /// in interactive mode, between the `-c` feature flag pair) and the
+    /// in interactive mode, between the feature config override and the
     /// positional prompt.
     pub args: Vec<String>,
     /// User-declared environment variables passed to the child process.
@@ -186,24 +185,6 @@ pub struct CodexDriver {
     /// stop-hook installation from another's when both explore the same
     /// workspace path. `"default"` for standalone `iter run`.
     pub hook_isolation_key: String,
-}
-
-impl CodexDriver {
-    /// Build the interactive-mode command. Passes the Codex hooks
-    /// feature flag via `-c` so the installed Stop hook actually fires,
-    /// then any user-supplied extras, then the prompt as the final
-    /// positional argument so `codex` seeds its initial user turn before
-    /// dropping into the TUI.
-    fn build_interactive_command(&self, path: &Path, prompt: &Prompt) -> Command {
-        let mut cmd = Command::new(&self.command);
-        cmd.current_dir(path);
-        cmd.arg("-c").arg(CODEX_HOOKS_FEATURE_FLAG);
-        for arg in &self.args {
-            cmd.arg(arg);
-        }
-        cmd.arg(prompt.as_str());
-        cmd
-    }
 }
 
 #[async_trait]
@@ -240,7 +221,21 @@ impl AgentDriver for CodexDriver {
                 })
             }
             AgentMode::Interactive => {
-                let mut process = self.build_interactive_command(path, prompt);
+                let run = RunCommand {
+                    common: CommonConfig {
+                        config: vec![ConfigOverride::new(
+                            CODEX_HOOKS_FEATURE_CONFIG_KEY,
+                            CODEX_HOOKS_FEATURE_CONFIG_VALUE,
+                        )],
+                        ..CommonConfig::default()
+                    },
+                    prompt: Some(prompt.as_str().to_owned()),
+                    ..RunCommand::default()
+                }
+                .with_args(self.args.iter().cloned());
+                let mut process = Codex::new(&self.command)
+                    .with_current_dir(path)
+                    .to_process(&run);
                 apply_user_env(&mut process, &self.env);
                 inject_agent_otel_resource_attrs(&mut process, path, "codex");
                 Ok(AgentCommand {
@@ -328,6 +323,10 @@ impl AgentDriver for CodexDriver {
 
     fn kind(&self) -> AgentKind {
         AgentKind::Codex
+    }
+
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Codex::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {
@@ -426,16 +425,21 @@ mod tests {
         let prompt = Prompt::from("the-prompt");
         let command = d.command(Path::new("."), &prompt, None).expect("command");
         let args = argv(&command);
-        // Ordering: `-c` before the feature flag, feature flag before extras,
-        // extras before the prompt.
-        let c_pos = args.iter().position(|a| a == "-c").expect("-c present");
+        // Ordering: `--config` before the feature override, override before
+        // extras, extras before the prompt.
+        let config_pos = args
+            .iter()
+            .position(|a| a == "--config")
+            .expect("--config present");
+        let feature_config =
+            format!("{CODEX_HOOKS_FEATURE_CONFIG_KEY}={CODEX_HOOKS_FEATURE_CONFIG_VALUE}");
         let feat_pos = args
             .iter()
-            .position(|a| a == CODEX_HOOKS_FEATURE_FLAG)
-            .expect("feature flag");
+            .position(|a| a == &feature_config)
+            .expect("feature config");
         let model_pos = args.iter().position(|a| a == "--model").expect("--model");
         let prompt_pos = args.iter().position(|a| a == "the-prompt").expect("prompt");
-        assert!(c_pos < feat_pos);
+        assert!(config_pos < feat_pos);
         assert!(feat_pos < model_pos);
         assert!(model_pos < prompt_pos);
         assert_eq!(command.stdin, None, "Inherit mode must not feed stdin");

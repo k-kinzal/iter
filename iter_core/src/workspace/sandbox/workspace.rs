@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::Workspace;
-use crate::agent::command_path::CommandPath;
 use crate::time::{Clock, SystemClock};
 use crate::workspace::WorkspaceError;
 use crate::workspace::workspace::{ActiveWorkspace, StdioMode, finish_spawn};
@@ -120,6 +119,17 @@ fn expand_env_pass(patterns: &[String]) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+fn command_available(command: &str) -> bool {
+    let path = Path::new(command);
+    if path.is_absolute() || path.components().count() > 1 {
+        return path.is_file();
+    }
+
+    std::env::var_os("PATH").is_some_and(|path_env| {
+        std::env::split_paths(&path_env).any(|entry| entry.join(command).is_file())
+    })
 }
 
 /// Workspace that clones the base directory into a tmpdir and confines
@@ -238,11 +248,11 @@ impl SandboxWorkspace {
     pub fn detect_backend_available() -> bool {
         #[cfg(target_os = "macos")]
         {
-            CommandPath::resolve("sandbox-exec").is_some()
+            command_available("sandbox-exec")
         }
         #[cfg(target_os = "linux")]
         {
-            CommandPath::resolve("bwrap").is_some()
+            command_available("bwrap")
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {

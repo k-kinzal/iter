@@ -7,7 +7,7 @@
 
 use std::ffi::OsString;
 
-use crate::args::{ToArgs, push_flag, push_enum, push_opt};
+use crate::args::{ToArgs, push_enum, push_flag, push_opt};
 use crate::options::CommonConfig;
 use crate::values::ApprovalPolicy;
 
@@ -56,6 +56,9 @@ pub struct RunCommand {
     pub common: CommonConfig,
     /// Root-run-specific options.
     pub options: RunOptions,
+    /// Additional root-run arguments inserted after managed options and before
+    /// the optional prompt positional.
+    pub args: Vec<String>,
     /// Optional prompt positional seeding the first turn.
     pub prompt: Option<String>,
 }
@@ -69,12 +72,26 @@ impl RunCommand {
             ..Self::default()
         }
     }
+
+    /// Return a copy of this root run with additional raw arguments.
+    #[must_use]
+    pub fn with_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
 }
 
 impl ToArgs for RunCommand {
     fn write_args(&self, args: &mut Vec<OsString>) {
         self.common.render(args);
         self.options.render(args);
+        for arg in &self.args {
+            args.push(arg.into());
+        }
         if let Some(prompt) = &self.prompt {
             args.push(prompt.into());
         }

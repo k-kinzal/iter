@@ -260,7 +260,11 @@ impl RunOptions {
         push_enum(args, "--log-level", self.log_level.map(LogLevel::as_str));
 
         // instructions / experimental
-        push_flag(args, self.no_custom_instructions, "--no-custom-instructions");
+        push_flag(
+            args,
+            self.no_custom_instructions,
+            "--no-custom-instructions",
+        );
         push_flag(args, self.experimental, "--experimental");
         push_flag(args, self.no_experimental, "--no-experimental");
         push_attached(args, "--bash-env", self.bash_env.map(Toggle::as_str));
@@ -301,6 +305,14 @@ fn render_share(args: &mut Vec<OsString>, share: Option<&ShareTarget>) {
 pub struct RunCommand {
     /// The full root-run option surface.
     pub options: RunOptions,
+    /// Additional root-run arguments inserted after managed options and before
+    /// the optional interactive positional prompt.
+    pub args: Vec<String>,
+    /// Optional bare positional prompt used to seed an interactive session.
+    ///
+    /// This is intentionally separate from [`RunOptions::prompt`], which
+    /// renders `-p/--prompt` and selects a non-interactive one-shot run.
+    pub positional: Option<String>,
 }
 
 impl RunCommand {
@@ -312,6 +324,28 @@ impl RunCommand {
                 prompt: Some(prompt.into()),
                 ..RunOptions::default()
             },
+            args: Vec::new(),
+            positional: None,
+        }
+    }
+
+    /// Return a copy of this root run with additional raw arguments.
+    #[must_use]
+    pub fn with_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Build an interactive run seeded with a bare positional prompt.
+    #[must_use]
+    pub fn interactive_prompt(prompt: impl Into<String>) -> Self {
+        Self {
+            positional: Some(prompt.into()),
+            ..Self::default()
         }
     }
 
@@ -330,6 +364,12 @@ impl RunCommand {
 impl ToArgs for RunCommand {
     fn write_args(&self, args: &mut Vec<OsString>) {
         self.options.render(args);
+        for arg in &self.args {
+            args.push(arg.into());
+        }
+        if let Some(positional) = &self.positional {
+            args.push(positional.into());
+        }
     }
 }
 

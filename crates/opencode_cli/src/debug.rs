@@ -81,11 +81,7 @@ impl DebugSubcommand {
             Self::Scrap => args.push("scrap".into()),
             Self::Skill => args.push("skill".into()),
             Self::Snapshot(command) => command.render(args),
-            Self::Agent {
-                name,
-                tool,
-                params,
-            } => {
+            Self::Agent { name, tool, params } => {
                 args.push("agent".into());
                 push_opt(args, "--tool", tool.as_deref());
                 push_opt(args, "--params", params.as_deref());
@@ -175,11 +171,7 @@ impl DebugRgSubcommand {
                 args.push("tree".into());
                 push_opt_display(args, "--limit", *limit);
             }
-            Self::Files {
-                query,
-                glob,
-                limit,
-            } => {
+            Self::Files { query, glob, limit } => {
                 args.push("files".into());
                 push_opt(args, "--query", query.as_deref());
                 push_opt(args, "--glob", glob.as_deref());

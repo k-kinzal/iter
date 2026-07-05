@@ -220,10 +220,7 @@ impl RunOutput {
     }
 
     fn last_of_type(&self, marker: &str) -> Option<&Event> {
-        self.events
-            .iter()
-            .rev()
-            .find(|event| event.type_is(marker))
+        self.events.iter().rev().find(|event| event.type_is(marker))
     }
 
     /// The terminal `result` record, from the last `result` event.

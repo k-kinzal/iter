@@ -20,7 +20,6 @@ use crate::agent::{AgentCommand, AgentSubcommand};
 use crate::args::ToArgs;
 use crate::auth::{AuthCommand, AuthSubcommand};
 use crate::cli::{Error, Opencode};
-use crate::options::{GlobalOptions, ServerOptions};
 use crate::db::{DbCommand, DbSubcommand};
 use crate::debug::{
     DebugCommand, DebugFileSubcommand, DebugLspSubcommand, DebugRgSubcommand,
@@ -32,6 +31,7 @@ use crate::ops::{
     AttachCommand, CompletionCommand, ExportCommand, ImportCommand, ModelsCommand, PrCommand,
     StatsCommand, UninstallCommand, UpgradeCommand,
 };
+use crate::options::{GlobalOptions, ServerOptions};
 use crate::output::{EventType, RunOutput};
 use crate::run::{RunCommand, RunOptions, TuiCommand};
 use crate::server::{AcpCommand, ServeCommand};
@@ -144,7 +144,9 @@ fn run_continuation_fresh_emits_no_selector() {
     let command = RunCommand::message("go");
     let args = argv(&command);
     assert!(
-        !args.iter().any(|a| a == "--continue" || a == "--session" || a == "--fork"),
+        !args
+            .iter()
+            .any(|a| a == "--continue" || a == "--session" || a == "--fork"),
         "fresh continuation emits no selector: {args:?}",
     );
     assert_eq!(args, ["run", "go"]);
@@ -256,7 +258,15 @@ fn serve_renders_bind_and_repeated_cors() {
     };
     assert_eq!(
         argv(&command),
-        ["serve", "--port", "8080", "--cors", "a.example", "--cors", "b.example"]
+        [
+            "serve",
+            "--port",
+            "8080",
+            "--cors",
+            "a.example",
+            "--cors",
+            "b.example"
+        ]
     );
 }
 
@@ -284,7 +294,10 @@ fn auth_login_forwards_optional_url() {
         provider: None,
         method: None,
     });
-    assert_eq!(argv(&command), ["auth", "login", "https://provider.example"]);
+    assert_eq!(
+        argv(&command),
+        ["auth", "login", "https://provider.example"]
+    );
 }
 
 #[test]
@@ -296,7 +309,14 @@ fn auth_login_renders_provider_and_method_before_url() {
     });
     assert_eq!(
         argv(&command),
-        ["auth", "login", "--provider", "anthropic", "--method", "console"]
+        [
+            "auth",
+            "login",
+            "--provider",
+            "anthropic",
+            "--method",
+            "console"
+        ]
     );
 }
 
@@ -344,7 +364,12 @@ fn agent_mode_choices_match_opencode() {
 #[test]
 fn mcp_add_forwards_passthrough_args() {
     let command = McpCommand::new(McpSubcommand::Add {
-        args: vec!["fs".to_owned(), "--".to_owned(), "npx".to_owned(), "server".to_owned()],
+        args: vec![
+            "fs".to_owned(),
+            "--".to_owned(),
+            "npx".to_owned(),
+            "server".to_owned(),
+        ],
     });
     assert_eq!(argv(&command), ["mcp", "add", "fs", "--", "npx", "server"]);
 }
@@ -357,7 +382,14 @@ fn github_run_renders_event_and_token() {
     });
     assert_eq!(
         argv(&command),
-        ["github", "run", "--event", "issue_comment", "--token", "github_pat_123"]
+        [
+            "github",
+            "run",
+            "--event",
+            "issue_comment",
+            "--token",
+            "github_pat_123"
+        ]
     );
 }
 
@@ -444,15 +476,17 @@ fn debug_lsp_diagnostics_names_the_file() {
     let command = DebugCommand::new(DebugSubcommand::Lsp(DebugLspSubcommand::Diagnostics {
         file: "src/main.rs".to_owned(),
     }));
-    assert_eq!(argv(&command), ["debug", "lsp", "diagnostics", "src/main.rs"]);
+    assert_eq!(
+        argv(&command),
+        ["debug", "lsp", "diagnostics", "src/main.rs"]
+    );
 }
 
 #[test]
 fn debug_lsp_document_symbols_uses_the_hyphenated_leaf() {
-    let command =
-        DebugCommand::new(DebugSubcommand::Lsp(DebugLspSubcommand::DocumentSymbols {
-            uri: "file:///x".to_owned(),
-        }));
+    let command = DebugCommand::new(DebugSubcommand::Lsp(DebugLspSubcommand::DocumentSymbols {
+        uri: "file:///x".to_owned(),
+    }));
     assert_eq!(
         argv(&command),
         ["debug", "lsp", "document-symbols", "file:///x"]
@@ -505,8 +539,9 @@ fn debug_file_read_names_the_path() {
 
 #[test]
 fn debug_file_tree_omits_optional_dir() {
-    let command =
-        DebugCommand::new(DebugSubcommand::File(DebugFileSubcommand::Tree { dir: None }));
+    let command = DebugCommand::new(DebugSubcommand::File(DebugFileSubcommand::Tree {
+        dir: None,
+    }));
     assert_eq!(argv(&command), ["debug", "file", "tree"]);
 }
 
@@ -530,7 +565,10 @@ fn attach_places_url_after_flags() {
         url: "http://localhost:4096".to_owned(),
         ..AttachCommand::default()
     };
-    assert_eq!(argv(&command), ["attach", "--continue", "http://localhost:4096"]);
+    assert_eq!(
+        argv(&command),
+        ["attach", "--continue", "http://localhost:4096"]
+    );
 }
 
 #[test]
@@ -644,7 +682,9 @@ fn to_process_carries_cwd_and_env() {
 
 #[test]
 fn with_env_replaces_existing_key() {
-    let opencode = Opencode::default().with_env("K", "one").with_env("K", "two");
+    let opencode = Opencode::default()
+        .with_env("K", "one")
+        .with_env("K", "two");
     let envs: Vec<_> = opencode
         .envs()
         .map(|(key, value)| {
@@ -705,10 +745,7 @@ fn session_error_is_the_authoritative_failure_signal() {
     assert!(parsed.is_error());
     let error = parsed.error().expect("an error event");
     assert_eq!(error.message(), "context length exceeded");
-    assert_eq!(
-        parsed.events()[1].event_type(),
-        EventType::SessionError
-    );
+    assert_eq!(parsed.events()[1].event_type(), EventType::SessionError);
 }
 
 #[test]
@@ -745,7 +782,13 @@ fn try_from_errors_only_when_empty_and_failed() {
     let out = output("not json at all\n", 2);
     let result = RunOutput::try_from(out);
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -778,7 +821,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let opencode = Opencode::new(script.path());
     let result = async_runtime().block_on(opencode.execute(&RunCommand::message("hi").json()));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(1), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(1),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -815,7 +864,13 @@ fn stream_surfaces_failure_exit_after_events() {
         assert_eq!(first.event_type(), EventType::Session);
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });

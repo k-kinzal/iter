@@ -86,15 +86,27 @@ use crate::workspace::StdioMode;
 use async_trait::async_trait;
 use copilot_cli::{Copilot, RunCommand, RunOptions, RunOutput, SessionError};
 use thiserror::Error;
-use tokio::process::Command;
 
 mod hook;
 
 use crate::agent::process::{
     RawExit, RawOutput, apply_user_env, detect_token_limit, inject_agent_otel_resource_attrs,
-    inject_copilot_trace_parent_env,
 };
 use hook::HookBundle;
+
+/// Inject the current trace context in the form GitHub Copilot CLI consumes.
+///
+/// The standalone Copilot CLI 1.0.43 does not read `TRACEPARENT` as an
+/// incoming `OTel` carrier. Its SDK reads `COPILOT_TRACE_PARENT` and forwards it
+/// to Copilot API calls as `X-Copilot-Traceparent`, so keep this path explicit
+/// instead of reusing the generic environment-carrier helper.
+fn inject_copilot_trace_parent_env(command: &mut tokio::process::Command) -> bool {
+    let Some(traceparent) = iter_tracing::current_traceparent() else {
+        return false;
+    };
+    command.env("COPILOT_TRACE_PARENT", traceparent);
+    true
+}
 
 /// CLI-shaped error hierarchy for the Copilot CLI's headless output.
 ///
@@ -295,34 +307,6 @@ pub struct CopilotDriver {
     pub hook_isolation_key: String,
 }
 
-impl CopilotDriver {
-    /// Interactive-mode argv builder: binary + subcommand + args + positional
-    /// prompt. The interactive TUI takes the prompt as its final positional
-    /// argument; headless mode instead uses the [`copilot_cli::RunCommand`]
-    /// builder, which owns the `--prompt … --output-format json` shape.
-    fn build_command(&self, path: &Path, prompt: &Prompt) -> Command {
-        let mut cmd = Command::new(&self.command);
-        cmd.current_dir(path);
-        match &self.subcommand {
-            Some(sub) => {
-                for arg in sub {
-                    cmd.arg(arg);
-                }
-            }
-            None => {
-                for arg in CANONICAL_SUBCOMMAND {
-                    cmd.arg(arg);
-                }
-            }
-        }
-        for arg in &self.args {
-            cmd.arg(arg);
-        }
-        cmd.arg(prompt.as_str());
-        cmd
-    }
-}
-
 #[async_trait]
 impl AgentDriver for CopilotDriver {
     fn command(
@@ -339,6 +323,7 @@ impl AgentDriver for CopilotDriver {
                         allow_all_tools: true,
                         ..RunOptions::default()
                     },
+                    ..RunCommand::default()
                 }
                 .json();
                 let mut process = Copilot::new(&self.command)
@@ -360,7 +345,17 @@ impl AgentDriver for CopilotDriver {
                 })
             }
             AgentMode::Interactive => {
-                let mut process = self.build_command(path, prompt);
+                let mut args = match &self.subcommand {
+                    Some(sub) => sub.clone(),
+                    None => CANONICAL_SUBCOMMAND
+                        .iter()
+                        .map(|arg| (*arg).to_owned())
+                        .collect(),
+                };
+                args.extend(self.args.iter().cloned());
+                let mut process = Copilot::new(&self.command)
+                    .with_current_dir(path)
+                    .to_process(&RunCommand::interactive_prompt(prompt.as_str()).with_args(args));
                 apply_user_env(&mut process, &self.env);
                 inject_agent_otel_resource_attrs(&mut process, path, "copilot");
                 inject_copilot_trace_parent_env(&mut process);
@@ -408,6 +403,10 @@ impl AgentDriver for CopilotDriver {
 
     fn kind(&self) -> AgentKind {
         AgentKind::Copilot
+    }
+
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Copilot::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {

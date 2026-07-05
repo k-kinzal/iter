@@ -253,9 +253,7 @@ impl AgentDriver for AntigravityDriver {
         let prompt_text = prompt.as_str().to_owned();
         let (mode, io) = match self.mode {
             AgentMode::Headless => (RunMode::Print(prompt_text), StdioMode::Piped),
-            AgentMode::Interactive => {
-                (RunMode::Interactive(Some(prompt_text)), StdioMode::Inherit)
-            }
+            AgentMode::Interactive => (RunMode::Interactive(Some(prompt_text)), StdioMode::Inherit),
         };
         let run = RunCommand {
             mode,
@@ -291,6 +289,10 @@ impl AgentDriver for AntigravityDriver {
 
     fn kind(&self) -> AgentKind {
         AgentKind::Antigravity
+    }
+
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Antigravity::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {

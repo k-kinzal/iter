@@ -69,11 +69,7 @@ fn fake_agy(stdout: &str, stderr: &str, code: i32) -> tempfile::NamedTempFile {
     );
     file.write_all(script.as_bytes()).expect("write script");
     file.flush().expect("flush script");
-    let mut perms = file
-        .as_file()
-        .metadata()
-        .expect("metadata")
-        .permissions();
+    let mut perms = file.as_file().metadata().expect("metadata").permissions();
     perms.set_mode(0o755);
     file.as_file().set_permissions(perms).expect("chmod");
     file
@@ -239,7 +235,10 @@ fn go_duration_renders_parse_duration_compatible_strings() {
     assert_eq!(GoDuration::from_secs(3600).render(), "1h0m0s");
     assert_eq!(GoDuration::from_secs(3661).render(), "1h1m1s");
     assert_eq!(GoDuration::from_millis(500).render(), "500ms");
-    assert_eq!(GoDuration::new(Duration::from_millis(1500)).render(), "1.5s");
+    assert_eq!(
+        GoDuration::new(Duration::from_millis(1500)).render(),
+        "1.5s"
+    );
 }
 
 // ----- plugin --------------------------------------------------------------
@@ -268,7 +267,11 @@ fn plugin_install_argv() {
 fn plugin_uninstall_argv() {
     assert_eq!(
         argv(&PluginCommand::uninstall("fmt")),
-        vec!["plugin".to_owned(), "uninstall".to_owned(), "fmt".to_owned()],
+        vec![
+            "plugin".to_owned(),
+            "uninstall".to_owned(),
+            "fmt".to_owned()
+        ],
     );
 }
 
@@ -279,7 +282,11 @@ fn plugin_import_with_source_argv() {
     });
     assert_eq!(
         argv(&command),
-        vec!["plugin".to_owned(), "import".to_owned(), "gemini".to_owned()],
+        vec![
+            "plugin".to_owned(),
+            "import".to_owned(),
+            "gemini".to_owned()
+        ],
     );
 }
 
@@ -292,14 +299,21 @@ fn plugin_import_claude_source_renders_claude() {
     });
     assert_eq!(
         argv(&command),
-        vec!["plugin".to_owned(), "import".to_owned(), "claude".to_owned()],
+        vec![
+            "plugin".to_owned(),
+            "import".to_owned(),
+            "claude".to_owned()
+        ],
     );
 }
 
 #[test]
 fn plugin_import_without_source_omits_positional() {
     let command = PluginCommand::new(PluginSubcommand::Import { source: None });
-    assert_eq!(argv(&command), vec!["plugin".to_owned(), "import".to_owned()]);
+    assert_eq!(
+        argv(&command),
+        vec!["plugin".to_owned(), "import".to_owned()]
+    );
 }
 
 #[test]
@@ -391,16 +405,21 @@ fn to_process_sets_cwd_and_env() {
     let process = agy.to_process(&RunCommand::print("x"));
     let std = process.as_std();
     assert_eq!(std.get_current_dir(), Some(std::path::Path::new("/work")));
-    let has_env = std.get_envs().any(|(k, v)| {
-        k == std::ffi::OsStr::new("AGY_X") && v == Some(std::ffi::OsStr::new("1"))
-    });
+    let has_env = std
+        .get_envs()
+        .any(|(k, v)| k == std::ffi::OsStr::new("AGY_X") && v == Some(std::ffi::OsStr::new("1")));
     assert!(has_env, "declared env must be applied");
 }
 
 #[test]
 fn with_env_replaces_an_existing_key() {
-    let agy = Antigravity::new("agy").with_env("K", "1").with_env("K", "2");
-    let count = agy.envs().filter(|(k, _)| *k == std::ffi::OsStr::new("K")).count();
+    let agy = Antigravity::new("agy")
+        .with_env("K", "1")
+        .with_env("K", "2");
+    let count = agy
+        .envs()
+        .filter(|(k, _)| *k == std::ffi::OsStr::new("K"))
+        .count();
     assert_eq!(count, 1, "the second set must replace, not append");
     let value = agy
         .envs()

@@ -7,9 +7,9 @@
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::io::Write as _;
-use std::os::unix::process::ExitStatusExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Output as ProcessOutput};
 
@@ -400,7 +400,12 @@ fn extensions_install_renders_source_then_flags() {
     });
     assert_eq!(
         argv(&command),
-        ["extensions", "install", "https://example/ext", "--auto-update"]
+        [
+            "extensions",
+            "install",
+            "https://example/ext",
+            "--auto-update"
+        ]
     );
 }
 
@@ -476,7 +481,10 @@ fn extensions_new_types_template_positional() {
         argv(&command),
         ["extensions", "new", "/opt/ext", "mcp-server"]
     );
-    assert_eq!(ExtensionTemplate::CustomCommands.as_str(), "custom-commands");
+    assert_eq!(
+        ExtensionTemplate::CustomCommands.as_str(),
+        "custom-commands"
+    );
     assert_eq!(ExtensionTemplate::ExcludeTools.as_str(), "exclude-tools");
     assert_eq!(ExtensionTemplate::Hooks.as_str(), "hooks");
     assert_eq!(ExtensionTemplate::Policies.as_str(), "policies");
@@ -552,7 +560,14 @@ fn skills_link_types_scope_and_consent() {
     });
     assert_eq!(
         argv(&command),
-        ["skills", "link", "/opt/skill", "--scope", "user", "--consent"]
+        [
+            "skills",
+            "link",
+            "/opt/skill",
+            "--scope",
+            "user",
+            "--consent"
+        ]
     );
 }
 
@@ -744,7 +759,10 @@ fn error_field_is_read_and_flags_failure() {
     let parsed = GeminiOutput::parse(stdout).expect("a record");
     assert!(parsed.is_error());
     let error = parsed.error().expect("an error object");
-    assert_eq!(error.error_type.as_deref(), Some("ContextWindowExceededError"));
+    assert_eq!(
+        error.error_type.as_deref(),
+        Some("ContextWindowExceededError")
+    );
     assert_eq!(error.message.as_deref(), Some("too big"));
     assert_eq!(error.code, Some(42));
 }
@@ -768,7 +786,13 @@ fn try_from_errors_only_when_empty_and_failed() {
     let out = output("not json at all", 2);
     let result = GeminiOutput::try_from(out);
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -824,7 +848,13 @@ fn stream_error_field_surfaces() {
 fn stream_try_from_errors_only_when_empty_and_failed() {
     let result = StreamOutput::try_from(output("garbage", 2));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -850,7 +880,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let gemini = Gemini::new(script.path());
     let result = async_runtime().block_on(gemini.execute(&RunCommand::prompt("hi").json()));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -893,7 +929,13 @@ fn stream_surfaces_failure_exit_after_events() {
         );
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });

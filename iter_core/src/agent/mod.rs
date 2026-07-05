@@ -70,7 +70,6 @@ pub mod drivers;
 // Defining module named for the concept it defines — the path echo is deliberate.
 pub mod agent;
 pub(crate) mod cli_json;
-pub mod command_path;
 pub mod driver;
 pub mod error;
 mod hook_install;

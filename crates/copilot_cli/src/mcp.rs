@@ -74,7 +74,11 @@ impl McpTransport {
     fn render_target(&self, args: &mut Vec<OsString>) {
         match self {
             Self::Http { url } | Self::Sse { url } => args.push(url.into()),
-            Self::Stdio { command, args: rest, .. } => {
+            Self::Stdio {
+                command,
+                args: rest,
+                ..
+            } => {
                 args.push("--".into());
                 args.push(command.into());
                 args.extend(rest.iter().map(OsString::from));

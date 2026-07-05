@@ -6,10 +6,10 @@
 //! # Where the per-driver policy lives
 //!
 //! A driver reports only individual, object-safe *facts about itself* — its
-//! [`kind`](crate::agent::AgentDriver::kind), its
-//! [`command_path`](crate::agent::AgentDriver::command_path), and its
-//! [`declared_env`](crate::agent::AgentDriver::declared_env). The driver
-//! holds **no aggregating sandbox type**. The sandbox-shaped policy (which
+//! [`kind`](crate::agent::AgentDriver::kind), its executable read paths
+//! ([`executable_read_paths`](crate::agent::AgentDriver::executable_read_paths)),
+//! and its [`declared_env`](crate::agent::AgentDriver::declared_env). The
+//! driver holds **no aggregating sandbox type**. The sandbox-shaped policy (which
 //! network hosts, which env passthrough patterns, which OS holes for the
 //! keychain / shell-tool tmp dirs, whether to broaden signalling) is an
 //! environment-shaped concern, so it lives here, keyed off the kind.
@@ -31,7 +31,7 @@
 
 use std::path::PathBuf;
 
-use crate::agent::{AgentDriver, AgentKind, ClaudeCodeDriver, GrokDriver};
+use crate::agent::{AgentDriver, AgentKind, ClaudeCodeDriver, CodexDriver, GrokDriver};
 
 /// OS-level access an agent driver's child process needs to function
 /// inside a sandboxed workspace.
@@ -160,16 +160,17 @@ impl SandboxProfile {
     fn apply_driver(&mut self, driver: &dyn AgentDriver) {
         self.declared_env
             .extend(driver.declared_env().iter().cloned());
+        self.allow_reads(driver.executable_read_paths());
         match driver.kind() {
-            AgentKind::Claude => self.apply_claude(driver),
-            AgentKind::Grok => self.apply_grok(driver),
-            // No special OS access beyond the workspace tmpdir. The
-            // remaining CLI drivers either talk only to already-allowed
-            // hosts or have not yet had their minimal profile characterised
-            // (Codex/Gemini/…); the shell-synthesised Noop/Fake drivers
-            // need nothing. An empty arm is the correct, intentional
-            // baseline — and the exhaustive match still forces a decision
-            // for each.
+            AgentKind::Claude => self.apply_claude(),
+            AgentKind::Grok => self.apply_grok(),
+            // No kind-specific OS access beyond the common executable/env
+            // facts above. The remaining CLI drivers either talk only to
+            // already-allowed hosts or have not yet had their minimal profile
+            // characterised (Codex/Gemini/…); the shell-synthesised Noop/Fake
+            // drivers need nothing. An empty arm is the correct, intentional
+            // baseline — and the exhaustive match still forces a decision for
+            // each.
             AgentKind::Codex
             | AgentKind::Gemini
             | AgentKind::Hermes
@@ -205,7 +206,7 @@ impl SandboxProfile {
     ///   platform-standard variables every CLI expects.
     /// * **Signal**: Claude Code's Bash tool SIGTERMs the shell pipelines it
     ///   spawns when their declared timeout fires.
-    fn apply_claude(&mut self, driver: &dyn AgentDriver) {
+    fn apply_claude(&mut self) {
         self.allow_network_host("api.anthropic.com:443")
             .allow_network_host("console.anthropic.com:443")
             .allow_signal();
@@ -283,13 +284,6 @@ impl SandboxProfile {
                 self.allow_write(canonical);
             }
         }
-
-        // Resolved binary path (plus canonical target behind a shim) — the
-        // confinement must read the executable image to map it into the
-        // child.
-        if let Some(cp) = driver.command_path() {
-            self.allow_reads(cp.reads());
-        }
     }
 
     /// Grok Build's sandbox access profile. Mirrors the Claude read/write
@@ -308,7 +302,7 @@ impl SandboxProfile {
     ///   platform-standard variables.
     /// * **Signal**: Grok's shell tooling SIGTERMs the pipelines it spawns on
     ///   timeout.
-    fn apply_grok(&mut self, driver: &dyn AgentDriver) {
+    fn apply_grok(&mut self) {
         self.allow_network_host("api.x.ai:443")
             .allow_network_host("auth.x.ai:443")
             .allow_signal();
@@ -339,9 +333,6 @@ impl SandboxProfile {
         }
         if let Some(dir) = GrokDriver::home_dir() {
             self.allow_write(dir);
-        }
-        if let Some(cp) = driver.command_path() {
-            self.allow_reads(cp.reads());
         }
     }
 
@@ -461,6 +452,16 @@ mod tests {
         }
     }
 
+    fn codex_driver(command: impl Into<String>) -> CodexDriver {
+        CodexDriver {
+            command: command.into(),
+            mode: AgentMode::Headless,
+            args: Vec::new(),
+            env: Vec::new(),
+            hook_isolation_key: "default".to_owned(),
+        }
+    }
+
     /// Single-driver shorthand for the union entry point.
     fn profile_for(driver: &dyn AgentDriver) -> SandboxProfile {
         SandboxProfile::for_drivers([driver])
@@ -497,6 +498,15 @@ mod tests {
             vec![("ITER_DECLARED_ONLY".into(), "declared-value".into())],
         );
         assert!(!p.env_matches("ITER_DECLARED_ONLY"));
+    }
+
+    #[test]
+    fn non_vendor_specific_driver_includes_executable_path() {
+        let tmp = TempDir::new().expect("tmp");
+        let bin = tmp.path().join("fake-codex");
+        std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").expect("write");
+        let p = profile_for(&codex_driver(bin.to_string_lossy()));
+        assert!(p.file_reads.iter().any(|p| p == &bin));
     }
 
     // ----- Claude profile (behavior preserved across the refactor) --------
@@ -666,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_includes_absolute_command_path() {
+    fn claude_includes_absolute_executable_path() {
         let tmp = TempDir::new().expect("tmp");
         let bin = tmp.path().join("fake-claude");
         std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").expect("write");
@@ -798,7 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn grok_includes_absolute_command_path() {
+    fn grok_includes_absolute_executable_path() {
         let tmp = TempDir::new().expect("tmp");
         let bin = tmp.path().join("fake-grok");
         std::fs::write(&bin, b"#!/bin/sh\nexit 0\n").expect("write");

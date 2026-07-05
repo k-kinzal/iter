@@ -135,7 +135,14 @@ fn auth_renders_flags_then_positional() {
     };
     assert_eq!(
         argv(&command),
-        ["auth", "--provider", "anthropic", "--apikey", "sk-xxx", "--verbose"]
+        [
+            "auth",
+            "--provider",
+            "anthropic",
+            "--apikey",
+            "sk-xxx",
+            "--verbose"
+        ]
     );
 }
 
@@ -181,10 +188,7 @@ fn connect_channel_is_followed_by_passthrough_args() {
         stop: false,
         channel_args: vec!["--bot-token".to_owned(), "xoxb".to_owned()],
     };
-    assert_eq!(
-        argv(&command),
-        ["connect", "slack", "--bot-token", "xoxb"]
-    );
+    assert_eq!(argv(&command), ["connect", "slack", "--bot-token", "xoxb"]);
 }
 
 #[test]
@@ -277,7 +281,16 @@ fn schedule_list_renders_filter_flags() {
     });
     assert_eq!(
         argv(&command),
-        ["schedule", "list", "--enabled", "--limit", "5", "--tags", "ci", "--json"]
+        [
+            "schedule",
+            "list",
+            "--enabled",
+            "--limit",
+            "5",
+            "--tags",
+            "ci",
+            "--json"
+        ]
     );
 }
 
@@ -290,7 +303,14 @@ fn schedule_trigger_places_id_before_address_and_json() {
     });
     assert_eq!(
         argv(&command),
-        ["schedule", "trigger", "sch-9", "--address", "localhost:1234", "--json"]
+        [
+            "schedule",
+            "trigger",
+            "sch-9",
+            "--address",
+            "localhost:1234",
+            "--json"
+        ]
     );
 }
 
@@ -305,7 +325,9 @@ fn schedule_history_places_flags_before_id() {
     });
     assert_eq!(
         argv(&command),
-        ["schedule", "history", "--limit", "3", "--status", "failed", "sch-9"]
+        [
+            "schedule", "history", "--limit", "3", "--status", "failed", "sch-9"
+        ]
     );
 }
 
@@ -436,7 +458,10 @@ fn to_process_carries_cwd_and_env() {
             )
         })
         .collect();
-    assert_eq!(env, [("CLINE_DIR".to_owned(), Some("/tmp/home".to_owned()))]);
+    assert_eq!(
+        env,
+        [("CLINE_DIR".to_owned(), Some("/tmp/home".to_owned()))]
+    );
 }
 
 #[test]
@@ -469,7 +494,8 @@ fn parse_collects_object_events_only() {
 
 #[test]
 fn parse_skips_non_json_and_non_object_lines() {
-    let stream = "Loading model...\n42\n[1,2,3]\n{\"type\":\"run_result\",\"finishReason\":\"completed\"}\n";
+    let stream =
+        "Loading model...\n42\n[1,2,3]\n{\"type\":\"run_result\",\"finishReason\":\"completed\"}\n";
     let parsed = RunOutput::parse(stream);
     assert_eq!(parsed.events().len(), 1);
     assert_eq!(parsed.events()[0].event_type(), EventType::RunResult);
@@ -501,7 +527,12 @@ fn last_run_result_wins_over_earlier_error() {
         r#"{"type":"run_result","finishReason":"completed","message":"done"}"#,
     );
     let parsed = RunOutput::parse(stream);
-    assert!(parsed.finish_reason().expect("terminal record").is_completed());
+    assert!(
+        parsed
+            .finish_reason()
+            .expect("terminal record")
+            .is_completed()
+    );
     // The error event is still surfaced for callers that want it.
     assert_eq!(parsed.failure_message().as_deref(), Some("transient"));
 }
@@ -529,14 +560,25 @@ fn no_terminal_record_yields_no_run_result() {
 #[test]
 fn try_from_succeeds_when_events_present_even_on_failure_exit() {
     let parsed = RunOutput::try_from(output(RUN_STREAM, 1)).expect("events present => Ok");
-    assert!(parsed.finish_reason().expect("terminal record").is_completed());
+    assert!(
+        parsed
+            .finish_reason()
+            .expect("terminal record")
+            .is_completed()
+    );
 }
 
 #[test]
 fn try_from_errors_only_when_empty_and_failed() {
     let result = RunOutput::try_from(output("not json at all\n", 2));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -558,7 +600,12 @@ fn execute_parses_json_stream_from_a_fake_cline() {
         .block_on(cline.execute(&RunCommand::prompt("hi").json()))
         .expect("execute succeeds");
     assert_eq!(parsed.session_id().as_deref(), Some("sess-1"));
-    assert!(parsed.finish_reason().expect("terminal record").is_completed());
+    assert!(
+        parsed
+            .finish_reason()
+            .expect("terminal record")
+            .is_completed()
+    );
 }
 
 #[cfg(unix)]
@@ -568,7 +615,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let cline = Cline::new(script.path());
     let result = async_runtime().block_on(cline.execute(&RunCommand::prompt("hi").json()));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -612,7 +665,13 @@ fn stream_surfaces_failure_exit_after_events() {
         assert_eq!(first.event_type(), EventType::RunAborted);
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });

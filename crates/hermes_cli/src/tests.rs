@@ -3,11 +3,11 @@ use pretty_assertions::assert_eq;
 use crate::{
     AuthAddOptions, AuthCommand, AuthSubcommand, ChatCommand, ChatOptions, CompletionCommand,
     ConfigCommand, ConfigSubcommand, ContinueMode, CredentialType, Exit, Hermes, LoginCommand,
-    LoginProvider, LogoutCommand, LogoutProvider, McpAddOptions, McpAuth, McpCommand, McpSubcommand,
-    McpTransport, ModelCommand, NousOauthOptions, RawCommand, RunCommand, RunMode, RunOptions,
-    RunOutput, SendCommand, SendOutput, SessionExport, SessionsCommand, SessionsSubcommand, Shell,
-    SpotifyAction, StatusCommand, ToArgs, ToolsCommand, ToolsSubcommand, UpdateCommand,
-    VersionCommand,
+    LoginProvider, LogoutCommand, LogoutProvider, McpAddOptions, McpAuth, McpCommand,
+    McpSubcommand, McpTransport, ModelCommand, NousOauthOptions, RawCommand, RunCommand, RunMode,
+    RunOptions, RunOutput, SendCommand, SendOutput, SessionExport, SessionsCommand,
+    SessionsSubcommand, Shell, SpotifyAction, StatusCommand, ToArgs, ToolsCommand, ToolsSubcommand,
+    UpdateCommand, VersionCommand,
 };
 
 // ----- helpers -------------------------------------------------------------
@@ -174,10 +174,28 @@ fn run_options_render_in_declaration_order() {
     assert_eq!(
         argv(&command),
         v(&[
-            "--model", "m", "--provider", "p", "--toolsets", "web,fs", "--skills", "rust",
-            "--resume", "sid", "--continue", "branch", "--worktree", "--accept-hooks", "--yolo",
-            "--pass-session-id", "--ignore-user-config", "--ignore-rules", "--safe-mode", "--dev",
-            "-z", "go",
+            "--model",
+            "m",
+            "--provider",
+            "p",
+            "--toolsets",
+            "web,fs",
+            "--skills",
+            "rust",
+            "--resume",
+            "sid",
+            "--continue",
+            "branch",
+            "--worktree",
+            "--accept-hooks",
+            "--yolo",
+            "--pass-session-id",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--safe-mode",
+            "--dev",
+            "-z",
+            "go",
         ]),
     );
 }
@@ -211,7 +229,17 @@ fn chat_options_render_query_first_then_options_in_order() {
     };
     assert_eq!(
         argv(&command),
-        v(&["chat", "--query", "q", "--model", "m", "--continue", "--max-turns", "5", "--tui"]),
+        v(&[
+            "chat",
+            "--query",
+            "q",
+            "--model",
+            "m",
+            "--continue",
+            "--max-turns",
+            "5",
+            "--tui"
+        ]),
     );
 }
 
@@ -299,7 +327,15 @@ fn sessions_export_renders_filters_before_the_output_positional() {
     });
     assert_eq!(
         argv(&command),
-        v(&["sessions", "export", "--source", "cli", "--session-id", "abc", "out.jsonl"]),
+        v(&[
+            "sessions",
+            "export",
+            "--source",
+            "cli",
+            "--session-id",
+            "abc",
+            "out.jsonl"
+        ]),
     );
 }
 
@@ -329,7 +365,15 @@ fn sessions_prune_renders_all_filters() {
     });
     assert_eq!(
         argv(&command),
-        v(&["sessions", "prune", "--older-than", "30", "--source", "telegram", "--yes"]),
+        v(&[
+            "sessions",
+            "prune",
+            "--older-than",
+            "30",
+            "--source",
+            "telegram",
+            "--yes"
+        ]),
     );
 }
 
@@ -403,7 +447,10 @@ fn mcp_serve_renders_flags() {
         verbose: true,
         accept_hooks: true,
     });
-    assert_eq!(argv(&command), v(&["mcp", "serve", "--verbose", "--accept-hooks"]));
+    assert_eq!(
+        argv(&command),
+        v(&["mcp", "serve", "--verbose", "--accept-hooks"])
+    );
 }
 
 #[test]
@@ -420,8 +467,20 @@ fn mcp_add_stdio_renders_name_first_env_pairs_and_args_last() {
     assert_eq!(
         argv(&command),
         v(&[
-            "mcp", "add", "gh", "--auth", "header", "--command", "npx", "--env", "A=1", "--env",
-            "B=2", "--args", "-y", "pkg",
+            "mcp",
+            "add",
+            "gh",
+            "--auth",
+            "header",
+            "--command",
+            "npx",
+            "--env",
+            "A=1",
+            "--env",
+            "B=2",
+            "--args",
+            "-y",
+            "pkg",
         ]),
     );
 }
@@ -441,7 +500,10 @@ fn mcp_add_http_and_preset_transports_render_their_flag() {
     );
 
     let preset = McpCommand::add("gh", McpTransport::Preset("github".into()));
-    assert_eq!(argv(&preset), v(&["mcp", "add", "gh", "--preset", "github"]));
+    assert_eq!(
+        argv(&preset),
+        v(&["mcp", "add", "gh", "--preset", "github"])
+    );
 }
 
 #[test]
@@ -464,7 +526,17 @@ fn auth_add_renders_options_then_provider_positional() {
     }));
     assert_eq!(
         argv(&command),
-        v(&["auth", "add", "--type", "api-key", "--label", "work", "--api-key", "sk-1", "anthropic"]),
+        v(&[
+            "auth",
+            "add",
+            "--type",
+            "api-key",
+            "--label",
+            "work",
+            "--api-key",
+            "sk-1",
+            "anthropic"
+        ]),
     );
 }
 
@@ -477,7 +549,10 @@ fn auth_list_status_remove_reset_logout_spotify_argv() {
         })),
         v(&["auth", "list", "anthropic"]),
     );
-    assert_eq!(argv(&AuthCommand::status("anthropic")), v(&["auth", "status", "anthropic"]));
+    assert_eq!(
+        argv(&AuthCommand::status("anthropic")),
+        v(&["auth", "status", "anthropic"])
+    );
     assert_eq!(
         argv(&AuthCommand::new(AuthSubcommand::Remove {
             provider: "anthropic".into(),
@@ -547,8 +622,15 @@ fn login_renders_provider_and_oauth_block() {
     assert_eq!(
         argv(&command),
         v(&[
-            "login", "--provider", "nous", "--portal-url", "https://portal", "--no-browser",
-            "--timeout", "30", "--insecure",
+            "login",
+            "--provider",
+            "nous",
+            "--portal-url",
+            "https://portal",
+            "--no-browser",
+            "--timeout",
+            "30",
+            "--insecure",
         ]),
     );
 }
@@ -652,7 +734,9 @@ fn update_argv() {
     };
     assert_eq!(
         argv(&command),
-        v(&["update", "--check", "--backup", "--yes", "--branch", "main", "--force"]),
+        v(&[
+            "update", "--check", "--backup", "--yes", "--branch", "main", "--force"
+        ]),
     );
 }
 
@@ -757,7 +841,13 @@ fn into_result_errors_on_nonzero_exit() {
     let output = RunOutput::from(process_output("partial", "boom", 1));
     let err = output.into_result().expect_err("nonzero is an error");
     assert!(
-        matches!(err, crate::Error::Cli { exit_code: Some(1), .. }),
+        matches!(
+            err,
+            crate::Error::Cli {
+                exit_code: Some(1),
+                ..
+            }
+        ),
         "got {err:?}",
     );
 }

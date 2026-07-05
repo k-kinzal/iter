@@ -204,10 +204,8 @@ impl AgentDriver for OpenCodeDriver {
         AgentKind::OpenCode
     }
 
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Opencode::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {
@@ -289,7 +287,10 @@ mod tests {
         let prompt_pos = args.iter().position(|a| a == "x").expect("prompt");
         assert!(args.contains(&"--format".to_owned()), "got {args:?}");
         assert!(args.contains(&"sonnet".to_owned()), "got {args:?}");
-        assert!(model_pos < prompt_pos, "extras precede the prompt: {args:?}");
+        assert!(
+            model_pos < prompt_pos,
+            "extras precede the prompt: {args:?}"
+        );
     }
 
     #[test]
@@ -388,7 +389,10 @@ mod tests {
         let err = d
             .interpret(&synth_output(RawExit::Signal(9), ""))
             .expect_err("must fail");
-        assert!(matches!(err, AgentError::TerminatedBySignal(9)), "got {err:?}");
+        assert!(
+            matches!(err, AgentError::TerminatedBySignal(9)),
+            "got {err:?}"
+        );
     }
 
     // ----- through the full cycle -------------------------------------------

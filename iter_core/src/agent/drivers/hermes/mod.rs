@@ -271,9 +271,7 @@ impl AgentDriver for HermesDriver {
         // (and override) the managed flags.
         let (run, io) = match self.mode {
             AgentMode::Headless => (RunCommand::oneshot(prompt.as_str()), StdioMode::Piped),
-            AgentMode::Interactive => {
-                (RunCommand::tui_prompt(prompt.as_str()), StdioMode::Inherit)
-            }
+            AgentMode::Interactive => (RunCommand::tui_prompt(prompt.as_str()), StdioMode::Inherit),
         };
         let mut process = Hermes::new(&self.command)
             .with_current_dir(path)
@@ -302,6 +300,10 @@ impl AgentDriver for HermesDriver {
 
     fn kind(&self) -> AgentKind {
         AgentKind::Hermes
+    }
+
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Hermes::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {

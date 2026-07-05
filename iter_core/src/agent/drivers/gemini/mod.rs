@@ -51,7 +51,6 @@ use crate::agent::{AgentError, AgentKind, AgentMode, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 use async_trait::async_trait;
-use tokio::process::Command;
 
 mod hook;
 
@@ -181,22 +180,6 @@ pub struct GeminiDriver {
     pub hook_isolation_key: String,
 }
 
-impl GeminiDriver {
-    /// Build the interactive-mode command. Passes the prompt as the
-    /// first positional argument so `gemini` seeds its initial user
-    /// turn with it before dropping into the TUI; extras come after so
-    /// users can still inject their own flags.
-    fn build_interactive_command(&self, path: &Path, prompt: &Prompt) -> Command {
-        let mut cmd = Command::new(&self.command);
-        cmd.current_dir(path);
-        cmd.arg(prompt.as_str());
-        for arg in &self.args {
-            cmd.arg(arg);
-        }
-        cmd
-    }
-}
-
 #[async_trait]
 impl AgentDriver for GeminiDriver {
     fn command(
@@ -226,7 +209,10 @@ impl AgentDriver for GeminiDriver {
                 })
             }
             AgentMode::Interactive => {
-                let mut process = self.build_interactive_command(path, prompt);
+                let mut process = Gemini::new(&self.command)
+                    .with_current_dir(path)
+                    .to_process(&RunCommand::query(prompt.as_str()));
+                process.args(&self.args);
                 apply_user_env(&mut process, &self.env);
                 inject_agent_otel_resource_attrs(&mut process, path, "gemini");
                 Ok(AgentCommand {
@@ -350,6 +336,10 @@ impl AgentDriver for GeminiDriver {
         AgentKind::Gemini
     }
 
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Gemini::new(&self.command).executable_read_paths()
+    }
+
     fn declared_env(&self) -> &[(String, String)] {
         &self.env
     }
@@ -439,11 +429,17 @@ mod tests {
 
     #[test]
     fn interactive_command_puts_prompt_first_and_inherits_stdio() {
-        let d = gemini_driver("gemini", AgentMode::Interactive);
+        let mut d = gemini_driver("gemini", AgentMode::Interactive);
+        d.args = vec!["--foo".into()];
         let prompt = Prompt::from("go");
         let command = d.command(Path::new("."), &prompt, None).expect("command");
         let args = argv(&command);
         assert_eq!(args.first().map(String::as_str), Some("go"), "got {args:?}");
+        assert_eq!(
+            args.get(1).map(String::as_str),
+            Some("--foo"),
+            "got {args:?}"
+        );
         assert!(!args.contains(&"-p".to_owned()));
         assert_eq!(command.stdin, None, "Inherit mode must not feed stdin");
         assert_eq!(command.io, StdioMode::Inherit);

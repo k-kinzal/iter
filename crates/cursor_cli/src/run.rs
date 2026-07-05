@@ -214,11 +214,7 @@ impl ToArgs for PrintCommand {
         args.push("--print".into());
         args.push("--output-format".into());
         args.push(self.output_format.as_str().into());
-        push_flag(
-            args,
-            self.stream_partial_output,
-            "--stream-partial-output",
-        );
+        push_flag(args, self.stream_partial_output, "--stream-partial-output");
         self.options.render(args);
         render_prompt(args, &self.prompt);
     }

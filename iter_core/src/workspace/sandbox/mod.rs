@@ -21,7 +21,7 @@
 //! (from the declaration) and a [`SandboxProfile`] (assembled from the
 //! agent's drivers at start time). A driver reports only object-safe *facts*
 //! — its [`kind`](crate::agent::AgentDriver::kind),
-//! [`command_path`](crate::agent::AgentDriver::command_path), and
+//! [`executable_read_paths`](crate::agent::AgentDriver::executable_read_paths), and
 //! [`declared_env`](crate::agent::AgentDriver::declared_env) — and
 //! [`SandboxProfile::for_drivers`] matches **exhaustively** over the closed
 //! [`AgentKind`](crate::agent::AgentKind) to build the profile, so adding an

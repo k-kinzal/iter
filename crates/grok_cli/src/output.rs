@@ -119,8 +119,11 @@ fn reported_error_of(obj: &Value) -> Option<String> {
                     .map_or_else(|| "error".to_owned(), str::to_owned);
                 return Some(message);
             }
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
-            }
+            Value::Null
+            | Value::Bool(_)
+            | Value::Number(_)
+            | Value::String(_)
+            | Value::Array(_) => {}
         }
     }
     // A boolean error flag (`isError` / `is_error`) paired with the message.
@@ -221,7 +224,12 @@ impl Usage {
             })
         };
         Self {
-            input_tokens: u64_of(&["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"]),
+            input_tokens: u64_of(&[
+                "input_tokens",
+                "inputTokens",
+                "prompt_tokens",
+                "promptTokens",
+            ]),
             output_tokens: u64_of(&[
                 "output_tokens",
                 "outputTokens",
@@ -229,7 +237,13 @@ impl Usage {
                 "completionTokens",
             ]),
             total_tokens: u64_of(&["total_tokens", "totalTokens"]),
-            total_cost_usd: f64_of(&["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd", "cost"]),
+            total_cost_usd: f64_of(&[
+                "total_cost_usd",
+                "totalCostUsd",
+                "cost_usd",
+                "costUsd",
+                "cost",
+            ]),
         }
     }
 
@@ -338,7 +352,9 @@ impl SingleOutput {
         self.terminal
             .as_ref()
             .and_then(reported_error_of)
-            .or_else(|| last_event_of_type(&self.stdout, "error").and_then(|e| reported_error_of(&e)))
+            .or_else(|| {
+                last_event_of_type(&self.stdout, "error").and_then(|e| reported_error_of(&e))
+            })
     }
 }
 
@@ -430,7 +446,9 @@ impl<'de> Deserialize<'de> for Event {
         if raw.is_object() {
             Ok(Self { raw })
         } else {
-            Err(D::Error::custom("grok streaming event must be a JSON object"))
+            Err(D::Error::custom(
+                "grok streaming event must be a JSON object",
+            ))
         }
     }
 }

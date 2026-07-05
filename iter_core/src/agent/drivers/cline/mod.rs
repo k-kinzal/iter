@@ -236,10 +236,8 @@ impl AgentDriver for ClineDriver {
         AgentKind::Cline
     }
 
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
+    fn executable_read_paths(&self) -> Vec<std::path::PathBuf> {
+        Cline::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {
@@ -360,7 +358,8 @@ mod tests {
     #[test]
     fn interpret_token_limit_in_run_result_message_classifies() {
         let d = driver("cline");
-        let body = r#"{"type":"run_result","finishReason":"error","message":"context window exceeded"}"#;
+        let body =
+            r#"{"type":"run_result","finishReason":"error","message":"context window exceeded"}"#;
         let err = d
             .interpret(&synth_output(RawExit::Code(1), body))
             .expect_err("must fail");

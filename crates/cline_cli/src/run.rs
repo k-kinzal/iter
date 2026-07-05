@@ -12,9 +12,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use crate::args::{
-    ToArgs, push_bool, push_enum, push_flag, push_opt, push_opt_num, push_opt_path,
-};
+use crate::args::{ToArgs, push_bool, push_enum, push_flag, push_opt, push_opt_num, push_opt_path};
 use crate::values::{CompactionMode, ThinkingLevel};
 
 /// Options for the root `cline` run (rendered before the prompt positional).

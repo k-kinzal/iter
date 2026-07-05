@@ -348,14 +348,8 @@ impl AgentDriver for ClaudeCodeDriver {
         AgentKind::Claude
     }
 
-    /// Resolved on-disk location of the configured binary, or `None` when
-    /// nothing on `$PATH` or the supplied path matches an existing file.
-    ///
-    /// The returned handle exposes both the resolved path and its canonical
-    /// target so the sandbox layer can grant read access to a symlink shim
-    /// (volta, nvm, asdf, homebrew cask).
-    fn command_path(&self) -> Option<crate::agent::command_path::CommandPath> {
-        crate::agent::command_path::CommandPath::resolve(&self.command)
+    fn executable_read_paths(&self) -> Vec<PathBuf> {
+        ClaudeCode::new(&self.command).executable_read_paths()
     }
 
     fn declared_env(&self) -> &[(String, String)] {

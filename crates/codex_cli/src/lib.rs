@@ -13,11 +13,11 @@
 mod args;
 mod auth;
 mod cli;
-mod options;
 mod exec;
 mod features;
 mod mcp;
 mod ops;
+mod options;
 mod output;
 mod plugin;
 mod review;
@@ -28,7 +28,6 @@ mod values;
 pub use args::ToArgs;
 pub use auth::{LoginCommand, LogoutCommand};
 pub use cli::{Codex, Error};
-pub use options::{CommonConfig, GlobalConfig};
 pub use exec::{
     ExecCommand, ExecOptions, ExecResumeCommand, ExecReviewCommand, ExecSubcommandOptions,
     JsonExecCommand,
@@ -40,12 +39,15 @@ pub use ops::{
     DebugSubcommand, DoctorCommand, ExecServerCommand, McpServerCommand, RemoteControlCommand,
     RemoteControlSubcommand, SandboxCommand, UpdateCommand,
 };
-pub use output::{Event, EventStream, EventType, ExecOutput, TurnVerdict, TurnStatus};
+pub use options::{CommonConfig, GlobalConfig};
+pub use output::{Event, EventStream, EventType, ExecOutput, TurnStatus, TurnVerdict};
 pub use plugin::{PluginCommand, PluginMarketplaceSubcommand, PluginSubcommand};
 pub use review::ReviewCommand;
 pub use run::{RunCommand, RunOptions};
 pub use session::{ArchiveCommand, ForkCommand, ResumeCommand, UnarchiveCommand};
-pub use values::{ApprovalPolicy, Color, ConfigOverride, LocalProvider, SandboxMode, CompletionShell};
+pub use values::{
+    ApprovalPolicy, Color, CompletionShell, ConfigOverride, LocalProvider, SandboxMode,
+};
 
 /// Codex CLI version this crate was authored against.
 pub const SUPPORTED_CODEX_VERSION: &str = "0.139.0";

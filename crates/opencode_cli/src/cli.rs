@@ -124,6 +124,16 @@ impl Opencode {
         &self.executable
     }
 
+    /// Files that must be readable to launch this executable.
+    ///
+    /// Returns the resolved path found through `$PATH` (or the configured
+    /// absolute/relative path) plus the canonical target when the executable is
+    /// a symlink shim.
+    #[must_use]
+    pub fn executable_read_paths(&self) -> Vec<PathBuf> {
+        executable_read_paths(&self.executable)
+    }
+
     /// Working directory used when opencode runs.
     #[must_use]
     pub fn current_dir(&self) -> Option<&Path> {
@@ -231,7 +241,9 @@ impl Opencode {
 
         let mut child = process.spawn()?;
         let stdout = child.stdout.take().ok_or_else(|| {
-            Error::Io(std::io::Error::other("opencode stream stdout was unavailable"))
+            Error::Io(std::io::Error::other(
+                "opencode stream stdout was unavailable",
+            ))
         })?;
         let mut stderr = child.stderr.take();
         let stderr = tokio::spawn(async move {
@@ -275,6 +287,40 @@ impl Default for Opencode {
     fn default() -> Self {
         Self::new("opencode")
     }
+}
+
+fn executable_read_paths(executable: &OsStr) -> Vec<PathBuf> {
+    let Some(resolved) = resolve_executable(executable) else {
+        return Vec::new();
+    };
+
+    let canonical = std::fs::canonicalize(&resolved)
+        .ok()
+        .filter(|path| path != &resolved);
+    let mut out = vec![resolved];
+    if let Some(path) = canonical {
+        out.push(path);
+    }
+    out
+}
+
+fn resolve_executable(executable: &OsStr) -> Option<PathBuf> {
+    let command = Path::new(executable);
+    if is_path_like(command) {
+        if command.is_file() {
+            return Some(command.to_path_buf());
+        }
+        return None;
+    }
+
+    let path_env = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_env)
+        .map(|entry| entry.join(command))
+        .find(|candidate| candidate.is_file())
+}
+
+fn is_path_like(command: &Path) -> bool {
+    command.is_absolute() || command.components().count() > 1
 }
 
 impl ExecutableCommand for JsonRunCommand {

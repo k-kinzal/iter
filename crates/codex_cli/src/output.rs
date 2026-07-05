@@ -131,7 +131,10 @@ impl Event {
             .get("status")
             .and_then(Value::as_str)
             .map(str::to_ascii_lowercase);
-        matches!(status.as_deref(), Some("completed" | "failed" | "interrupted"))
+        matches!(
+            status.as_deref(),
+            Some("completed" | "failed" | "interrupted")
+        )
     }
 
     fn turn_status_str(&self) -> Option<String> {
@@ -190,7 +193,9 @@ impl Event {
             .or_else(|| payload.pointer("/usage/total_tokens"))
             .and_then(Value::as_u64)
             .or_else(|| {
-                let input = payload.pointer("/usage/input_tokens").and_then(Value::as_u64)?;
+                let input = payload
+                    .pointer("/usage/input_tokens")
+                    .and_then(Value::as_u64)?;
                 let output = payload
                     .pointer("/usage/output_tokens")
                     .and_then(Value::as_u64)?;

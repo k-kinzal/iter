@@ -18,12 +18,12 @@ mod agent;
 mod args;
 mod auth;
 mod cli;
-mod options;
 mod db;
 mod debug;
 mod github;
 mod mcp;
 mod ops;
+mod options;
 mod output;
 mod run;
 mod server;
@@ -34,7 +34,6 @@ pub use agent::{AgentCommand, AgentSubcommand};
 pub use args::ToArgs;
 pub use auth::{AuthCommand, AuthSubcommand};
 pub use cli::{Error, Opencode};
-pub use options::{GlobalOptions, ServerOptions};
 pub use db::{DbCommand, DbSubcommand};
 pub use debug::{
     DebugCommand, DebugFileSubcommand, DebugLspSubcommand, DebugRgSubcommand,
@@ -46,6 +45,7 @@ pub use ops::{
     AttachCommand, CompletionCommand, ExportCommand, ImportCommand, ModelsCommand, PrCommand,
     StatsCommand, UninstallCommand, UpgradeCommand,
 };
+pub use options::{GlobalOptions, ServerOptions};
 pub use output::{Event, EventStream, EventType, RunError, RunOutput};
 pub use run::{JsonRunCommand, RunCommand, RunOptions, TuiCommand};
 pub use server::{AcpCommand, ServeCommand, WebCommand};

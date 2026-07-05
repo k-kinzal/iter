@@ -72,10 +72,7 @@ pub struct ResultError {
 impl ResultError {
     fn from_value(error: &Value) -> Self {
         Self {
-            error_type: error
-                .get("type")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            error_type: error.get("type").and_then(Value::as_str).map(str::to_owned),
             message: error
                 .get("message")
                 .and_then(Value::as_str)
@@ -341,12 +338,7 @@ impl StreamOutput {
                 .get("error")
                 .is_some_and(|value| !value.is_null())
         })
-        .and_then(|event| {
-            event
-                .as_value()
-                .get("error")
-                .map(ResultError::from_value)
-        })
+        .and_then(|event| event.as_value().get("error").map(ResultError::from_value))
     }
 }
 

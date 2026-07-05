@@ -6,9 +6,9 @@
 use std::ffi::OsString;
 #[cfg(unix)]
 use std::io::Write as _;
-use std::os::unix::process::ExitStatusExt;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Output as ProcessOutput};
 
@@ -18,7 +18,6 @@ use pretty_assertions::assert_eq;
 use crate::args::ToArgs;
 use crate::auth::{LoginCommand, LogoutCommand};
 use crate::cli::{Codex, Error};
-use crate::options::{CommonConfig, GlobalConfig};
 use crate::exec::{
     ExecCommand, ExecOptions, ExecResumeCommand, ExecReviewCommand, ExecSubcommandOptions,
 };
@@ -27,13 +26,14 @@ use crate::mcp::{McpCommand, McpSubcommand, McpTransport};
 use crate::ops::{
     CompletionCommand, DoctorCommand, RemoteControlCommand, RemoteControlSubcommand, SandboxCommand,
 };
+use crate::options::{CommonConfig, GlobalConfig};
 use crate::output::{EventType, ExecOutput, TurnStatus};
 use crate::plugin::{PluginCommand, PluginMarketplaceSubcommand, PluginSubcommand};
 use crate::review::ReviewCommand;
 use crate::run::{RunCommand, RunOptions};
 use crate::session::{ArchiveCommand, ForkCommand, ResumeCommand, UnarchiveCommand};
 use crate::values::{
-    ApprovalPolicy, Color, ConfigOverride, LocalProvider, SandboxMode, CompletionShell,
+    ApprovalPolicy, Color, CompletionShell, ConfigOverride, LocalProvider, SandboxMode,
 };
 
 /// Render a command's argv as `String`s for readable assertions.
@@ -179,13 +179,22 @@ fn root_run_forwards_prompt_and_options() {
 }
 
 #[test]
+fn root_run_forwards_raw_args_before_prompt() {
+    let command = RunCommand::prompt("hello").with_args(["--flag", "value"]);
+    assert_eq!(argv(&command), ["--flag", "value", "hello"]);
+}
+
+#[test]
 fn review_renders_flags_and_prompt() {
     let command = ReviewCommand {
         uncommitted: true,
         base: Some("main".to_owned()),
         ..ReviewCommand::default()
     };
-    assert_eq!(argv(&command), ["review", "--uncommitted", "--base", "main"]);
+    assert_eq!(
+        argv(&command),
+        ["review", "--uncommitted", "--base", "main"]
+    );
 }
 
 #[test]
@@ -264,7 +273,10 @@ fn resume_remote_takes_a_value() {
         last: true,
         ..ResumeCommand::default()
     };
-    assert_eq!(argv(&command), ["resume", "--remote", "wss://host:9", "--last"]);
+    assert_eq!(
+        argv(&command),
+        ["resume", "--remote", "wss://host:9", "--last"]
+    );
 }
 
 #[test]
@@ -419,7 +431,9 @@ fn mcp_add_stdio_renders_name_then_env_then_double_dash_command() {
     });
     assert_eq!(
         argv(&command),
-        ["mcp", "add", "fs", "--env", "A=1", "--env", "B=2", "--", "npx", "server"]
+        [
+            "mcp", "add", "fs", "--env", "A=1", "--env", "B=2", "--", "npx", "server"
+        ]
     );
 }
 
@@ -498,7 +512,10 @@ fn mcp_add_http_minimal_emits_only_url() {
             oauth_resource: None,
         },
     });
-    assert_eq!(argv(&command), ["mcp", "add", "http", "--url", "https://h/mcp"]);
+    assert_eq!(
+        argv(&command),
+        ["mcp", "add", "http", "--url", "https://h/mcp"]
+    );
 }
 
 #[test]
@@ -522,7 +539,10 @@ fn mcp_login_renders_scopes_before_name() {
         name: "fs".to_owned(),
         scopes: Some("read,write".to_owned()),
     });
-    assert_eq!(argv(&command), ["mcp", "login", "--scopes", "read,write", "fs"]);
+    assert_eq!(
+        argv(&command),
+        ["mcp", "login", "--scopes", "read,write", "fs"]
+    );
 }
 
 #[test]
@@ -534,7 +554,14 @@ fn plugin_add_renders_marketplace_and_json_before_selector() {
     });
     assert_eq!(
         argv(&command),
-        ["plugin", "add", "--marketplace", "debug", "--json", "sample"]
+        [
+            "plugin",
+            "add",
+            "--marketplace",
+            "debug",
+            "--json",
+            "sample"
+        ]
     );
 }
 
@@ -605,7 +632,14 @@ fn sandbox_renders_added_flags_and_double_dash_command() {
     };
     assert_eq!(
         argv(&command),
-        ["sandbox", "--allow-unix-socket", "/tmp/s.sock", "--log-denials", "--", "ls"]
+        [
+            "sandbox",
+            "--allow-unix-socket",
+            "/tmp/s.sock",
+            "--log-denials",
+            "--",
+            "ls"
+        ]
     );
 }
 
@@ -702,9 +736,7 @@ fn to_process_carries_cwd_and_env() {
 
 #[test]
 fn with_env_replaces_existing_key() {
-    let codex = Codex::default()
-        .with_env("K", "one")
-        .with_env("K", "two");
+    let codex = Codex::default().with_env("K", "one").with_env("K", "two");
     let envs: Vec<_> = codex
         .envs()
         .map(|(key, value)| {
@@ -728,10 +760,7 @@ const FLAT_STREAM: &str = r#"{"type":"thread.started","thread_id":"th_123"}
 fn parse_collects_object_events_only() {
     let parsed = ExecOutput::parse(FLAT_STREAM);
     assert_eq!(parsed.events().len(), 4);
-    assert_eq!(
-        parsed.events()[0].event_type(),
-        EventType::ThreadStarted
-    );
+    assert_eq!(parsed.events()[0].event_type(), EventType::ThreadStarted);
 }
 
 #[test]
@@ -800,7 +829,13 @@ fn try_from_errors_only_when_empty_and_failed() {
     let out = output("not json at all\n", 2);
     let result = ExecOutput::try_from(out);
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -833,7 +868,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let codex = Codex::new(script.path());
     let result = async_runtime().block_on(codex.execute(&ExecCommand::prompt("hi").json()));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -878,7 +919,13 @@ fn stream_surfaces_failure_exit_after_events() {
         assert_eq!(first.event_type(), EventType::TurnStarted);
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });

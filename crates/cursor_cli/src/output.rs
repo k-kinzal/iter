@@ -228,7 +228,10 @@ impl PrintOutput {
     /// The last `type: "error"` record, when one was emitted.
     #[must_use]
     pub fn error_record(&self) -> Option<&Event> {
-        self.events.iter().rev().find(|event| event.type_is("error"))
+        self.events
+            .iter()
+            .rev()
+            .find(|event| event.type_is("error"))
     }
 
     /// `true` when a terminal `result` record is present.

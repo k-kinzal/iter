@@ -79,7 +79,11 @@ impl McpAdd {
     }
 
     fn render(&self, args: &mut Vec<OsString>) {
-        push_enum(args, "--transport", self.transport.map(McpTransport::as_str));
+        push_enum(
+            args,
+            "--transport",
+            self.transport.map(McpTransport::as_str),
+        );
         push_enum(args, "--scope", self.scope.map(McpScope::as_str));
         for (key, value) in &self.env {
             push_pair(args, "--env", format!("{key}={value}"));

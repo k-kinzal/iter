@@ -244,20 +244,6 @@ pub(crate) fn inject_trace_context_env(command: &mut Command) -> bool {
     iter_tracing::inject_current_context_env(command)
 }
 
-/// Inject the current trace context in the form GitHub Copilot CLI consumes.
-///
-/// The standalone Copilot CLI 1.0.43 does not read `TRACEPARENT` as an
-/// incoming `OTel` carrier. Its SDK reads `COPILOT_TRACE_PARENT` and forwards it
-/// to Copilot API calls as `X-Copilot-Traceparent`, so keep this path explicit
-/// instead of reusing the generic environment-carrier helper.
-pub(crate) fn inject_copilot_trace_parent_env(command: &mut Command) -> bool {
-    let Some(traceparent) = iter_tracing::current_traceparent() else {
-        return false;
-    };
-    command.env("COPILOT_TRACE_PARENT", traceparent);
-    true
-}
-
 /// Add per-iteration attributes to an agent process' `OTel` resource.
 ///
 /// Agent CLIs that produce their own telemetry generally read

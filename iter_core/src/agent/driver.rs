@@ -21,11 +21,10 @@
 //! `is_error: true`; Codex signals success only via `turn.completed`), which
 //! is why the inbound direction exists at all.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use crate::agent::command_path::CommandPath;
 use crate::agent::{AgentError, AgentKind, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
@@ -65,10 +64,10 @@ impl std::fmt::Debug for AgentCommand {
 /// them.
 ///
 /// Beyond the two translation methods, a driver exposes only **facts about
-/// itself** — its closed discriminant, its binary location, its declared
-/// child environment, its session-persistence file. Each fact has a real
-/// consumer (the sandbox profile, or the agent cycle); none walks into
-/// another object's composition.
+/// itself** — its closed discriminant, executable read allowances needed by
+/// its child command, its declared child environment, its session-persistence
+/// file. Each fact has a real consumer (the sandbox profile, or the agent
+/// cycle); none walks into another object's composition.
 #[async_trait]
 pub trait AgentDriver: Send + Sync {
     /// Outbound translation: assemble one child-process invocation.
@@ -143,13 +142,16 @@ pub trait AgentDriver: Send + Sync {
     /// ([`AgentKind::label`]).
     fn kind(&self) -> AgentKind;
 
-    /// Resolved on-disk location of this driver's configured binary, or
-    /// `None` when the driver runs no external binary (or nothing on `$PATH`
-    /// matches). Consumed by the sandbox profile to grant read access to the
-    /// executable image (and its canonical target behind a volta/nvm/asdf
-    /// shim).
-    fn command_path(&self) -> Option<CommandPath> {
-        None
+    /// Files the sandbox must allow the child to read so its configured
+    /// executable can be launched.
+    ///
+    /// For CLI-backed drivers this is usually the resolved binary path and,
+    /// when the configured command is a symlink/shim, its canonical target.
+    /// The executable lookup itself belongs to the CLI executor (or to a
+    /// custom driver for driver-owned command vectors); the Agent boundary only
+    /// sees the already-projected read allowances that the sandbox consumes.
+    fn executable_read_paths(&self) -> Vec<PathBuf> {
+        Vec::new()
     }
 
     /// Operator-declared environment variables for this driver's child

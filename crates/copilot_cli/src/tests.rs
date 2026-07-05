@@ -93,11 +93,18 @@ fn headless_shape_is_prompt_allow_all_tools_then_json() {
             allow_all_tools: true,
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     }
     .json();
     assert_eq!(
         argv(&command),
-        ["--prompt", "x", "--allow-all-tools", "--output-format", "json"]
+        [
+            "--prompt",
+            "x",
+            "--allow-all-tools",
+            "--output-format",
+            "json"
+        ]
     );
 }
 
@@ -112,6 +119,7 @@ fn run_renders_model_mode_dirs_and_attached_tool_in_order() {
             allow_tools: vec!["shell".to_owned()],
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     };
     assert_eq!(
         argv(&command),
@@ -136,6 +144,7 @@ fn resume_selector_renders_bare_and_attached_forms() {
             resume: Some(SessionSelector::Prompt),
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     };
     assert_eq!(argv(&bare), ["--resume"]);
 
@@ -144,6 +153,7 @@ fn resume_selector_renders_bare_and_attached_forms() {
             resume: Some(SessionSelector::reference("0cb916d")),
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     };
     assert_eq!(argv(&specific), ["--resume=0cb916d"]);
 }
@@ -157,6 +167,7 @@ fn toggles_render_attached_but_stream_takes_a_space() {
             stream: Some(Toggle::On),
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     };
     assert_eq!(
         argv(&command),
@@ -171,6 +182,7 @@ fn share_renders_bare_and_attached_path() {
             share: Some(ShareTarget::Default),
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     };
     assert_eq!(argv(&bare), ["--share"]);
 
@@ -179,8 +191,15 @@ fn share_renders_bare_and_attached_path() {
             share: Some(ShareTarget::Path(PathBuf::from("/tmp/s.md"))),
             ..RunOptions::default()
         },
+        ..RunCommand::default()
     };
     assert_eq!(argv(&path), ["--share=/tmp/s.md"]);
+}
+
+#[test]
+fn interactive_prompt_is_bare_positional_after_raw_args() {
+    let command = RunCommand::interactive_prompt("seed").with_args(["agent"]);
+    assert_eq!(argv(&command), ["agent", "seed"]);
 }
 
 // ----- argv construction: mcp ------------------------------------------------
@@ -381,7 +400,10 @@ fn plugin_marketplace_forwards_passthrough_args() {
 
 #[test]
 fn completion_shell_is_a_required_positional() {
-    assert_eq!(argv(&CompletionCommand::new(Shell::Zsh)), ["completion", "zsh"]);
+    assert_eq!(
+        argv(&CompletionCommand::new(Shell::Zsh)),
+        ["completion", "zsh"]
+    );
 }
 
 #[test]
@@ -389,7 +411,10 @@ fn login_forwards_host() {
     let command = LoginCommand {
         host: Some("https://example.ghe.com".to_owned()),
     };
-    assert_eq!(argv(&command), ["login", "--host", "https://example.ghe.com"]);
+    assert_eq!(
+        argv(&command),
+        ["login", "--host", "https://example.ghe.com"]
+    );
 }
 
 #[test]
@@ -497,8 +522,7 @@ fn result_record_exposes_session_exit_and_usage() {
 
 #[test]
 fn session_error_record_exposes_type_code_and_status() {
-    let stream =
-        r#"{"type":"session.error","errorType":"quota_exceeded","errorCode":"quota","statusCode":402}"#;
+    let stream = r#"{"type":"session.error","errorType":"quota_exceeded","errorCode":"quota","statusCode":402}"#;
     let parsed = RunOutput::parse(stream);
     let record = parsed.session_error().expect("a session.error record");
     assert_eq!(record.error_type.as_deref(), Some("quota_exceeded"));
@@ -530,7 +554,13 @@ fn try_from_succeeds_when_events_present_even_on_failure_exit() {
 fn try_from_errors_only_when_empty_and_failed() {
     let result = RunOutput::try_from(output("not json at all\n", 2));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -561,7 +591,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let copilot = Copilot::new(script.path());
     let result = async_runtime().block_on(copilot.execute(&RunCommand::prompt("hi").json()));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -607,7 +643,13 @@ fn stream_surfaces_failure_exit_after_events() {
         );
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });

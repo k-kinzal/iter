@@ -291,7 +291,10 @@ fn ops_commands_are_bare() {
 
 #[test]
 fn default_executor_uses_cursor_agent() {
-    assert_eq!(Cursor::default().executable(), OsString::from("cursor-agent"));
+    assert_eq!(
+        Cursor::default().executable(),
+        OsString::from("cursor-agent")
+    );
 }
 
 #[test]
@@ -430,7 +433,13 @@ fn try_from_succeeds_when_events_present_even_on_failure_exit() {
 fn try_from_errors_only_when_empty_and_failed() {
     let result = PrintOutput::try_from(output("not json at all\n", 2));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli with exit code 2, got {result:?}"
     );
 }
@@ -462,7 +471,13 @@ fn execute_reports_cli_error_on_empty_failure() {
     let cursor = Cursor::new(script.path());
     let result = async_runtime().block_on(cursor.execute(&PrintCommand::json().prompt("hi")));
     assert!(
-        matches!(result, Err(Error::Cli { exit_code: Some(2), .. })),
+        matches!(
+            result,
+            Err(Error::Cli {
+                exit_code: Some(2),
+                ..
+            })
+        ),
         "expected Error::Cli, got {result:?}"
     );
 }
@@ -502,7 +517,13 @@ fn stream_surfaces_failure_exit_after_events() {
         assert_eq!(first.event_type(), EventType::System);
         let tail = stream.next().await.expect("exit verdict");
         assert!(
-            matches!(tail, Err(Error::Cli { exit_code: Some(3), .. })),
+            matches!(
+                tail,
+                Err(Error::Cli {
+                    exit_code: Some(3),
+                    ..
+                })
+            ),
             "expected Error::Cli on non-zero exit, got {tail:?}"
         );
     });
