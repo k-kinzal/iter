@@ -1,7 +1,16 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/claude_code",
+    "crates/antigravity_cli",
+    "crates/claude_code_cli",
+    "crates/cline_cli",
+    "crates/codex_cli",
+    "crates/copilot_cli",
+    "crates/cursor_cli",
+    "crates/gemini_cli",
+    "crates/grok_cli",
+    "crates/hermes_cli",
+    "crates/opencode_cli",
     "crates/sandbox",
     "iter_core",
     "iter_tracing",
@@ -44,7 +53,16 @@ iter_watch_cli = { path = "iter_watch_cli", version = "0.1.0" }
 iter_command_cli = { path = "iter_command_cli", version = "0.1.0" }
 iter_files_cli = { path = "iter_files_cli", version = "0.1.0" }
 iter_webhook_cli = { path = "iter_webhook_cli", version = "0.1.0" }
-claude_code = { path = "crates/claude_code", version = "0.1.0" }
+antigravity_cli = { path = "crates/antigravity_cli", version = "0.1.0" }
+claude_code_cli = { path = "crates/claude_code_cli", version = "0.1.0" }
+cline_cli = { path = "crates/cline_cli", version = "0.1.0" }
+codex_cli = { path = "crates/codex_cli", version = "0.1.0" }
+copilot_cli = { path = "crates/copilot_cli", version = "0.1.0" }
+cursor_cli = { path = "crates/cursor_cli", version = "0.1.0" }
+gemini_cli = { path = "crates/gemini_cli", version = "0.1.0" }
+grok_cli = { path = "crates/grok_cli", version = "0.1.0" }
+hermes_cli = { path = "crates/hermes_cli", version = "0.1.0" }
+opencode_cli = { path = "crates/opencode_cli", version = "0.1.0" }
 sandbox = { path = "crates/sandbox", version = "0.1.0" }
 
 # Error handling

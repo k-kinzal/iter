@@ -1,19 +1,23 @@
 //! [`OpenCodeDriver`] — `OpenCode` CLI integration (print-only).
 //!
-//! Assembles:
+//! Assembles, via the [`opencode_cli`] crate:
 //!
 //! ```text
-//! opencode run [args...] --format json <prompt>
+//! opencode run --format json [extra-args...] <prompt>
 //! ```
 //!
-//! The prompt is the final positional argument; `--format json` makes the
-//! stream machine-readable. The argv shape and output-parsing live at the
-//! Command level (`command.rs`); this driver only projects the Command's
-//! CLI-shaped result/error onto iter's domain.
+//! The prompt is the final positional argument; `--format json` (applied by
+//! the crate's [`RunCommand::json`](opencode_cli::RunCommand::json)) makes the
+//! stream machine-readable. Extra args follow the managed flags — mirroring the
+//! other print-only drivers — so a caller can extend the invocation. The argv
+//! shape and output parsing are the crate's concern; this driver only projects
+//! the crate's CLI-shaped result onto iter's domain.
 //!
 //! `OpenCode` is one of the **exit-0-but-failed** CLIs: the verdict lives in the
-//! output stream, not the process exit code. See `command.rs` for the full
-//! contract.
+//! output stream, not the process exit code. The crate's
+//! [`RunOutput`](opencode_cli::RunOutput) reports the presence of an error
+//! event faithfully; this driver decides what that presence *means* for iter —
+//! a generic failure, a token-limit class, or a signal.
 //!
 //! # `OTel`
 //!
@@ -34,29 +38,61 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use opencode_cli::{Opencode, RunCommand, RunOutput};
+use thiserror::Error;
 
 use crate::agent::driver::{AgentCommand, AgentDriver};
-use crate::agent::process::{RawOutput, apply_user_env, inject_agent_otel_resource_attrs};
+use crate::agent::process::{
+    RawExit, RawOutput, apply_user_env, detect_token_limit, inject_agent_otel_resource_attrs,
+};
 use crate::agent::{AgentError, AgentKind, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 
-mod command;
+/// CLI-shaped classification of an `OpenCode` run that cannot become a
+/// successful [`AgentRun`].
+///
+/// The `opencode_cli` crate reports the stream faithfully (session id, final
+/// message, the presence of an error event); deciding what an error event or a
+/// non-zero exit *means* for iter is the driver's job, so this intermediate
+/// error type lives here rather than in the OSS crate. The [`From`] impl below
+/// projects it onto iter's minimal domain error.
+#[derive(Debug, Error)]
+enum OpenCodeOutputError {
+    /// Context-window / token-limit detected in an error event's message (or
+    /// the surrounding stream). Router-relevant: the Adapter maps this to
+    /// [`AgentError::TokenLimit`].
+    #[error("opencode hit the context/token limit: {0}")]
+    TokenLimit(String),
+    /// An in-band `session.error` / `result.error` event was present in the
+    /// output. This is the authoritative failure signal — the process may have
+    /// exited `0`. `code` is the process exit code only when the process
+    /// actually exited non-zero (the synchronous `result.error` path); `None`
+    /// for the exit-0-but-failed path.
+    #[error("opencode reported an error{}: {message}", match .code { Some(c) => format!(" (exit code {c})"), None => String::new() })]
+    Failed {
+        /// Process exit code, but only when the process exited non-zero.
+        code: Option<i32>,
+        /// The error message recovered from the event.
+        message: String,
+    },
+    /// The process was terminated by a signal and produced no error event.
+    #[error("opencode was terminated by signal {0}")]
+    Signal(i32),
+}
 
-use command::{OpenCodeCommand, OpenCodeError};
-
-impl From<OpenCodeError> for AgentError {
+impl From<OpenCodeOutputError> for AgentError {
     /// Adapter projection: collapse `OpenCode`'s CLI-shaped error hierarchy onto
-    /// iter's minimal domain error. Only [`OpenCodeError::TokenLimit`] is
+    /// iter's minimal domain error. Only [`OpenCodeOutputError::TokenLimit`] is
     /// router-relevant and preserved as [`AgentError::TokenLimit`]; a reported
     /// error event becomes [`AgentError::Failed`] (carrying the exit code only
     /// when the process actually exited non-zero), and a terminating signal
     /// becomes [`AgentError::TerminatedBySignal`].
-    fn from(err: OpenCodeError) -> Self {
+    fn from(err: OpenCodeOutputError) -> Self {
         match err {
-            OpenCodeError::TokenLimit(detail) => Self::TokenLimit(detail),
-            OpenCodeError::Failed { code, message } => Self::Failed { code, message },
-            OpenCodeError::Signal(sig) => Self::TerminatedBySignal(sig),
+            OpenCodeOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            OpenCodeOutputError::Failed { code, message } => Self::Failed { code, message },
+            OpenCodeOutputError::Signal(sig) => Self::TerminatedBySignal(sig),
         }
     }
 }
@@ -66,8 +102,8 @@ impl From<OpenCodeError> for AgentError {
 pub struct OpenCodeDriver {
     /// Binary name or path. Required.
     pub command: String,
-    /// Additional arguments inserted between the `run` subcommand and the
-    /// managed `--format json` flag.
+    /// Additional arguments inserted after the managed `run --format json`
+    /// flags and before the positional prompt.
     pub args: Vec<String>,
     /// User-declared environment variables passed to the child process.
     pub env: Vec<(String, String)>,
@@ -81,12 +117,16 @@ impl AgentDriver for OpenCodeDriver {
         prompt: &Prompt,
         _session: Option<&str>,
     ) -> Result<AgentCommand, AgentError> {
-        let mut process = OpenCodeCommand {
-            program: &self.command,
-            args: &self.args,
-            prompt: prompt.as_str(),
+        // `opencode run --format json` from the crate, then the caller's extra
+        // args, then the prompt as the final positional. The prompt is appended
+        // after `args` so callers can still extend the managed invocation.
+        let mut process = Opencode::new(&self.command)
+            .with_current_dir(path)
+            .to_process(&RunCommand::default().json());
+        for arg in &self.args {
+            process.arg(arg);
         }
-        .build(path);
+        process.arg(prompt.as_str());
         apply_user_env(&mut process, &self.env);
         inject_agent_otel_resource_attrs(&mut process, path, "opencode");
         // Trace-context env (W3C `TRACEPARENT`) injection is deliberately
@@ -103,11 +143,60 @@ impl AgentDriver for OpenCodeDriver {
     }
 
     fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
-        // Adapter: project the Command's CLI-shaped result/error onto iter's
-        // domain. `?` runs the `From<OpenCodeError>` above.
-        let result = command::interpret(RawOutput::from(output))?;
+        // Parse the CLI's `run --format json` stream with the OSS crate, then
+        // project its faithful verdict onto iter's domain here. `?`/`.into()`
+        // run the `From<OpenCodeOutputError>` above.
+        let raw = RawOutput::from(output);
+        let stdout = raw.stdout_str();
+        let parsed = RunOutput::parse(&stdout);
+        let exit_code = raw.exit.exit_code();
+
+        // Presence of an error event is authoritative — even on exit 0.
+        if let Some(error) = parsed.error() {
+            let message = error.into_message();
+            // Refine into TokenLimit when the message — or anywhere in the
+            // stream — describes a context/token limit.
+            if let Some(detail) =
+                detect_token_limit(&message).or_else(|| detect_token_limit(&stdout))
+            {
+                return Err(OpenCodeOutputError::TokenLimit(detail).into());
+            }
+            // Carry the exit code only when the process actually exited
+            // non-zero (the synchronous `result.error` path); the
+            // exit-0-but-failed path reports `None`.
+            let code = exit_code.filter(|&c| c != 0);
+            let message = if message.is_empty() {
+                "opencode reported an error event".to_owned()
+            } else {
+                message
+            };
+            return Err(OpenCodeOutputError::Failed { code, message }.into());
+        }
+
+        // No error event. A terminating signal with no in-band error is a
+        // process-level termination.
+        if let RawExit::Signal(sig) = raw.exit {
+            return Err(OpenCodeOutputError::Signal(sig).into());
+        }
+
+        // A non-zero exit with NO in-band error event is a pre-flight /
+        // validation failure that crashed before OpenCode could write a
+        // `result.error`. The exit-0-but-failed path is already handled above
+        // by the error-event check, so trusting a non-zero exit here is sound —
+        // it is the only signal a never-emitted-JSON crash leaves behind.
+        if let RawExit::Code(code) = raw.exit
+            && code != 0
+        {
+            return Err(OpenCodeOutputError::Failed {
+                code: Some(code),
+                message: format!("opencode exited with code {code} and no result event"),
+            }
+            .into());
+        }
+
+        // Success: recover any session id from the stream.
         Ok(AgentRun {
-            session_id: result.session_id,
+            session_id: parsed.session_id(),
         })
     }
 
@@ -190,14 +279,17 @@ mod tests {
     }
 
     #[test]
-    fn extra_args_are_forwarded_before_format_flag() {
+    fn extra_args_are_forwarded_before_the_prompt() {
         let mut d = driver("opencode");
         d.args = vec!["--model".into(), "sonnet".into()];
         let prompt = Prompt::from("x");
         let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
-        assert!(args.contains(&"--model".to_owned()), "got {args:?}");
-        assert!(args.contains(&"sonnet".to_owned()), "got {args:?}");
+        // Order: run --format json --model sonnet x
+        let model_pos = args.iter().position(|a| a == "--model").expect("--model");
+        let prompt_pos = args.iter().position(|a| a == "x").expect("prompt");
         assert!(args.contains(&"--format".to_owned()), "got {args:?}");
+        assert!(args.contains(&"sonnet".to_owned()), "got {args:?}");
+        assert!(model_pos < prompt_pos, "extras precede the prompt: {args:?}");
     }
 
     #[test]
@@ -254,6 +346,19 @@ mod tests {
     }
 
     #[test]
+    fn interpret_result_error_on_exit_one_carries_the_exit_code() {
+        let d = driver("opencode");
+        let body = r#"{"type":"result.error","error":{"message":"bad flag"}}"#;
+        let err = d
+            .interpret(&synth_output(RawExit::Code(1), body))
+            .expect_err("must fail");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), ref message } if message == "bad flag"),
+            "got {err:?}",
+        );
+    }
+
+    #[test]
     fn interpret_token_limit_error_event_maps_to_token_limit() {
         let d = driver("opencode");
         let body = r#"{"type":"session.error","error":{"message":"context window exceeded"}}"#;
@@ -263,11 +368,34 @@ mod tests {
         assert!(matches!(err, AgentError::TokenLimit(_)), "got {err:?}");
     }
 
+    #[test]
+    fn interpret_nonzero_exit_without_error_event_is_a_failure() {
+        // A pre-flight/validation crash exits non-zero before writing any
+        // `result.error` JSON; the exit code is the only signal left.
+        let d = driver("opencode");
+        let err = d
+            .interpret(&synth_output(RawExit::Code(1), ""))
+            .expect_err("must fail");
+        assert!(
+            matches!(err, AgentError::Failed { code: Some(1), .. }),
+            "got {err:?}",
+        );
+    }
+
+    #[test]
+    fn interpret_signal_without_error_event_maps_to_signal() {
+        let d = driver("opencode");
+        let err = d
+            .interpret(&synth_output(RawExit::Signal(9), ""))
+            .expect_err("must fail");
+        assert!(matches!(err, AgentError::TerminatedBySignal(9)), "got {err:?}");
+    }
+
     // ----- through the full cycle -------------------------------------------
 
     /// Fake `opencode` binary: echoes each argv arg (one per line) to *stderr*
     /// so the capture sink can observe the flags, then prints a clean session
-    /// record to stdout so the Command parses an `Ok`.
+    /// record to stdout so the crate parses an `Ok`.
     const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
 printf '%s' '{"type":"session","id":"sess-x","status":"idle"}'"#;
 

@@ -67,35 +67,80 @@ use crate::agent::{AgentError, AgentKind, AgentMode, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 use async_trait::async_trait;
+use codex_cli::{Codex, ExecCommand};
+use thiserror::Error;
 use tokio::process::Command;
 
-mod command;
 mod hook;
 
 use crate::agent::process::{
-    RawOutput, apply_user_env, inject_agent_otel_resource_attrs, inject_trace_context_env,
+    RawExit, RawOutput, apply_user_env, detect_token_limit, inject_agent_otel_resource_attrs,
+    inject_trace_context_env,
 };
-use command::{CodexCommand, CodexError};
 use hook::HookBundle;
 
 /// `-c` override that enables Codex's Stop hook protocol. Passed to the
 /// interactive-mode command as a separate argument pair.
 const CODEX_HOOKS_FEATURE_FLAG: &str = "features.codex_hooks=true";
 
-impl From<CodexError> for AgentError {
+/// Codex's usage-limit message — treated as a token/usage-limit class even
+/// though it is not one of the generic context-window patterns.
+const USAGE_LIMIT_MESSAGE: &str = "You've hit your usage limit.";
+
+/// Clap argument-parse rejection exit code.
+const EXIT_BAD_ARGS: i32 = 2;
+
+/// CLI-shaped classification of a Codex `exec` result that cannot become a
+/// successful [`AgentRun`].
+///
+/// The `codex_cli` crate reports the stream faithfully (session id, terminal
+/// [`TurnVerdict`](codex_cli::TurnVerdict), usage); deciding what a failing
+/// turn or a non-zero exit *means* for iter is the driver's job, so this
+/// intermediate error type lives here rather than in the OSS crate. The
+/// [`From`] impl below projects it onto iter's minimal domain error.
+#[derive(Debug, Error)]
+enum CodexOutputError {
+    /// Context-window / usage-limit detected in the output.
+    #[error("codex hit the usage/context limit: {0}")]
+    TokenLimit(String),
+    /// A terminal turn-status record reporting failure / interruption.
+    #[error("codex reported turn status `{status}` (will_retry={will_retry})")]
+    Reported {
+        /// The status string of the failing record.
+        status: String,
+        /// `will_retry` flag from the accompanying error item, when present.
+        will_retry: bool,
+        /// Process exit code, when one accompanied the failure.
+        exit_code: Option<i32>,
+    },
+    /// Bad CLI arguments (clap rejection, exit `2`).
+    #[error("codex rejected the command-line arguments (exit code 2)")]
+    BadArgs,
+    /// The process was terminated by a signal before producing a turn status.
+    #[error("codex was terminated by signal {0}")]
+    Signal(i32),
+    /// The process exited without ever producing a terminal turn-status record.
+    #[error("codex produced no terminal turn status (exit code {exit_code:?})")]
+    NoResult {
+        /// Process exit code, when one was produced.
+        exit_code: Option<i32>,
+    },
+}
+
+impl From<CodexOutputError> for AgentError {
     /// Adapter projection: collapse Codex's CLI-shaped error hierarchy onto
-    /// iter's minimal domain error. Only [`CodexError::TokenLimit`] is
+    /// iter's minimal domain error. Only [`CodexOutputError::TokenLimit`] is
     /// router-relevant and preserved as [`AgentError::TokenLimit`]; bad-args
     /// is a launch-class misconfiguration; the rest become the generic
     /// failure / signal variants.
-    fn from(err: CodexError) -> Self {
+    fn from(err: CodexOutputError) -> Self {
         match err {
-            CodexError::TokenLimit(detail) => Self::TokenLimit(detail),
-            CodexError::Signal(sig) => Self::TerminatedBySignal(sig),
-            CodexError::BadArgs => {
+            CodexOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            CodexOutputError::Signal(sig) => Self::TerminatedBySignal(sig),
+            CodexOutputError::BadArgs => {
                 Self::Launch("codex rejected the command-line arguments".to_owned())
             }
-            CodexError::Reported {
+            CodexOutputError::Reported {
                 status,
                 will_retry,
                 exit_code,
@@ -103,12 +148,25 @@ impl From<CodexError> for AgentError {
                 code: exit_code,
                 message: format!("codex reported turn status `{status}` (will_retry={will_retry})"),
             },
-            CodexError::NoResult { exit_code } => Self::Failed {
+            CodexOutputError::NoResult { exit_code } => Self::Failed {
                 code: exit_code,
                 message: "codex produced no terminal turn status".to_owned(),
             },
         }
     }
+}
+
+/// Detect a token/usage-limit in `text`: the generic context-window patterns
+/// plus Codex's literal usage-limit message. Stays driver-side because
+/// token-limit routing is iter-domain, not part of the CLI's own output model.
+fn detect_codex_limit(text: &str) -> Option<String> {
+    if let Some(detail) = detect_token_limit(text) {
+        return Some(detail);
+    }
+    if text.contains(USAGE_LIMIT_MESSAGE) {
+        return Some(USAGE_LIMIT_MESSAGE.to_owned());
+    }
+    None
 }
 
 /// `OpenAI` Codex driver configuration.
@@ -158,12 +216,18 @@ impl AgentDriver for CodexDriver {
     ) -> Result<AgentCommand, AgentError> {
         match self.mode {
             AgentMode::Headless => {
-                let mut process = CodexCommand {
-                    program: &self.command,
-                    args: &self.args,
-                    prompt: prompt.as_str(),
+                // `codex exec --json` from the crate, then the caller's extra
+                // args, then the prompt as the final positional — preserving
+                // the `exec --json [args] <prompt>` order the driver contracts
+                // on. The prompt is appended after `args` so callers can still
+                // extend/override the managed flags.
+                let mut process = Codex::new(&self.command)
+                    .with_current_dir(path)
+                    .to_process(&ExecCommand::default().json());
+                for arg in &self.args {
+                    process.arg(arg);
                 }
-                .build(path);
+                process.arg(prompt.as_str());
                 apply_user_env(&mut process, &self.env);
                 inject_agent_otel_resource_attrs(&mut process, path, "codex");
                 // `codex exec` imports W3C trace context from TRACEPARENT /
@@ -199,12 +263,48 @@ impl AgentDriver for CodexDriver {
                 Some(err) => Err(err),
             },
             AgentMode::Headless => {
-                // Adapter: project the Command's CLI-shaped result/error onto
-                // iter's domain. `?` runs the `From<CodexError>` above.
-                let result = command::interpret(&raw)?;
-                Ok(AgentRun {
-                    session_id: result.session_id,
-                })
+                // Parse the CLI's `exec --json` stream with the OSS crate, then
+                // project its faithful verdict onto iter's domain here: a
+                // terminal `Completed` turn is a run; a failing turn, a
+                // usage/token limit, bad args, a signal, or the absence of any
+                // terminal record each map to the matching domain error.
+                let stdout = raw.stdout_str();
+                let parsed = codex_cli::ExecOutput::parse(&stdout);
+                let exit_code = raw.exit.exit_code();
+
+                let Some(outcome) = parsed.turn_outcome() else {
+                    // Never produced a terminal record → never ran a turn.
+                    if let RawExit::Signal(sig) = raw.exit {
+                        return Err(CodexOutputError::Signal(sig).into());
+                    }
+                    if let Some(detail) = detect_codex_limit(&stdout)
+                        .or_else(|| detect_codex_limit(&raw.stderr_str()))
+                    {
+                        return Err(CodexOutputError::TokenLimit(detail).into());
+                    }
+                    if matches!(raw.exit, RawExit::Code(EXIT_BAD_ARGS)) {
+                        return Err(CodexOutputError::BadArgs.into());
+                    }
+                    return Err(CodexOutputError::NoResult { exit_code }.into());
+                };
+
+                if outcome.status.is_completed() {
+                    return Ok(AgentRun {
+                        session_id: parsed.session_id(),
+                    });
+                }
+
+                // A failing / interrupted turn: refine into a usage/token limit
+                // when the stream text says so before reporting the raw status.
+                if let Some(detail) = detect_codex_limit(&stdout) {
+                    return Err(CodexOutputError::TokenLimit(detail).into());
+                }
+                Err(CodexOutputError::Reported {
+                    status: outcome.label,
+                    will_retry: outcome.will_retry,
+                    exit_code,
+                }
+                .into())
             }
         }
     }

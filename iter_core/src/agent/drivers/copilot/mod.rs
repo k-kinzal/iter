@@ -1,19 +1,23 @@
 //! [`CopilotDriver`] — GitHub Copilot CLI integration.
 //!
+//! The argv shape and JSONL output parsing live in the standalone
+//! [`copilot_cli`] crate; this driver projects the crate's CLI-shaped result
+//! and error onto iter's domain and owns the two run modes.
+//!
 //! Two run modes are supported:
 //!
-//! * [`AgentMode::Headless`] — the default. Assembles:
+//! * [`AgentMode::Headless`] — the default. Assembles, via
+//!   [`copilot_cli::RunCommand`]:
 //!
 //!   ```text
-//!   copilot -p <prompt> --allow-all-tools --output-format json [extra-args...]
+//!   copilot --prompt <prompt> --allow-all-tools --output-format json [extra-args...]
 //!   ```
 //!
-//!   `-p` is Copilot's one-shot print flag; `--output-format json` makes the
-//!   terminal record machine-readable; `--allow-all-tools` stops the CLI
-//!   blocking on per-tool confirmation. The argv shape lives at the Command
-//!   level (`command.rs`); this driver only projects its result/error onto
-//!   iter's domain. The child's stdin is closed immediately and stdout is
-//!   captured for the Command to interpret.
+//!   `--prompt` (`-p`) is Copilot's one-shot flag; `--output-format json`
+//!   makes the terminal record machine-readable; `--allow-all-tools` stops the
+//!   CLI blocking on per-tool confirmation (iter's sandbox is the real
+//!   boundary). The child's stdin is closed immediately and stdout is captured
+//!   for the driver to interpret against the crate's [`copilot_cli::RunOutput`].
 //!
 //! * [`AgentMode::Interactive`] — launches the configured Copilot CLI
 //!   binary as a live TUI (`stdio: Inherit`) with a project-local
@@ -43,17 +47,17 @@
 //!   **Binary selection.** In interactive mode, the configured
 //!   [`command`](CopilotDriver::command) + [`subcommand`](CopilotDriver::subcommand)
 //!   must launch a live TUI that loads `.github/hooks/copilot-loop.json`
-//!   on startup. The default (`gh copilot suggest`) is a one-shot print
-//!   command and will *not* work in interactive mode; users must point
-//!   `command` at the standalone `copilot` TUI binary and clear the
-//!   subcommand first:
+//!   on startup. Standalone `copilot` 1.0.49 has **no `suggest` subcommand**
+//!   (that was a `gh copilot` relic): the root `copilot` invocation *is* the
+//!   interactive session, so the canonical subcommand is empty and
+//!   `subcommand: None` injects nothing.
 //!
 //!   ```no_run
 //!   # use iter_core::agent::{AgentMode, CopilotDriver};
 //!   let driver = CopilotDriver {
 //!       command: "copilot".into(),
 //!       mode: AgentMode::Interactive,
-//!       subcommand: Some(Vec::<String>::new()),
+//!       subcommand: None,
 //!       args: Vec::new(),
 //!       env: Vec::new(),
 //!       hook_isolation_key: "default".into(),
@@ -65,26 +69,13 @@
 //!   terminal. In non-tty environments (CI, detached runs) use
 //!   [`AgentMode::Headless`] instead.
 //!
-//! # Assumptions to verify later
-//!
-//! - The top-level binary for print mode is `gh` with the `copilot
-//!   suggest` subcommand. The standalone `copilot` binary exists on
-//!   some distributions and may require a different invocation.
-//! - Prompts are positional, not passed via a flag.
-//!
-//! Override via [`command`](CopilotDriver::command),
-//! [`subcommand`](CopilotDriver::subcommand), and
-//! [`args`](CopilotDriver::args).
-//!
 //! # Construction
 //!
 //! [`CopilotDriver`] exposes no project-shaped defaults. Every field is
-//! required and the driver is constructed directly from its fields. Note that
-//! `subcommand` is a genuine `Option`: `None` asks iter to apply its
-//! canonical one-shot subcommand (`["copilot", "suggest"]`) which is
-//! agent-operational knowledge, not a project-shaped decision; `Some(vec![])`
-//! means "invoke the binary with no subcommand" (for standalone Copilot TUI
-//! builds).
+//! required and the driver is constructed directly from its fields. `subcommand`
+//! is a genuine `Option`: `None` asks iter to apply its canonical subcommand,
+//! which is now **empty** (no injected verb); `Some(vec![...])` invokes the
+//! binary with an explicit subcommand for non-default Copilot distributions.
 
 use std::path::Path;
 
@@ -93,18 +84,88 @@ use crate::agent::{AgentError, AgentKind, AgentMode, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 use async_trait::async_trait;
+use copilot_cli::{Copilot, RunCommand, RunOptions, RunOutput, SessionError};
+use thiserror::Error;
 use tokio::process::Command;
 
-mod command;
 mod hook;
 
 use crate::agent::process::{
-    RawOutput, apply_user_env, inject_agent_otel_resource_attrs, inject_copilot_trace_parent_env,
+    RawExit, RawOutput, apply_user_env, detect_token_limit, inject_agent_otel_resource_attrs,
+    inject_copilot_trace_parent_env,
 };
-use command::{CopilotCommand, CopilotError};
 use hook::HookBundle;
 
-impl From<CopilotError> for AgentError {
+/// CLI-shaped error hierarchy for the Copilot CLI's headless output.
+///
+/// Carries the failure class plus the HTTP-ish `statusCode` the CLI surfaced.
+/// Spawn-level concerns (cancellation, launch failure) live elsewhere; this is
+/// only the output-interpretation error. Mirrors `claude_code`'s
+/// `ClaudeCodeOutputError`: a driver-local CLI error the Adapter projects onto
+/// iter's domain.
+#[derive(Debug, Error)]
+pub(crate) enum CopilotOutputError {
+    /// Quota exhausted (`session.error` with `statusCode` 402). Router-relevant:
+    /// the Adapter maps this to [`AgentError::TokenLimit`].
+    #[error("copilot quota exhausted (status {status:?}): {error_type}")]
+    QuotaExhausted {
+        /// `errorType` from the `session.error` record.
+        error_type: String,
+        /// `statusCode` from the `session.error` record (expected 402).
+        status: Option<u16>,
+    },
+    /// Rate limited (`session.error` with `statusCode` 429). Router-relevant:
+    /// the Adapter maps this to [`AgentError::TokenLimit`] (rate exhaustion is
+    /// the closest domain class).
+    #[error("copilot rate limited (status {status:?}): {error_type}")]
+    RateLimited {
+        /// `errorType` from the `session.error` record.
+        error_type: String,
+        /// `statusCode` from the `session.error` record (expected 429).
+        status: Option<u16>,
+    },
+    /// Context-window / token-limit detected in the output text. Router-relevant:
+    /// the Adapter maps this to [`AgentError::TokenLimit`].
+    #[error("copilot hit the context/token limit: {0}")]
+    TokenLimit(String),
+    /// Authentication / authorization failure (`statusCode` 401/403).
+    #[error("copilot authentication failed (status {status:?}): {error_type}")]
+    Auth {
+        /// `errorType` from the `session.error` record.
+        error_type: String,
+        /// `statusCode` from the `session.error` record (401 or 403).
+        status: Option<u16>,
+    },
+    /// Network / server-side failure (`statusCode` 5xx).
+    #[error("copilot network error (status {status:?}): {error_type}")]
+    Network {
+        /// `errorType` from the `session.error` record.
+        error_type: String,
+        /// `statusCode` from the `session.error` record (5xx).
+        status: Option<u16>,
+    },
+    /// Any other reported `session.error` that does not fall into the classes
+    /// above.
+    #[error("copilot reported an error (`{error_type}`, status {status:?})")]
+    Reported {
+        /// `errorType` from the `session.error` record.
+        error_type: String,
+        /// `statusCode` from the `session.error` record, when present.
+        status: Option<u16>,
+    },
+    /// The process was terminated by a signal before producing a result.
+    #[error("copilot was terminated by signal {0}")]
+    Signal(i32),
+    /// The process exited without a parseable terminal record or
+    /// `session.error` (e.g. exit 1 with no JSON).
+    #[error("copilot produced no terminal result (exit code {exit_code:?})")]
+    NoResult {
+        /// Process exit code, when one was produced.
+        exit_code: Option<i32>,
+    },
+}
+
+impl From<CopilotOutputError> for AgentError {
     /// Adapter projection: collapse Copilot's CLI-shaped error hierarchy onto
     /// iter's minimal domain error. The router only branches on
     /// [`AgentError::TokenLimit`], so the three exhaustion classes
@@ -112,29 +173,29 @@ impl From<CopilotError> for AgentError {
     /// there; auth, network, other reported errors, and the no-result case
     /// become [`AgentError::Failed`]; a terminating signal becomes
     /// [`AgentError::TerminatedBySignal`].
-    fn from(err: CopilotError) -> Self {
+    fn from(err: CopilotOutputError) -> Self {
         match err {
-            CopilotError::QuotaExhausted { error_type, status } => Self::TokenLimit(format!(
+            CopilotOutputError::QuotaExhausted { error_type, status } => Self::TokenLimit(format!(
                 "copilot quota exhausted (status {status:?}): {error_type}"
             )),
-            CopilotError::RateLimited { error_type, status } => Self::TokenLimit(format!(
+            CopilotOutputError::RateLimited { error_type, status } => Self::TokenLimit(format!(
                 "copilot rate limited (status {status:?}): {error_type}"
             )),
-            CopilotError::TokenLimit(detail) => Self::TokenLimit(detail),
-            CopilotError::Auth { error_type, status } => Self::Failed {
+            CopilotOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            CopilotOutputError::Auth { error_type, status } => Self::Failed {
                 code: status.map(i32::from),
                 message: format!("copilot authentication failed (status {status:?}): {error_type}"),
             },
-            CopilotError::Network { error_type, status } => Self::Failed {
+            CopilotOutputError::Network { error_type, status } => Self::Failed {
                 code: status.map(i32::from),
                 message: format!("copilot network error (status {status:?}): {error_type}"),
             },
-            CopilotError::Reported { error_type, status } => Self::Failed {
+            CopilotOutputError::Reported { error_type, status } => Self::Failed {
                 code: status.map(i32::from),
                 message: format!("copilot reported error `{error_type}` (status {status:?})"),
             },
-            CopilotError::Signal(sig) => Self::TerminatedBySignal(sig),
-            CopilotError::NoResult { exit_code } => Self::Failed {
+            CopilotOutputError::Signal(sig) => Self::TerminatedBySignal(sig),
+            CopilotOutputError::NoResult { exit_code } => Self::Failed {
                 code: exit_code,
                 message: "copilot produced no terminal result".to_owned(),
             },
@@ -142,9 +203,76 @@ impl From<CopilotError> for AgentError {
     }
 }
 
-/// Canonical one-shot subcommand for `gh` — agent-operational knowledge
-/// iter holds so users don't need to look up the Copilot CLI's shape.
-const CANONICAL_SUBCOMMAND: &[&str] = &["copilot", "suggest"];
+/// Interpret Copilot's headless output into a run outcome or a CLI-shaped error.
+///
+/// The crate's [`RunOutput`] surfaces both terminal records; the domain
+/// judgement stays here: a `session.error` record — when present — is
+/// authoritative (its presence *is* the failure signal), and the token-limit
+/// refinement and signal handling live at this layer because they draw on the
+/// process exit and stderr, not just the JSONL stream.
+fn interpret_output(raw: &RawOutput<'_>) -> Result<AgentRun, CopilotOutputError> {
+    let stdout = raw.stdout_str();
+    let parsed = RunOutput::parse(&stdout);
+
+    let exit_code = match raw.exit {
+        RawExit::Code(c) => Some(c),
+        RawExit::Signal(_) | RawExit::Unknown => None,
+    };
+
+    // Presence of `session.error` is the failure signal, authoritative over any
+    // terminal `result` that may also appear.
+    if let Some(error) = parsed.session_error() {
+        return Err(classify_session_error(&error, &stdout));
+    }
+
+    let Some(result) = parsed.result() else {
+        // Never produced a terminal record → never ran a turn.
+        if let RawExit::Signal(sig) = raw.exit {
+            return Err(CopilotOutputError::Signal(sig));
+        }
+        if let Some(detail) = detect_token_limit(&stdout) {
+            return Err(CopilotOutputError::TokenLimit(detail));
+        }
+        let stderr = raw.stderr_str();
+        if let Some(detail) = detect_token_limit(&stderr) {
+            return Err(CopilotOutputError::TokenLimit(detail));
+        }
+        return Err(CopilotOutputError::NoResult { exit_code });
+    };
+
+    Ok(AgentRun {
+        session_id: result.session_id,
+    })
+}
+
+/// Map a crate-parsed `session.error` record onto the matching
+/// [`CopilotOutputError`] class.
+fn classify_session_error(record: &SessionError, stdout: &str) -> CopilotOutputError {
+    let error_type = record.error_type.clone().unwrap_or_default();
+    let status = record.status_code;
+    match status {
+        Some(402) => CopilotOutputError::QuotaExhausted { error_type, status },
+        Some(429) => CopilotOutputError::RateLimited { error_type, status },
+        Some(401 | 403) => CopilotOutputError::Auth { error_type, status },
+        Some(code) if (500..600).contains(&code) => {
+            CopilotOutputError::Network { error_type, status }
+        }
+        _ => {
+            // No exhaustion status, but the text may still describe a
+            // context/token limit — refine into TokenLimit when it does.
+            if let Some(detail) =
+                detect_token_limit(&error_type).or_else(|| detect_token_limit(stdout))
+            {
+                return CopilotOutputError::TokenLimit(detail);
+            }
+            CopilotOutputError::Reported { error_type, status }
+        }
+    }
+}
+
+/// Canonical subcommand for `subcommand: None`. Standalone `copilot` 1.0.49
+/// has no `suggest` verb — the root command *is* the run — so this is empty.
+const CANONICAL_SUBCOMMAND: &[&str] = &[];
 
 /// GitHub Copilot CLI driver configuration.
 #[derive(Debug, Clone)]
@@ -154,9 +282,8 @@ pub struct CopilotDriver {
     /// Print vs. interactive mode. Required.
     pub mode: AgentMode,
     /// Subcommand arguments inserted between the binary and the positional
-    /// prompt. `None` falls back to the canonical
-    /// `["copilot", "suggest"]`; `Some(vec![])` invokes the binary with
-    /// no subcommand at all.
+    /// prompt. `None` falls back to the canonical subcommand (now empty);
+    /// `Some(vec![])` also invokes the binary with no subcommand at all.
     pub subcommand: Option<Vec<String>>,
     /// Additional arguments inserted between the subcommand and the prompt.
     pub args: Vec<String>,
@@ -171,8 +298,8 @@ pub struct CopilotDriver {
 impl CopilotDriver {
     /// Interactive-mode argv builder: binary + subcommand + args + positional
     /// prompt. The interactive TUI takes the prompt as its final positional
-    /// argument; print mode instead uses the [`CopilotCommand`] builder, which
-    /// owns the `-p … --output-format json` shape.
+    /// argument; headless mode instead uses the [`copilot_cli::RunCommand`]
+    /// builder, which owns the `--prompt … --output-format json` shape.
     fn build_command(&self, path: &Path, prompt: &Prompt) -> Command {
         let mut cmd = Command::new(&self.command);
         cmd.current_dir(path);
@@ -206,17 +333,27 @@ impl AgentDriver for CopilotDriver {
     ) -> Result<AgentCommand, AgentError> {
         match self.mode {
             AgentMode::Headless => {
-                let mut process = CopilotCommand {
-                    program: &self.command,
-                    args: &self.args,
-                    prompt: prompt.as_str(),
+                let run = RunCommand {
+                    options: RunOptions {
+                        prompt: Some(prompt.as_str().to_owned()),
+                        allow_all_tools: true,
+                        ..RunOptions::default()
+                    },
                 }
-                .build(path);
+                .json();
+                let mut process = Copilot::new(&self.command)
+                    .with_current_dir(path)
+                    .to_process(&run);
+                // Caller-supplied extra args follow the managed flags so they
+                // can still override them.
+                for arg in &self.args {
+                    process.arg(arg);
+                }
                 apply_user_env(&mut process, &self.env);
                 inject_agent_otel_resource_attrs(&mut process, path, "copilot");
                 inject_copilot_trace_parent_env(&mut process);
                 Ok(AgentCommand {
-                    // The prompt is embedded in argv via `-p`, so no stdin data.
+                    // The prompt is embedded in argv via `--prompt`, so no stdin.
                     process,
                     stdin: None,
                     io: StdioMode::Piped,
@@ -246,14 +383,9 @@ impl AgentDriver for CopilotDriver {
                 None => Ok(AgentRun::empty()),
                 Some(err) => Err(err),
             },
-            AgentMode::Headless => {
-                // Adapter: project the Command's CLI-shaped result/error onto
-                // iter's domain. `?` runs the `From<CopilotError>` above.
-                let result = command::interpret(&raw)?;
-                Ok(AgentRun {
-                    session_id: result.session_id,
-                })
-            }
+            // Adapter: project the crate's CLI-shaped result/error onto iter's
+            // domain. `?` runs the `From<CopilotOutputError>` above.
+            AgentMode::Headless => Ok(interpret_output(&raw)?),
         }
     }
 
@@ -286,7 +418,6 @@ impl AgentDriver for CopilotDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::process::RawExit;
     use crate::agent::testutil::{drive, drive_capturing, fake_binary_script};
     use serde_json::json;
     use std::ffi::OsStr;
@@ -329,7 +460,7 @@ mod tests {
         let prompt = Prompt::from("hello-copilot");
         let command = d.command(Path::new("."), &prompt, None).expect("command");
         let args = argv(&command);
-        assert!(args.contains(&"-p".to_owned()), "got {args:?}");
+        assert!(args.contains(&"--prompt".to_owned()), "got {args:?}");
         assert!(args.contains(&"hello-copilot".to_owned()), "got {args:?}");
         assert!(
             args.contains(&"--allow-all-tools".to_owned()),
@@ -337,6 +468,8 @@ mod tests {
         );
         assert!(args.contains(&"--output-format".to_owned()), "got {args:?}");
         assert!(args.contains(&"json".to_owned()), "got {args:?}");
+        // The stale `gh copilot suggest` verb must never be injected.
+        assert!(!args.contains(&"suggest".to_owned()), "got {args:?}");
         assert_eq!(command.stdin, None, "copilot delivers the prompt as argv");
         assert_eq!(command.io, StdioMode::Piped);
     }
@@ -367,8 +500,7 @@ mod tests {
     #[test]
     fn interactive_command_puts_prompt_last_and_inherits_stdio() {
         let mut d = copilot_driver("copilot", AgentMode::Interactive);
-        // Clear the subcommand so the standalone TUI binary is invoked bare;
-        // the canonical `copilot suggest` is a one-shot print command.
+        // Explicit empty subcommand invokes the standalone TUI binary bare.
         d.subcommand = Some(Vec::new());
         d.args = vec!["--foo".into()];
         let prompt = Prompt::from("the-prompt");
@@ -388,19 +520,15 @@ mod tests {
     }
 
     #[test]
-    fn interactive_command_defaults_to_canonical_subcommand() {
-        let d = copilot_driver("gh", AgentMode::Interactive);
+    fn interactive_command_none_subcommand_injects_no_verb() {
+        // With `subcommand: None`, iter's canonical subcommand is empty: no
+        // `suggest` (or any other verb) is injected — only the prompt remains.
+        let d = copilot_driver("copilot", AgentMode::Interactive);
         let prompt = Prompt::from("go");
         let command = d.command(Path::new("."), &prompt, None).expect("command");
         let args = argv(&command);
-        // With `subcommand: None`, iter injects `copilot suggest`.
-        assert_eq!(
-            args.first().map(String::as_str),
-            Some("copilot"),
-            "got {args:?}"
-        );
-        assert!(args.contains(&"suggest".to_owned()), "got {args:?}");
-        assert_eq!(args.last().map(String::as_str), Some("go"), "got {args:?}");
+        assert_eq!(args, vec!["go".to_owned()], "got {args:?}");
+        assert!(!args.contains(&"suggest".to_owned()), "got {args:?}");
     }
 
     // ----- interpret(): inbound translation --------------------------------
@@ -488,7 +616,7 @@ printf '%s' '{"type":"result","sessionId":"sess-x","exitCode":0,"usage":{"premiu
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
-        assert!(args.contains(&"-p"), "got {args:?}");
+        assert!(args.contains(&"--prompt"), "got {args:?}");
         assert!(args.contains(&"hello-copilot"), "got {args:?}");
         assert!(args.contains(&"--allow-all-tools"), "got {args:?}");
         assert!(args.contains(&"--output-format"), "got {args:?}");

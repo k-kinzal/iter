@@ -9,11 +9,11 @@
 //! * [`AgentMode::Headless`] — the default. Assembles:
 //!
 //!   ```text
-//!   agy -p <prompt> [--conversation <id>] [extra-args...]
+//!   agy [--conversation <id>] --print <prompt> [extra-args...]
 //!   ```
 //!
-//!   The prompt is delivered inline as the value of `-p`; nothing is fed on
-//!   stdin. The child's complete stdout/stderr is captured so
+//!   The prompt is delivered inline as the value of `--print`; nothing is fed
+//!   on stdin. The child's complete stdout/stderr is captured so
 //!   [`interpret`](AntigravityDriver::interpret) can classify the run. There
 //!   is **no JSON mode** — see the output contract below for the text-marker
 //!   classification.
@@ -95,9 +95,9 @@
 
 use std::path::Path;
 
+use antigravity_cli::{Antigravity, RunCommand, RunMode, RunOptions};
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::process::Command;
 
 use crate::agent::driver::{AgentCommand, AgentDriver};
 use crate::agent::process::{RawExit, RawOutput, apply_user_env, detect_token_limit};
@@ -241,43 +241,39 @@ impl AgentDriver for AntigravityDriver {
         // omitted: `agy`'s consumption of `TRACEPARENT` /
         // `OTEL_RESOURCE_ATTRIBUTES` is unverified, so iter does not make its
         // traces *look* correlated without confirming the agent participates.
-        let mut process = Command::new(&self.command);
-        process.current_dir(path);
-        match self.mode {
-            AgentMode::Headless => {
-                // `-p <prompt>` carries the prompt inline; `--conversation`
-                // (when set) precedes the caller's extra args so users can
-                // still append their own flags. The prompt is embedded in
-                // argv, so nothing is fed on stdin.
-                process.arg("-p").arg(prompt.as_str());
-                if let Some(ref id) = self.conversation_id {
-                    process.arg("--conversation").arg(id);
-                }
-                process.args(&self.args);
-                apply_user_env(&mut process, &self.env);
-                Ok(AgentCommand {
-                    process,
-                    stdin: None,
-                    io: StdioMode::Piped,
-                })
-            }
+        //
+        // Argv construction is delegated to `antigravity_cli`; this driver
+        // keeps the mode selection, env application, and the text-marker
+        // classification in `interpret`. `--conversation` (when set) is
+        // rendered before the prompt so it is parsed as a flag, and the
+        // caller's extra args are appended last. Nothing is fed on stdin: the
+        // prompt is embedded in argv in both modes.
+        // The prompt operand now rides inside the `RunMode` variant: headless
+        // uses `--print <prompt>`, interactive seeds the TUI positionally.
+        let prompt_text = prompt.as_str().to_owned();
+        let (mode, io) = match self.mode {
+            AgentMode::Headless => (RunMode::Print(prompt_text), StdioMode::Piped),
             AgentMode::Interactive => {
-                // Pass the prompt as the first positional argument so `agy`
-                // seeds its initial user turn with it before dropping into the
-                // TUI. `--conversation` precedes it; extra args come afterward.
-                if let Some(ref id) = self.conversation_id {
-                    process.arg("--conversation").arg(id);
-                }
-                process.arg(prompt.as_str());
-                process.args(&self.args);
-                apply_user_env(&mut process, &self.env);
-                Ok(AgentCommand {
-                    process,
-                    stdin: None,
-                    io: StdioMode::Inherit,
-                })
+                (RunMode::Interactive(Some(prompt_text)), StdioMode::Inherit)
             }
-        }
+        };
+        let run = RunCommand {
+            mode,
+            options: RunOptions {
+                conversation: self.conversation_id.clone(),
+                ..RunOptions::default()
+            },
+        };
+        let mut process = Antigravity::new(&self.command)
+            .with_current_dir(path)
+            .to_process(&run);
+        process.args(&self.args);
+        apply_user_env(&mut process, &self.env);
+        Ok(AgentCommand {
+            process,
+            stdin: None,
+            io,
+        })
     }
 
     fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
@@ -337,20 +333,24 @@ mod tests {
     // ----- command(): outbound translation ---------------------------------
 
     #[test]
-    fn headless_command_emits_dash_p_then_prompt() {
+    fn headless_command_emits_print_flag_then_prompt() {
+        // Argv is now built by `antigravity_cli`, which renders the canonical
+        // long-form `--print <prompt>` (equivalent to the CLI's `-p` alias).
         let d = driver("agy", AgentMode::Headless);
         let prompt = Prompt::from("hello-agy");
         let command = d.command(Path::new("."), &prompt, None).expect("command");
         assert_eq!(
             argv(&command),
-            vec!["-p".to_owned(), "hello-agy".to_owned()]
+            vec!["--print".to_owned(), "hello-agy".to_owned()]
         );
-        assert_eq!(command.stdin, None, "`-p` embeds the prompt in argv");
+        assert_eq!(command.stdin, None, "`--print` embeds the prompt in argv");
         assert_eq!(command.io, StdioMode::Piped);
     }
 
     #[test]
     fn headless_command_adds_conversation_flag_when_set() {
+        // Options render before the prompt (Go's `flag` parser stops at the
+        // first positional), so `--conversation` now precedes `--print`.
         let mut d = driver("agy", AgentMode::Headless);
         d.conversation_id = Some("test-session-42".into());
         let prompt = Prompt::from("go");
@@ -358,10 +358,10 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "-p".to_owned(),
-                "go".to_owned(),
                 "--conversation".to_owned(),
                 "test-session-42".to_owned(),
+                "--print".to_owned(),
+                "go".to_owned(),
             ],
         );
     }
@@ -387,10 +387,10 @@ mod tests {
         assert_eq!(
             args,
             vec![
-                "-p".to_owned(),
-                "go".to_owned(),
                 "--conversation".to_owned(),
                 "sess-1".to_owned(),
+                "--print".to_owned(),
+                "go".to_owned(),
                 "--print-timeout".to_owned(),
                 "600".to_owned(),
             ],
@@ -583,7 +583,7 @@ mod tests {
 printf 'final answer'"#;
 
     #[tokio::test]
-    async fn headless_passes_dash_p_and_prompt_through() {
+    async fn headless_passes_print_and_prompt_through() {
         let (_guard, bin) = fake_binary_script(FAKE_OK);
         let d = driver(bin.to_string_lossy(), AgentMode::Headless);
         let prompt = Prompt::from("hello-agy");
@@ -592,9 +592,9 @@ printf 'final answer'"#;
         assert_eq!(run.session_id, None);
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
-        let dash_pos = args.iter().position(|a| *a == "-p").expect("-p");
+        let print_pos = args.iter().position(|a| *a == "--print").expect("--print");
         let prompt_pos = args.iter().position(|a| *a == "hello-agy").expect("prompt");
-        assert!(dash_pos < prompt_pos, "got {args:?}");
+        assert!(print_pos < prompt_pos, "got {args:?}");
     }
 
     #[tokio::test]

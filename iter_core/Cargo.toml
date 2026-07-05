@@ -17,7 +17,16 @@ driver-sqs = ["dep:aws-config", "dep:aws-credential-types", "dep:aws-sdk-sqs", "
 driver-redis = ["dep:redis"]
 
 [dependencies]
-claude_code.workspace = true
+antigravity_cli.workspace = true
+claude_code_cli.workspace = true
+cline_cli.workspace = true
+codex_cli.workspace = true
+copilot_cli.workspace = true
+cursor_cli.workspace = true
+gemini_cli.workspace = true
+grok_cli.workspace = true
+hermes_cli.workspace = true
+opencode_cli.workspace = true
 sandbox.workspace = true
 iter_tracing.workspace = true
 thiserror.workspace = true

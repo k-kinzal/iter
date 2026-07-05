@@ -5,14 +5,14 @@
 //! * [`AgentMode::Headless`] — the default. Assembles:
 //!
 //!   ```text
-//!   gemini -p <prompt> -o json [extra-args...]
+//!   gemini --output-format json --prompt <prompt> [extra-args...]
 //!   ```
 //!
-//!   The prompt is delivered as the value of `-p`, matching the common
-//!   `gemini -p 'explain foo'` invocation pattern, and `-o json` requests
-//!   the machine-readable terminal record the `command` submodule parses.
-//!   The child's stdin is closed immediately and stdout is captured for the
-//!   Command to interpret into an [`AgentRun`] or [`AgentError`].
+//!   The prompt is delivered as the value of `--prompt` and
+//!   `--output-format json` requests the machine-readable terminal record,
+//!   both rendered by the `gemini_cli` crate's `RunCommand`. The child's
+//!   stdin is closed immediately and stdout is captured for the driver to
+//!   interpret into an [`AgentRun`] or [`AgentError`].
 //!
 //! * [`AgentMode::Interactive`] — launches `gemini` as a live TUI
 //!   (`stdio: Inherit`) with a project-local `AfterAgent` hook installed
@@ -53,16 +53,78 @@ use crate::workspace::StdioMode;
 use async_trait::async_trait;
 use tokio::process::Command;
 
-mod command;
 mod hook;
 
+use gemini_cli::{Gemini, GeminiOutput, RunCommand};
+use thiserror::Error;
+
 use crate::agent::process::{
-    RawOutput, apply_user_env, inject_agent_otel_resource_attrs, inject_trace_context_env,
+    RawExit, RawOutput, apply_user_env, detect_token_limit, inject_agent_otel_resource_attrs,
+    inject_trace_context_env,
 };
-use command::{GeminiCommand, GeminiError};
 use hook::HookBundle;
 
-impl From<GeminiError> for AgentError {
+/// Fatal startup exit codes (auth / input / sandbox / config / turn-limit);
+/// a process that exits with one never ran a turn → [`AgentError::Launch`].
+const STARTUP_EXIT_CODES: &[i32] = &[41, 42, 44, 52, 53];
+
+/// CLI-shaped error hierarchy for the Gemini CLI's headless output.
+///
+/// This is the neutral classification the driver derives from a completed
+/// `gemini --output-format json` run before projecting it onto iter's domain
+/// [`AgentError`] via the `From` impl below. The `gemini_cli` crate reports
+/// the raw terminal record faithfully; deciding what that record *means* is
+/// this driver's responsibility — the anti-corruption boundary between the
+/// CLI's vocabulary and iter's.
+#[derive(Debug, Error)]
+enum GeminiOutputError {
+    /// Context-window / token-limit detected in the output or `error.message`.
+    #[error("gemini hit the context/token limit: {0}")]
+    TokenLimit(String),
+    /// A fatal startup exit code (auth / input / sandbox / config /
+    /// turn-limit). The agent never ran a turn.
+    #[error("gemini failed to start (exit code {exit_code})")]
+    Startup {
+        /// The fatal startup exit code (one of [`STARTUP_EXIT_CODES`]).
+        exit_code: i32,
+        /// Diagnostic message, when one was parsed from the JSON `error`.
+        message: Option<String>,
+    },
+    /// A terminal record carrying an `error` field (in-band failure).
+    #[error("gemini reported an error result")]
+    Reported {
+        /// `error.type`, when present.
+        error_type: Option<String>,
+        /// `error.message`, when present.
+        message: Option<String>,
+        /// `error.code`, or the process exit code when no JSON code was given.
+        code: Option<i32>,
+    },
+    /// The process was terminated by a signal before producing a result.
+    #[error("gemini was terminated by signal {0}")]
+    Signal(i32),
+    /// The process exited without ever producing a JSON result object.
+    #[error("gemini produced no result (exit code {exit_code:?})")]
+    NoResult {
+        /// Process exit code, when one was produced.
+        exit_code: Option<i32>,
+    },
+}
+
+/// Is this exit code one of the fatal startup codes?
+fn is_startup_code(exit_code: Option<i32>) -> Option<i32> {
+    exit_code.filter(|c| STARTUP_EXIT_CODES.contains(c))
+}
+
+/// Does this `error.type` look like a context/token-limit class?
+fn is_context_error_type(error_type: Option<&str>) -> bool {
+    error_type.is_some_and(|t| {
+        let lower = t.to_ascii_lowercase();
+        lower.contains("context") || lower.contains("token")
+    })
+}
+
+impl From<GeminiOutputError> for AgentError {
     /// Adapter projection: collapse the Gemini CLI's CLI-shaped error
     /// hierarchy onto iter's minimal domain error.
     ///
@@ -71,15 +133,15 @@ impl From<GeminiError> for AgentError {
     ///   turn-limit) → [`AgentError::Launch`] — the agent never ran a turn.
     /// * Signal termination → [`AgentError::TerminatedBySignal`].
     /// * Everything else → [`AgentError::Failed`].
-    fn from(err: GeminiError) -> Self {
+    fn from(err: GeminiOutputError) -> Self {
         match err {
-            GeminiError::TokenLimit(detail) => Self::TokenLimit(detail),
-            GeminiError::Startup { exit_code, message } => Self::Launch(match message {
+            GeminiOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            GeminiOutputError::Startup { exit_code, message } => Self::Launch(match message {
                 Some(msg) => format!("gemini startup failure (exit code {exit_code}): {msg}"),
                 None => format!("gemini startup failure (exit code {exit_code})"),
             }),
-            GeminiError::Signal(sig) => Self::TerminatedBySignal(sig),
-            GeminiError::Reported {
+            GeminiOutputError::Signal(sig) => Self::TerminatedBySignal(sig),
+            GeminiOutputError::Reported {
                 error_type,
                 message,
                 code,
@@ -92,7 +154,7 @@ impl From<GeminiError> for AgentError {
                     (None, None) => "gemini reported an error result".to_owned(),
                 },
             },
-            GeminiError::NoResult { exit_code } => Self::Failed {
+            GeminiOutputError::NoResult { exit_code } => Self::Failed {
                 code: exit_code,
                 message: "gemini produced no result".to_owned(),
             },
@@ -108,8 +170,8 @@ pub struct GeminiDriver {
     /// Print vs. interactive mode. Required.
     pub mode: AgentMode,
     /// Additional arguments appended after the built-in flags (the
-    /// `-p <prompt> -o json` triple in print mode, or the prompt positional
-    /// in interactive mode).
+    /// `--output-format json --prompt <prompt>` pair in print mode, or the
+    /// prompt positional in interactive mode).
     pub args: Vec<String>,
     /// User-declared environment variables passed to the child process.
     pub env: Vec<(String, String)>,
@@ -145,18 +207,19 @@ impl AgentDriver for GeminiDriver {
     ) -> Result<AgentCommand, AgentError> {
         match self.mode {
             AgentMode::Headless => {
-                let mut process = GeminiCommand {
-                    program: &self.command,
-                    prompt: prompt.as_str(),
-                    args: &self.args,
-                }
-                .build(path);
+                // The `gemini_cli` crate renders the managed flags
+                // (`--output-format json --prompt <prompt>`); the caller's
+                // extra args are appended after so they can still override.
+                let mut process = Gemini::new(&self.command)
+                    .with_current_dir(path)
+                    .to_process(&RunCommand::prompt(prompt.as_str()).json());
+                process.args(&self.args);
                 apply_user_env(&mut process, &self.env);
                 inject_agent_otel_resource_attrs(&mut process, path, "gemini");
                 inject_trace_context_env(&mut process);
                 Ok(AgentCommand {
-                    // The prompt is already on the argv (`-p`), so no stdin
-                    // payload is sent; the cycle closes stdin immediately.
+                    // The prompt is already on the argv (`--prompt`), so no
+                    // stdin payload is sent; the cycle closes stdin immediately.
                     process,
                     stdin: None,
                     io: StdioMode::Piped,
@@ -186,11 +249,81 @@ impl AgentDriver for GeminiDriver {
                 Some(err) => Err(err),
             },
             AgentMode::Headless => {
-                // Adapter: project the Command's CLI-shaped result/error onto
-                // iter's domain. `?` runs the `From<GeminiError>` above.
-                let result = command::interpret(&raw)?;
+                // Adapter: parse the neutral CLI record with the `gemini_cli`
+                // crate, then classify it into iter's domain. Every `.into()`
+                // runs the `From<GeminiOutputError>` above.
+                let stdout = raw.stdout_str();
+                let stderr = raw.stderr_str();
+                let exit_code = match raw.exit {
+                    RawExit::Code(c) => Some(c),
+                    RawExit::Signal(_) | RawExit::Unknown => None,
+                };
+
+                let Some(record) = GeminiOutput::parse(&stdout) else {
+                    // No JSON object → the agent never produced a result.
+                    if let RawExit::Signal(sig) = raw.exit {
+                        return Err(GeminiOutputError::Signal(sig).into());
+                    }
+                    if let Some(detail) =
+                        detect_token_limit(&stdout).or_else(|| detect_token_limit(&stderr))
+                    {
+                        return Err(GeminiOutputError::TokenLimit(detail).into());
+                    }
+                    if let Some(code) = is_startup_code(exit_code) {
+                        return Err(GeminiOutputError::Startup {
+                            exit_code: code,
+                            message: None,
+                        }
+                        .into());
+                    }
+                    return Err(GeminiOutputError::NoResult { exit_code }.into());
+                };
+
+                if let Some(err) = record.error() {
+                    let message = err.message.clone();
+                    // Refine into token-limit when the type or message says so.
+                    if is_context_error_type(err.error_type.as_deref()) {
+                        let detail = message
+                            .as_deref()
+                            .and_then(detect_token_limit)
+                            .or_else(|| message.clone())
+                            .unwrap_or_else(|| "context/token limit".to_owned());
+                        return Err(GeminiOutputError::TokenLimit(detail).into());
+                    }
+                    if let Some(detail) = message
+                        .as_deref()
+                        .and_then(detect_token_limit)
+                        .or_else(|| detect_token_limit(&stdout))
+                    {
+                        return Err(GeminiOutputError::TokenLimit(detail).into());
+                    }
+                    if let Some(code) = is_startup_code(exit_code) {
+                        return Err(GeminiOutputError::Startup {
+                            exit_code: code,
+                            message,
+                        }
+                        .into());
+                    }
+                    return Err(GeminiOutputError::Reported {
+                        error_type: err.error_type,
+                        message,
+                        code: err.code.or(exit_code),
+                    }
+                    .into());
+                }
+
+                // No `error` field, but a startup exit code still overrides a
+                // stray object.
+                if let Some(code) = is_startup_code(exit_code) {
+                    return Err(GeminiOutputError::Startup {
+                        exit_code: code,
+                        message: None,
+                    }
+                    .into());
+                }
+
                 Ok(AgentRun {
-                    session_id: result.session_id,
+                    session_id: record.session_id(),
                 })
             }
         }
@@ -262,21 +395,21 @@ mod tests {
     // ----- command(): outbound translation ---------------------------------
 
     #[test]
-    fn headless_command_emits_dash_p_prompt_and_json_format() {
+    fn headless_command_emits_prompt_and_json_format() {
         let d = gemini_driver("gemini", AgentMode::Headless);
         let prompt = Prompt::from("hello-gemini");
         let command = d.command(Path::new("."), &prompt, None).expect("command");
         let args = argv(&command);
-        assert!(args.contains(&"-p".to_owned()), "got {args:?}");
+        assert!(args.contains(&"--prompt".to_owned()), "got {args:?}");
         assert!(args.contains(&"hello-gemini".to_owned()), "got {args:?}");
-        assert!(args.contains(&"-o".to_owned()), "got {args:?}");
+        assert!(args.contains(&"--output-format".to_owned()), "got {args:?}");
         assert!(args.contains(&"json".to_owned()), "got {args:?}");
-        let dash_pos = args.iter().position(|a| a == "-p").expect("-p");
+        let flag_pos = args.iter().position(|a| a == "--prompt").expect("--prompt");
         let prompt_pos = args
             .iter()
             .position(|a| a == "hello-gemini")
             .expect("prompt");
-        assert!(dash_pos < prompt_pos, "got {args:?}");
+        assert!(flag_pos < prompt_pos, "got {args:?}");
         assert_eq!(command.stdin, None, "gemini delivers the prompt as argv");
         assert_eq!(command.io, StdioMode::Piped);
     }
@@ -392,9 +525,9 @@ printf '%s' '{"response":"ok","stats":{"tokens":{"input":1,"output":2,"total":3}
         assert_eq!(run.session_id, None);
         let echoed = sink.stderr().await;
         let args: Vec<&str> = echoed.lines().collect();
-        assert!(args.contains(&"-p"), "got {args:?}");
+        assert!(args.contains(&"--prompt"), "got {args:?}");
         assert!(args.contains(&"hello-gemini"), "got {args:?}");
-        assert!(args.contains(&"-o"), "got {args:?}");
+        assert!(args.contains(&"--output-format"), "got {args:?}");
         assert!(args.contains(&"json"), "got {args:?}");
     }
 

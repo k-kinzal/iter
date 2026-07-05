@@ -49,7 +49,7 @@ use crate::agent::{AgentError, AgentKind, AgentMode, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 use async_trait::async_trait;
-use claude_code::{
+use claude_code_cli::{
     ClaudeCode, Error as ClaudeCodeError, ExecuteCommand, JsonOutput, PermissionMode,
 };
 use thiserror::Error;
@@ -75,7 +75,7 @@ enum ClaudeCodeOutputError {
     /// Context-window / token-limit detected in the output.
     #[error("claude hit the context/token limit: {0}")]
     TokenLimit(String),
-    /// Claude Code output could not be decoded by the `claude_code` crate.
+    /// Claude Code output could not be decoded by the `claude_code_cli` crate.
     #[error("claude code output could not be decoded: {0}")]
     Decode(ClaudeCodeError),
     /// A terminal `result` record with `is_error: true`.

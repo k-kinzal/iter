@@ -7,13 +7,18 @@
 //! only:
 //!
 //! ```text
-//! grok -p "<prompt>" --always-approve --output-format json [-s <session-id>] [args...]
+//! grok -p "<prompt>" --output-format json --always-approve [-r <session-id>] [args...]
 //! ```
+//!
+//! The argv (and its ordering) is owned by the [`grok_cli`] crate's
+//! [`SingleCommand`] builder; this driver only supplies the prompt, the
+//! session id, and the caller's extra `args`, then projects the result.
 //!
 //! * `-p/--single <PROMPT>` sends one prompt and exits without entering the
 //!   interactive UI — the prompt is the *value* of the flag, not a trailing
-//!   positional. The single response is written to stdout; the Command level
-//!   parses the `--output-format json` result object (see `command.rs`).
+//!   positional. The single response is written to stdout; the crate parses
+//!   the `--output-format json` terminal object into a
+//!   [`grok_cli::SingleOutput`].
 //! * `--always-approve` auto-approves tool executions. iter always runs the
 //!   agent inside a `sandbox-exec` / `bwrap` profile that is the real
 //!   filesystem boundary, and a detached runner has no tty to answer the
@@ -21,10 +26,13 @@
 //!   waiting for an approval that can never arrive. It is emitted before
 //!   user `args` so a caller can still append their own `--permission-mode`
 //!   downstream if a future CLI revision prefers it.
-//! * `-s/--session-id <ID>` is emitted only when [`GrokDriver::session_id_file`]
-//!   is set. Grok's `-s` flag *creates or resumes* a named headless session,
-//!   so passing the same id across iterations gives the agent continuous
-//!   context — the narrowest exploration mode (see the field docs).
+//! * `-r/--resume <SESSION_ID>` is emitted only when
+//!   [`GrokDriver::session_id_file`] is set. `grok 0.2.45` has no `-s`/
+//!   `--session` flag; continuity is `-r <id>` (resume a specific session)
+//!   and `-c/--continue` (resume the most recent for the cwd). iter uses
+//!   `-r <id>` so the same id across iterations resumes one session, giving
+//!   the agent continuous context — the narrowest exploration mode (see the
+//!   field docs).
 //!
 //! Grok's TUI mode and its ACP (`grok agent stdio`) integration are out of
 //! scope for this driver; the headless path covers iter's spawn-per-iteration
@@ -48,29 +56,60 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::agent::driver::{AgentCommand, AgentDriver};
-use crate::agent::process::{RawOutput, apply_user_env};
+use crate::agent::process::{RawExit, RawOutput, apply_user_env, detect_token_limit};
 use crate::agent::{AgentError, AgentKind, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
+use grok_cli::{Grok, ResumeTarget, SingleCommand};
+use thiserror::Error;
 
-mod command;
+/// CLI-shaped classification of a Grok headless result that cannot become a
+/// successful [`AgentRun`].
+///
+/// The [`grok_cli`] crate reports the terminal object faithfully (session id,
+/// message, stop reason, in-band error); deciding what a reported error or a
+/// non-zero exit *means* for iter is the driver's job, so this intermediate
+/// error type lives here rather than in the OSS crate. The [`From`] impl below
+/// projects it onto iter's minimal domain error. It mirrors the hierarchy the
+/// (now-removed) `command.rs` produced.
+#[derive(Debug, Error)]
+enum GrokOutputError {
+    /// Context-window / token-limit detected in the output.
+    #[error("grok hit the context/token limit: {0}")]
+    TokenLimit(String),
+    /// A terminal result object that reported an error / refusal.
+    #[error("grok reported an error result: {message}")]
+    Reported {
+        /// Human-readable summary of the reported failure.
+        message: String,
+        /// Process exit code, when one accompanied the failure.
+        exit_code: Option<i32>,
+    },
+    /// The process was terminated by a signal before producing a result.
+    #[error("grok was terminated by signal {0}")]
+    Signal(i32),
+    /// The process exited without ever producing a terminal result object.
+    #[error("grok produced no terminal result (exit code {exit_code:?})")]
+    NoResult {
+        /// Process exit code, when one was produced.
+        exit_code: Option<i32>,
+    },
+}
 
-use command::{GrokCommand, GrokError};
-
-impl From<GrokError> for AgentError {
+impl From<GrokOutputError> for AgentError {
     /// Adapter projection: collapse Grok Build's CLI-shaped error hierarchy
-    /// onto iter's minimal domain error. Only [`GrokError::TokenLimit`] is
-    /// router-relevant and preserved as [`AgentError::TokenLimit`]; the rest
+    /// onto iter's minimal domain error. Only [`GrokOutputError::TokenLimit`]
+    /// is router-relevant and preserved as [`AgentError::TokenLimit`]; the rest
     /// become the generic failure / signal variants.
-    fn from(err: GrokError) -> Self {
+    fn from(err: GrokOutputError) -> Self {
         match err {
-            GrokError::TokenLimit(detail) => Self::TokenLimit(detail),
-            GrokError::Signal(sig) => Self::TerminatedBySignal(sig),
-            GrokError::Reported { message, exit_code } => Self::Failed {
+            GrokOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            GrokOutputError::Signal(sig) => Self::TerminatedBySignal(sig),
+            GrokOutputError::Reported { message, exit_code } => Self::Failed {
                 code: exit_code,
                 message: format!("grok reported an error result: {message}"),
             },
-            GrokError::NoResult { exit_code } => Self::Failed {
+            GrokOutputError::NoResult { exit_code } => Self::Failed {
                 code: exit_code,
                 message: "grok produced no terminal result".to_owned(),
             },
@@ -88,16 +127,21 @@ pub struct GrokDriver {
     /// Optional path (relative to the workspace cwd, unless absolute) of a
     /// file that stores a stable Grok session id across iterations.
     ///
-    /// When set, every invocation passes `-s <uuid>`:
+    /// When set, every invocation passes `-r <uuid>` (`grok 0.2.45` has no
+    /// `-s`/`--session` flag; `-r/--resume <SESSION_ID>` is the continuity
+    /// path):
     ///
     /// * If the file does not exist (or is empty), iter generates a fresh
-    ///   v4 UUID, writes it to the path, and hands it to Grok. The `-s`
-    ///   flag tells Grok to *create* a headless session with that id.
+    ///   v4 UUID, writes it to the path, and hands it to Grok as `-r <uuid>`.
     /// * On every subsequent invocation iter reads the same file and passes
     ///   the same uuid, which tells Grok to *resume* the existing session —
     ///   giving the agent continuous context across iter iterations. This is
     ///   the narrowest exploration mode because accumulated agent context
     ///   keeps later turns close to earlier ones.
+    ///
+    /// Note that `-r` resumes a *server-issued* session id; feeding it a
+    /// client-generated UUID that Grok never issued may not resume on
+    /// `grok 0.2.45` (see the Phase C reconciliation note).
     ///
     /// Lifecycle (deleting the file to end an exploration run) is left to
     /// the caller — typically an `on workspace_teardown_finished` hook that
@@ -150,14 +194,22 @@ impl AgentDriver for GrokDriver {
     ) -> Result<AgentCommand, AgentError> {
         // The session id is resolved by the agent cycle (async filesystem
         // work) and handed in as `session`; when `session_id_file` is unset
-        // the cycle passes `None` and no `-s` flag is emitted.
-        let mut process = GrokCommand {
-            program: &self.command,
-            prompt,
-            args: &self.args,
-            session_id: session,
+        // the cycle passes `None` and no `-r` flag is emitted.
+        //
+        // The crate's `SingleCommand` owns the managed argv and its order:
+        // `-p <prompt> --output-format json --always-approve [-r <id>]`. The
+        // caller's extra `args` are appended after, so a caller can still
+        // override the managed flags downstream.
+        let mut single = SingleCommand::prompt(prompt.as_str()).always_approve();
+        if let Some(sid) = session {
+            single = single.resume(ResumeTarget::session(sid));
         }
-        .build(path);
+        let mut process = Grok::new(&self.command)
+            .with_current_dir(path)
+            .to_process(&single.json());
+        for arg in &self.args {
+            process.arg(arg);
+        }
         apply_user_env(&mut process, &self.env);
         // OTel trace-context / resource-attribute injection is deliberately
         // omitted — a *verified negative* for `grok 0.2.45`, not an unknown:
@@ -193,17 +245,60 @@ impl AgentDriver for GrokDriver {
     }
 
     fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
-        // Adapter: project the Command's CLI-shaped result/error onto iter's
-        // domain. `?` runs the `From<GrokError>` impl above.
-        let result = command::interpret(RawOutput::from(output))?;
-        // Only `session_id` crosses into the domain `AgentRun`. The rich
-        // record (`request_id`, `thought`, `stop_reason`, `usage`) stays at the
-        // Command layer: `AgentRun` carries only what a Factor consumes, and
-        // iter has no agreed token/cost Factor field — matching how the
-        // Cursor/Claude drivers keep their usage/cost out of `AgentRun`. (Moot
-        // for `grok 0.2.45`, which reports no usage/cost anyway.)
+        // Parse the CLI's headless output with the OSS crate, then project its
+        // faithful verdict onto iter's domain here. The classification mirrors
+        // the (now-removed) `command.rs`: a terminal object with no in-band
+        // error is a run; a reported error, a token limit, a signal, or the
+        // absence of any terminal object each map to the matching domain error.
+        let raw = RawOutput::from(output);
+        let stdout = raw.stdout_str();
+        let parsed = grok_cli::SingleOutput::parse(&stdout);
+        let exit_code = raw.exit.exit_code();
+
+        if parsed.terminal().is_none() {
+            // Never produced a terminal object → never ran a turn. There is no
+            // structured message to trust, so the whole stdout/stderr is
+            // scanned for a token-limit pattern; a terminating signal is
+            // surfaced as such.
+            if let RawExit::Signal(sig) = raw.exit {
+                return Err(GrokOutputError::Signal(sig).into());
+            }
+            if let Some(detail) =
+                detect_token_limit(&stdout).or_else(|| detect_token_limit(&raw.stderr_str()))
+            {
+                return Err(GrokOutputError::TokenLimit(detail).into());
+            }
+            return Err(GrokOutputError::NoResult { exit_code }.into());
+        }
+
+        // A terminal object was produced. A terminating signal that arrived
+        // after the CLI already wrote its result is not a failure — the turn
+        // completed and its output is usable — so `Signal` deliberately applies
+        // only to the no-terminal branch above.
+        //
+        // `SingleOutput::reported_error` surfaces an in-band failure: either the
+        // terminal object itself reports an error, or a streaming `type:"error"`
+        // event was emitted alongside a success-looking terminal `end` event and
+        // must not be swallowed.
+        if let Some(message) = parsed.reported_error() {
+            // Refine into a token-limit only from the *authoritative* error
+            // message, never the full stdout: streamed `text`/`thought` content
+            // can legitimately mention "context window" and must not flip an
+            // unrelated failure (auth, rate-limit) into a `TokenLimit`.
+            if let Some(detail) = detect_token_limit(&message) {
+                return Err(GrokOutputError::TokenLimit(detail).into());
+            }
+            return Err(GrokOutputError::Reported { message, exit_code }.into());
+        }
+
+        // Only `session_id` crosses into the domain `AgentRun`. The rich record
+        // (`request_id`, `thought`, `stop_reason`, `usage`) stays at the crate
+        // layer: `AgentRun` carries only what a Factor consumes, and iter has no
+        // agreed token/cost Factor field — matching how the Cursor/Claude
+        // drivers keep their usage/cost out of `AgentRun`. (Moot for
+        // `grok 0.2.45`, which reports no usage/cost anyway.)
         Ok(AgentRun {
-            session_id: result.session_id,
+            session_id: parsed.session_id(),
         })
     }
 
@@ -293,22 +388,27 @@ mod tests {
     }
 
     #[test]
-    fn command_without_session_emits_no_session_flag() {
+    fn command_without_session_emits_no_resume_flag() {
         let d = driver("grok");
         let prompt = Prompt::from("x");
         let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        // `-s` never existed in grok 0.2.45; continuity is `-r`, and with no
+        // session id neither flag appears.
+        assert!(!args.contains(&"-r".to_owned()), "got {args:?}");
         assert!(!args.contains(&"-s".to_owned()), "got {args:?}");
     }
 
     #[test]
-    fn command_with_session_emits_session_flag() {
+    fn command_with_session_emits_resume_flag() {
         let d = driver("grok");
         let prompt = Prompt::from("x");
         let args = argv(
             &d.command(Path::new("."), &prompt, Some("sess-x"))
                 .expect("command"),
         );
-        let pos = args.iter().position(|a| a == "-s").expect("-s present");
+        // CHANGED: grok 0.2.45 has no `-s`; session continuity is `-r <id>`
+        // (`-r/--resume [<SESSION_ID>]`). The driver now emits `-r`.
+        let pos = args.iter().position(|a| a == "-r").expect("-r present");
         assert_eq!(args[pos + 1], "sess-x", "got {args:?}");
     }
 
@@ -374,10 +474,10 @@ mod tests {
 
     /// Fake `grok` binary: echoes each argv arg to *stderr* (so the capture
     /// sink can observe the flags and the values following them), then prints
-    /// a valid headless result JSON object to stdout so [`command::interpret`]
-    /// parses an `Ok`. Uses the verified `grok 0.2.45` shape
-    /// (`text`/`stopReason`) so these integration tests exercise the primary
-    /// parse path, not the legacy fallback.
+    /// a valid headless result JSON object to stdout so `interpret` (via
+    /// [`grok_cli::SingleOutput`]) parses an `Ok`. Uses the verified
+    /// `grok 0.2.45` shape (`text`/`stopReason`) so these integration tests
+    /// exercise the primary parse path, not the legacy fallback.
     const FAKE_JSON_OK: &str = r#"for a in "$@"; do printf '%s\n' "$a" 1>&2; done
 printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
 
@@ -412,16 +512,18 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
         let (result, sink) = drive_capturing(d, tmp.path(), &prompt).await;
         result.expect("run ok");
         assert!(
-            !sink.stderr().await.lines().any(|l| l == "-s"),
-            "unset session_id_file must not emit -s",
+            !sink.stderr().await.lines().any(|l| l == "-r" || l == "-s"),
+            "unset session_id_file must not emit a resume flag",
         );
     }
 
-    /// Extract the uuid emitted after `-s` in the captured argv.
+    /// Extract the uuid emitted after `-r` in the captured argv.
+    ///
+    /// CHANGED from `-s`: grok 0.2.45 continuity is `-r <SESSION_ID>`.
     fn session_id_from_argv(echoed: &str) -> Option<String> {
         let mut lines = echoed.lines();
         while let Some(line) = lines.next() {
-            if line == "-s" {
+            if line == "-r" {
                 return lines.next().map(str::to_string);
             }
         }
@@ -440,7 +542,7 @@ printf '%s' '{"sessionId":"sess-x","text":"ok","stopReason":"EndTurn"}'"#;
         result.expect("run ok");
 
         let emitted_uuid =
-            session_id_from_argv(&sink.stderr().await).expect("-s <uuid> must appear in argv");
+            session_id_from_argv(&sink.stderr().await).expect("-r <uuid> must appear in argv");
         let parsed =
             uuid::Uuid::parse_str(&emitted_uuid).expect("emitted session id must parse as uuid");
         assert_eq!(parsed.get_version_num(), 4, "must be a v4 uuid");

@@ -16,11 +16,13 @@
 //!
 //! The per-CLI argv construction and output parsing — including the subtle
 //! success contract (presence of a terminal `result` record, *not* the
-//! hard-coded `is_error` field) — live in the [`command`] submodule. This
-//! module is the Adapter: [`command`](CursorDriver::command) assembles the
-//! [`AgentCommand`] and [`interpret`](CursorDriver::interpret) projects the
-//! Command's CLI-shaped result/error onto iter's domain
-//! [`AgentRun`] / [`AgentError`].
+//! hard-coded `is_error` field) — live in the standalone [`cursor_cli`] crate.
+//! This module is the Adapter: [`command`](CursorDriver::command) assembles the
+//! [`AgentCommand`] from a [`PrintCommand`] and
+//! [`interpret`](CursorDriver::interpret) projects the crate's CLI-shaped
+//! [`PrintOutput`] onto iter's domain [`AgentRun`] / [`AgentError`]. Deciding
+//! what a failure *means* for iter (token-limit routing, below-min-version,
+//! signal, no-result) is driver work and stays here in [`CursorOutputError`].
 //!
 //! # Construction
 //!
@@ -31,32 +33,74 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use cursor_cli::{Cursor, PrintCommand, PrintOutput};
+use thiserror::Error;
 
 use crate::agent::driver::{AgentCommand, AgentDriver};
-use crate::agent::process::{RawOutput, apply_user_env};
+use crate::agent::process::{RawExit, RawOutput, apply_user_env, detect_token_limit};
 use crate::agent::{AgentError, AgentKind, AgentRun};
 use crate::prompt::Prompt;
 use crate::workspace::StdioMode;
 
-mod command;
+/// Exit code `2`: the installed `cursor-agent` is below the minimum supported
+/// version and never ran a turn.
+const EXIT_BELOW_MIN_VERSION: i32 = 2;
 
-use command::{CursorCommand, CursorError};
+/// Number of trailing stderr bytes carried in a no-result failure. Bounded so
+/// a runaway child cannot bloat the error message; large enough to capture a
+/// typical single-line CLI diagnostic.
+const STDERR_TAIL_LIMIT: usize = 2_000;
 
-impl From<CursorError> for AgentError {
+/// CLI-shaped classification of a Cursor print run that cannot become a
+/// successful [`AgentRun`].
+///
+/// The [`cursor_cli`] crate reports the stream faithfully (the terminal
+/// `result` record, its session id, usage); deciding what a missing terminal
+/// record or a non-zero exit *means* for iter is the driver's job, so this
+/// intermediate error type lives here rather than in the OSS crate. The
+/// [`From`] impl below projects it onto iter's minimal domain error.
+///
+/// Deliberately omits `Cancelled` and `Launch` (I/O-level spawn failures):
+/// those are owned by the shared spawn primitive / driver, not this projection.
+#[derive(Debug, Error)]
+enum CursorOutputError {
+    /// Context-window / token-limit detected in the output.
+    #[error("cursor-agent hit the context/token limit: {0}")]
+    TokenLimit(String),
+    /// The process was terminated by a signal before producing a result.
+    #[error("cursor-agent was terminated by signal {0}")]
+    Signal(i32),
+    /// Exit code `2`: the installed `cursor-agent` is below the minimum
+    /// supported version. The agent never ran a turn.
+    #[error("cursor-agent is below the minimum supported version (exit 2)")]
+    BelowMinVersion,
+    /// The process exited without ever producing a terminal `result` record.
+    /// Carries the exit code (when one was produced) and the tail of stderr
+    /// (or a `type:"error"` record's message) explaining why.
+    #[error("cursor-agent produced no terminal result (exit code {exit_code:?}): {detail}")]
+    NoResult {
+        /// Process exit code, when one was produced.
+        exit_code: Option<i32>,
+        /// Short diagnostic: a `type:"error"` record message or stderr tail.
+        detail: String,
+    },
+}
+
+impl From<CursorOutputError> for AgentError {
     /// Adapter projection: collapse Cursor's CLI-shaped error hierarchy onto
-    /// iter's minimal domain error. Only [`CursorError::TokenLimit`] is
+    /// iter's minimal domain error. Only [`CursorOutputError::TokenLimit`] is
     /// router-relevant and preserved as [`AgentError::TokenLimit`];
-    /// [`CursorError::BelowMinVersion`] is a startup failure that never ran a
-    /// turn, so it maps to [`AgentError::Launch`]; the rest become the
+    /// [`CursorOutputError::BelowMinVersion`] is a startup failure that never
+    /// ran a turn, so it maps to [`AgentError::Launch`]; the rest become the
     /// generic failure / signal variants.
-    fn from(err: CursorError) -> Self {
+    fn from(err: CursorOutputError) -> Self {
         match err {
-            CursorError::TokenLimit(detail) => Self::TokenLimit(detail),
-            CursorError::Signal(sig) => Self::TerminatedBySignal(sig),
-            CursorError::BelowMinVersion => Self::Launch(
+            CursorOutputError::TokenLimit(detail) => Self::TokenLimit(detail),
+            CursorOutputError::Signal(sig) => Self::TerminatedBySignal(sig),
+            CursorOutputError::BelowMinVersion => Self::Launch(
                 "cursor-agent is below the minimum supported version (exit 2)".to_owned(),
             ),
-            CursorError::NoResult { exit_code, detail } => Self::Failed {
+            CursorOutputError::NoResult { exit_code, detail } => Self::Failed {
                 code: exit_code,
                 message: format!("cursor-agent produced no terminal result: {detail}"),
             },
@@ -83,11 +127,16 @@ impl AgentDriver for CursorDriver {
         prompt: &Prompt,
         _session: Option<&str>,
     ) -> Result<AgentCommand, AgentError> {
-        let mut process = CursorCommand {
-            program: &self.command,
-            args: &self.args,
+        // `cursor-agent --print --output-format json` from the crate, then the
+        // caller's extra args appended so they can still extend/override the
+        // managed flags. The prompt is delivered over stdin (this CLI reads it
+        // there in print mode), not as a positional.
+        let mut process = Cursor::new(&self.command)
+            .with_current_dir(path)
+            .to_process(&PrintCommand::json());
+        for arg in &self.args {
+            process.arg(arg);
         }
-        .build(path);
         apply_user_env(&mut process, &self.env);
         // OTel trace-context / resource-attribute injection is deliberately
         // omitted: cursor-agent's consumption of `TRACEPARENT` /
@@ -102,12 +151,20 @@ impl AgentDriver for CursorDriver {
     }
 
     fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
-        // Adapter: project the Command's CLI-shaped result/error onto iter's
-        // domain. `?` runs the `From<CursorError>` above.
-        let result = command::interpret(RawOutput::from(output))?;
-        Ok(AgentRun {
-            session_id: result.session_id,
-        })
+        // Parse the CLI's `--print --output-format json` output with the OSS
+        // crate, then project its faithful verdict onto iter's domain here: a
+        // terminal `result` record is a run; its absence maps — via
+        // `classify_failure` and the `From<CursorOutputError>` above — to the
+        // matching domain error.
+        let raw = RawOutput::from(output);
+        let stdout = raw.stdout_str();
+        let parsed = PrintOutput::parse(&stdout);
+        if parsed.succeeded() {
+            return Ok(AgentRun {
+                session_id: parsed.session_id(),
+            });
+        }
+        Err(classify_failure(&raw, &parsed, &stdout).into())
     }
 
     fn kind(&self) -> AgentKind {
@@ -123,6 +180,49 @@ impl AgentDriver for CursorDriver {
     fn declared_env(&self) -> &[(String, String)] {
         &self.env
     }
+}
+
+/// Build the failure error for a run that produced no terminal `result`.
+///
+/// Refinement order: token-limit (in stdout or stderr) → signal → exit `2`
+/// below-min-version → a generic no-result error carrying the exit code and a
+/// short diagnostic (a `type:"error"` record's message, else the stderr tail).
+fn classify_failure(
+    raw: &RawOutput<'_>,
+    parsed: &PrintOutput,
+    stdout: &str,
+) -> CursorOutputError {
+    let stderr = raw.stderr_str();
+    if let Some(detail) = detect_token_limit(stdout).or_else(|| detect_token_limit(&stderr)) {
+        return CursorOutputError::TokenLimit(detail);
+    }
+    if let RawExit::Signal(sig) = raw.exit {
+        return CursorOutputError::Signal(sig);
+    }
+    if matches!(raw.exit, RawExit::Code(EXIT_BELOW_MIN_VERSION)) {
+        return CursorOutputError::BelowMinVersion;
+    }
+    CursorOutputError::NoResult {
+        exit_code: raw.exit.exit_code(),
+        detail: failure_detail(parsed, &stderr),
+    }
+}
+
+/// Short diagnostic for a no-result failure: prefer a `type:"error"` record's
+/// message (surfaced by the crate), otherwise fall back to the tail of stderr.
+fn failure_detail(parsed: &PrintOutput, stderr: &str) -> String {
+    if let Some(message) = parsed.error_message() {
+        return message;
+    }
+    let trimmed = stderr.trim();
+    if trimmed.is_empty() {
+        return "no error output".to_owned();
+    }
+    let start = trimmed.len().saturating_sub(STDERR_TAIL_LIMIT);
+    let start = (start..=trimmed.len())
+        .find(|&i| trimmed.is_char_boundary(i))
+        .unwrap_or(trimmed.len());
+    trimmed[start..].to_owned()
 }
 
 #[cfg(test)]
@@ -241,6 +341,22 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(2), "", "needs upgrade"))
             .expect_err("exit 2 is an error");
         assert!(matches!(err, AgentError::Launch(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn interpret_no_result_prefers_error_record_message() {
+        let d = driver("cursor-agent");
+        let err = d
+            .interpret(&synth_output(
+                RawExit::Code(1),
+                r#"{"type":"error","message":"auth required"}"#,
+                "noise",
+            ))
+            .expect_err("error record is a failure");
+        assert!(
+            matches!(&err, AgentError::Failed { message, .. } if message.contains("auth required")),
+            "got {err:?}",
+        );
     }
 
     // ----- through the full cycle -------------------------------------------

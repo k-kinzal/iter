@@ -29,7 +29,13 @@
 //!   mode inherits stdin/stdout/stderr from the parent process; in non-tty
 //!   environments use [`AgentMode::Headless`].
 //!
-//! # Output contract (Nous Hermes v0.14.0, `-z` scripted mode)
+//! # Output contract (`-z` scripted mode)
+//!
+//! The argv surface is modeled against the [`hermes_cli`] pin
+//! ([`hermes_cli::SUPPORTED_HERMES_VERSION`]); the exit-code disposition below
+//! was empirically observed against Nous Hermes v0.14.0 and has not been
+//! re-observed against a later build (doing so would require invoking the
+//! agent). It is treated as version-stable behavior, not a re-verified claim.
 //!
 //! **There is no JSON / machine-readable mode in `-z`.** `hermes -z` emits the
 //! final assistant text to stdout and nothing structured; stderr is
@@ -81,8 +87,8 @@
 use std::path::Path;
 
 use async_trait::async_trait;
+use hermes_cli::{Hermes, RunCommand};
 use thiserror::Error;
-use tokio::process::Command;
 
 use crate::agent::driver::{AgentCommand, AgentDriver};
 use crate::agent::process::{RawExit, RawOutput, apply_user_env, detect_token_limit};
@@ -255,34 +261,30 @@ impl AgentDriver for HermesDriver {
         // omitted: Hermes' consumption of `TRACEPARENT` /
         // `OTEL_RESOURCE_ATTRIBUTES` is unverified, so iter does not make its
         // traces *look* correlated without confirming the agent participates.
-        let mut process = Command::new(&self.command);
-        process.current_dir(path);
-        match self.mode {
-            AgentMode::Headless => {
-                // `-z` suppresses banners/spinners and carries the prompt as
-                // its value; the managed flag comes first so the caller's
-                // `args` can still follow (and override) it. The prompt is
-                // already embedded in argv, so nothing is fed on stdin.
-                process.arg("-z").arg(prompt.as_str());
-                process.args(&self.args);
-                apply_user_env(&mut process, &self.env);
-                Ok(AgentCommand {
-                    process,
-                    stdin: None,
-                    io: StdioMode::Piped,
-                })
-            }
+        //
+        // Argv construction is delegated to `hermes_cli`; this driver keeps the
+        // mode selection, env application, and the text-marker classification in
+        // `interpret`. Headless renders `-z <prompt>` (the scripted mode that
+        // suppresses banners/spinners); interactive renders `--tui <prompt>`.
+        // The prompt rides in argv in both modes, so nothing is fed on stdin,
+        // and the caller's extra args are appended last so they can still follow
+        // (and override) the managed flags.
+        let (run, io) = match self.mode {
+            AgentMode::Headless => (RunCommand::oneshot(prompt.as_str()), StdioMode::Piped),
             AgentMode::Interactive => {
-                process.arg("--tui").arg(prompt.as_str());
-                process.args(&self.args);
-                apply_user_env(&mut process, &self.env);
-                Ok(AgentCommand {
-                    process,
-                    stdin: None,
-                    io: StdioMode::Inherit,
-                })
+                (RunCommand::tui_prompt(prompt.as_str()), StdioMode::Inherit)
             }
-        }
+        };
+        let mut process = Hermes::new(&self.command)
+            .with_current_dir(path)
+            .to_process(&run);
+        process.args(&self.args);
+        apply_user_env(&mut process, &self.env);
+        Ok(AgentCommand {
+            process,
+            stdin: None,
+            io,
+        })
     }
 
     fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {

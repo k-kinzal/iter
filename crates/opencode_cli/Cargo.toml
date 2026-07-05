@@ -1,0 +1,62 @@
+[package]
+name = "opencode_cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Type-safe Rust command builder for the opencode CLI"
+readme = "README.md"
+documentation = "https://docs.rs/opencode_cli"
+keywords = ["opencode", "agent", "cli", "command", "wrapper"]
+categories = ["api-bindings", "command-line-interface"]
+
+[dependencies]
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "rt"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unreachable_pub = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "deny"
+trivial_numeric_casts = "deny"
+let_underscore_drop = "deny"
+dead_code = "deny"
+unused_imports = "deny"
+unused_macros = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+unnecessary_safety_comment = "deny"
+panic = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"
+panic_in_result_fn = "deny"
+wildcard_enum_match_arm = "deny"
+match_wildcard_for_single_variants = "deny"
+# CLI flag mirrors are inherently bool-heavy: each flag is an independent
+# switch defined by the external tool, not a state-machine smell.
+struct_excessive_bools = "allow"
+# The included README names vendor products (GitHub, SQLite, ACP) in prose,
+# where backticking the proper nouns reads worse than the lint it silences.
+doc_markdown = "allow"
+cast_possible_truncation = "allow"
+ignored_unit_patterns = "allow"
+module_inception = "allow"
+needless_pass_by_value = "allow"
+too_many_arguments = "allow"
+too_many_lines = "allow"
+uninlined_format_args = "allow"
+unused_async = "allow"
+
+[dev-dependencies]
+pretty_assertions.workspace = true
+tempfile.workspace = true
