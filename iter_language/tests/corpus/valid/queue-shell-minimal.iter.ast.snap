@@ -40,6 +40,7 @@ Iterfile {
                     mode: Headless,
                     command: "claude",
                     args: [],
+                    system_prompt: None,
                     session_id_file: None,
                     env: {},
                 },

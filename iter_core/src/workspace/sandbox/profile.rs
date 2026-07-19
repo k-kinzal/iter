@@ -437,6 +437,7 @@ mod tests {
             command: command.into(),
             mode: AgentMode::Headless,
             args: Vec::new(),
+            system_prompt: None,
             session_id_file: None,
             env: Vec::new(),
             hook_isolation_key: "default".to_owned(),
@@ -447,6 +448,7 @@ mod tests {
         GrokDriver {
             command: command.into(),
             args: Vec::new(),
+            system_prompt: None,
             session_id_file: None,
             env: Vec::new(),
         }

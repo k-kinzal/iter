@@ -240,6 +240,7 @@ mod tests {
             mode: AgentMode::Headless,
             command: "claude".into(),
             args: Vec::new(),
+            system_prompt: None,
             session_id_file: None,
             env: BTreeMap::new(),
         }

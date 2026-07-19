@@ -118,8 +118,14 @@ Common optional field: `args` (`list(string)`, default `[]`).
 
 Per-kind extras:
 
-- `claude` — optional `session_id_file = "<path>"` to persist a UUID and
-  pass `--session-id <uuid>` on subsequent iterations.
+- `claude` — optional `system_prompt = "<text>"` replaces the CLI's default
+  system prompt; optional `session_id_file = "<path>"` persists a UUID and
+  passes `--session-id <uuid>` on subsequent iterations.
+- `cline` — optional `system_prompt = "<text>"` replaces the CLI's default
+  system prompt.
+- `grok` — optional `system_prompt = "<text>"` replaces the CLI's default
+  system prompt; optional `session_id_file = "<path>"` persists its session
+  identifier across iterations.
 - `copilot` — `subcommand` (list of strings). Unset → iter picks a sane
   default (`["copilot", "suggest"]`); `[]` strips the subcommand;
   `[...]` overrides it.

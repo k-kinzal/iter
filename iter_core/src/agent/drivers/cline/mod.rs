@@ -140,6 +140,8 @@ pub struct ClineDriver {
     pub command: String,
     /// Additional arguments appended after the managed `--json <prompt>`.
     pub args: Vec<String>,
+    /// Optional replacement for Cline's default system prompt.
+    pub system_prompt: Option<String>,
     /// User-declared environment variables passed to the child process.
     pub env: Vec<(String, String)>,
 }
@@ -214,7 +216,9 @@ impl AgentDriver for ClineDriver {
         // NDJSON run stream and the prompt is the trailing positional argument.
         // Cline `3.0.23` has no `--oneshot` flag and reads nothing from stdin,
         // so nothing is fed on stdin. The caller's extra args are appended last.
-        let run = RunCommand::prompt(prompt.as_str()).json();
+        let mut run = RunCommand::prompt(prompt.as_str());
+        run.options.system.clone_from(&self.system_prompt);
+        let run = run.json();
         let mut process = Cline::new(&self.command)
             .with_current_dir(path)
             .to_process(&run);
@@ -255,6 +259,7 @@ mod tests {
         ClineDriver {
             command: command.into(),
             args: Vec::new(),
+            system_prompt: None,
             env: Vec::new(),
         }
     }
@@ -313,6 +318,23 @@ mod tests {
                 "x".to_owned(),
                 "--model".to_owned(),
                 "sonnet".to_owned(),
+            ],
+        );
+    }
+
+    #[test]
+    fn system_prompt_is_forwarded_before_the_task_prompt() {
+        let mut d = driver("cline");
+        d.system_prompt = Some("Use read-only tools.".into());
+        let prompt = Prompt::from("inspect");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        assert_eq!(
+            args,
+            vec![
+                "--json".to_owned(),
+                "--system".to_owned(),
+                "Use read-only tools.".to_owned(),
+                "inspect".to_owned(),
             ],
         );
     }

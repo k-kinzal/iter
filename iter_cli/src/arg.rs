@@ -347,6 +347,17 @@ fn render_agent(
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     match agent {
+        iter_language::AgentDef::Claude { system_prompt, .. }
+        | iter_language::AgentDef::Cline { system_prompt, .. }
+        | iter_language::AgentDef::Grok { system_prompt, .. } => {
+            if let Some(system_prompt) = system_prompt {
+                render_str(system_prompt, values)?;
+            }
+        }
+        _ => {}
+    }
+
+    match agent {
         iter_language::AgentDef::Claude {
             command, args, env, ..
         }
@@ -666,6 +677,32 @@ runner {
             other => panic!("unexpected agent: {other:?}"),
         };
         assert_eq!(env.get("WORKTREE_NAME"), Some(&"exp-1".to_string()));
+    }
+
+    #[test]
+    fn resolve_args_renders_agent_system_prompt() {
+        let source = r#"
+arg role = "reviewer"
+workspace local { base = "." }
+agent claude {
+  mode = print
+  system_prompt = "Act as a {{arg.role}}."
+}
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+}
+"#;
+        let mut root = parse(source).expect("parse");
+        resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
+        let system_prompt = match &root.agents.first().unwrap().node.decl {
+            iter_language::AgentDef::Claude { system_prompt, .. } => system_prompt,
+            other => panic!("unexpected agent: {other:?}"),
+        };
+        assert_eq!(system_prompt.as_deref(), Some("Act as a reviewer."),);
     }
 
     #[test]

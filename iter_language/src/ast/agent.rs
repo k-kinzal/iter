@@ -27,6 +27,8 @@ pub enum AgentDef {
         /// Extra arguments appended after the iter-managed defaults. Empty
         /// is allowed.
         args: Vec<String>,
+        /// Optional replacement for Claude Code's default system prompt.
+        system_prompt: Option<String>,
         /// Optional file path (relative to the workspace cwd, unless
         /// absolute) where iter persists a stable Claude Code session id
         /// across iterations. `None` disables session persistence and
@@ -123,6 +125,8 @@ pub enum AgentDef {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Optional replacement for Cline's default system prompt.
+        system_prompt: Option<String>,
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
@@ -145,6 +149,8 @@ pub enum AgentDef {
         command: String,
         /// Extra arguments appended after the iter-managed headless flags.
         args: Vec<String>,
+        /// Optional replacement for Grok's default system prompt.
+        system_prompt: Option<String>,
         /// Optional file path (relative to the workspace cwd, unless
         /// absolute) where iter persists a stable Grok session id across
         /// iterations. `None` disables session persistence and each

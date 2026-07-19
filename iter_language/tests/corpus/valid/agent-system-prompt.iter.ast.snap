@@ -1,18 +1,10 @@
 ---
 source: iter_language/tests/conformance.rs
-description: agent-router-rotate.iter
+description: agent-system-prompt.iter
 ---
 Iterfile {
     args: [],
-    queues: [
-        Spanned {
-            node: NamedDef {
-                name: "memory",
-                decl: Memory,
-            },
-            span: 0..12,
-        },
-    ],
+    queues: [],
     workspaces: [
         Spanned {
             node: NamedDef {
@@ -22,7 +14,7 @@ Iterfile {
                     source: None,
                 },
             },
-            span: 14..46,
+            span: 0..32,
         },
     ],
     sources: [],
@@ -33,32 +25,38 @@ Iterfile {
                 decl: Router {
                     agents: [
                         (
-                            "alpha",
+                            "claude_worker",
                             Claude {
                                 mode: Headless,
                                 command: "claude",
                                 args: [],
-                                system_prompt: None,
+                                system_prompt: Some(
+                                    "Review changes conservatively.",
+                                ),
                                 session_id_file: None,
                                 env: {},
                             },
                         ),
                         (
-                            "beta",
-                            Gemini {
-                                mode: Headless,
-                                command: "gemini",
+                            "cline_worker",
+                            Cline {
+                                command: "cline",
                                 args: [],
+                                system_prompt: Some(
+                                    "Prefer read-only inspection.",
+                                ),
                                 env: {},
                             },
                         ),
                         (
-                            "gamma",
-                            Generic {
-                                command: [
-                                    "echo",
-                                    "fallback",
-                                ],
+                            "grok_worker",
+                            Grok {
+                                command: "grok",
+                                args: [],
+                                system_prompt: Some(
+                                    "Keep patches small.",
+                                ),
+                                session_id_file: None,
                                 env: {},
                             },
                         ),
@@ -67,7 +65,7 @@ Iterfile {
                     fallback_on: Any,
                 },
             },
-            span: 48..313,
+            span: 34..386,
         },
     ],
     prompts: [],
@@ -77,20 +75,20 @@ Iterfile {
                 name: None,
                 agent: "router",
                 workspace: "local",
-                queue: Some(
-                    "memory",
-                ),
+                queue: None,
                 continue_on_error: false,
-                behavior: Wait,
+                behavior: Synthesize {
+                    delay_secs: None,
+                },
                 iteration_timeout_secs: None,
                 prompt: Single(
                     Inline(
-                        "Router rotate test.",
+                        "Inspect the repository.",
                     ),
                 ),
                 events: [],
             },
-            span: 315..458,
+            span: 388..558,
         },
     ],
 }

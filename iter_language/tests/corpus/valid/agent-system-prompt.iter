@@ -1,0 +1,31 @@
+workspace local {
+  base = "."
+}
+
+agent router {
+  strategy = rotate
+
+  claude_worker {
+    kind          = claude
+    mode          = print
+    system_prompt = "Review changes conservatively."
+  }
+
+  cline_worker {
+    kind          = cline
+    system_prompt = "Prefer read-only inspection."
+  }
+
+  grok_worker {
+    kind          = grok
+    system_prompt = "Keep patches small."
+  }
+}
+
+runner {
+  agent             = router
+  workspace         = local
+  continue_on_error = false
+  behavior          = loop
+  prompt            = "Inspect the repository."
+}

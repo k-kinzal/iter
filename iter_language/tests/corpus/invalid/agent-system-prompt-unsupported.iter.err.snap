@@ -1,0 +1,13 @@
+---
+source: iter_language/tests/conformance.rs
+description: agent-system-prompt-unsupported.iter
+---
+Error: unknown field `system_prompt` in agent codex
+   ╭─[agent-system-prompt-unsupported.iter:7:3]
+   │
+ 7 │   system_prompt = "This CLI has no typed system prompt option."
+   │   ──────┬──────  
+   │         ╰──────── unknown field `system_prompt` in agent codex
+   │ 
+   │ Help: valid fields: mode, command, args, env
+───╯

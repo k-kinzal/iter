@@ -36,6 +36,7 @@ Iterfile {
                         "--output-format",
                         "json",
                     ],
+                    system_prompt: None,
                     session_id_file: Some(
                         ".iter/session-id",
                     ),

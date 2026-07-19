@@ -82,11 +82,7 @@ impl Analyzer {
                     self.lower_simple_agent(&kind, &mut fields, "cursor")?;
                 AgentDef::Cursor { command, args, env }
             }
-            "cline" => {
-                let SimpleAgentParts { command, args, env } =
-                    self.lower_simple_agent(&kind, &mut fields, "cline")?;
-                AgentDef::Cline { command, args, env }
-            }
+            "cline" => self.lower_cline_agent(&kind, &mut fields)?,
             "opencode" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(&kind, &mut fields, "opencode")?;
@@ -128,16 +124,25 @@ impl Analyzer {
         let env = self.take_optional_env_block(fields);
         match kind.name.as_str() {
             "claude" => {
+                let system_prompt = self.take_optional_string(fields, "system_prompt");
                 let session_id_file = self.take_optional_string(fields, "session_id_file");
                 self.reject_unknown_fields(
                     fields,
-                    &["mode", "command", "args", "session_id_file", "env"],
+                    &[
+                        "mode",
+                        "command",
+                        "args",
+                        "system_prompt",
+                        "session_id_file",
+                        "env",
+                    ],
                     "agent claude",
                 );
                 Some(AgentDef::Claude {
                     mode: mode?,
                     command: command?,
                     args,
+                    system_prompt,
                     session_id_file,
                     env,
                 })
@@ -247,6 +252,30 @@ impl Analyzer {
         })
     }
 
+    fn lower_cline_agent(
+        &mut self,
+        kind: &CstIdent,
+        fields: &mut std::collections::BTreeMap<String, CstField>,
+    ) -> Option<AgentDef> {
+        let command = self.take_agent_command_or_default(fields, &kind.name);
+        let args = self
+            .take_optional_string_list(fields, "args")
+            .unwrap_or_default();
+        let system_prompt = self.take_optional_string(fields, "system_prompt");
+        let env = self.take_optional_env_block(fields);
+        self.reject_unknown_fields(
+            fields,
+            &["command", "args", "system_prompt", "env"],
+            "agent cline",
+        );
+        Some(AgentDef::Cline {
+            command: command?,
+            args,
+            system_prompt,
+            env,
+        })
+    }
+
     fn lower_grok_agent(
         &mut self,
         kind: &CstIdent,
@@ -256,16 +285,18 @@ impl Analyzer {
         let args = self
             .take_optional_string_list(fields, "args")
             .unwrap_or_default();
+        let system_prompt = self.take_optional_string(fields, "system_prompt");
         let session_id_file = self.take_optional_string(fields, "session_id_file");
         let env = self.take_optional_env_block(fields);
         self.reject_unknown_fields(
             fields,
-            &["command", "args", "session_id_file", "env"],
+            &["command", "args", "system_prompt", "session_id_file", "env"],
             "agent grok",
         );
         Some(AgentDef::Grok {
             command: command?,
             args,
+            system_prompt,
             session_id_file,
             env,
         })
@@ -668,11 +699,7 @@ impl Analyzer {
                     self.lower_simple_agent(kind, fields, "cursor")?;
                 Some(AgentDef::Cursor { command, args, env })
             }
-            "cline" => {
-                let SimpleAgentParts { command, args, env } =
-                    self.lower_simple_agent(kind, fields, "cline")?;
-                Some(AgentDef::Cline { command, args, env })
-            }
+            "cline" => self.lower_cline_agent(kind, fields),
             "opencode" => {
                 let SimpleAgentParts { command, args, env } =
                     self.lower_simple_agent(kind, fields, "opencode")?;

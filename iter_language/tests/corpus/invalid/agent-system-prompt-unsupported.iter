@@ -1,0 +1,16 @@
+workspace local {
+  base = "."
+}
+
+agent codex {
+  mode          = print
+  system_prompt = "This CLI has no typed system prompt option."
+}
+
+runner {
+  agent             = codex
+  workspace         = local
+  continue_on_error = false
+  behavior          = loop
+  prompt            = "Inspect the repository."
+}

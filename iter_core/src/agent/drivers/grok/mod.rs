@@ -124,6 +124,8 @@ pub struct GrokDriver {
     pub command: String,
     /// Additional arguments appended after the iter-managed headless flags.
     pub args: Vec<String>,
+    /// Optional replacement for Grok's default system prompt.
+    pub system_prompt: Option<String>,
     /// Optional path (relative to the workspace cwd, unless absolute) of a
     /// file that stores a stable Grok session id across iterations.
     ///
@@ -201,6 +203,10 @@ impl AgentDriver for GrokDriver {
         // caller's extra `args` are appended after, so a caller can still
         // override the managed flags downstream.
         let mut single = SingleCommand::prompt(prompt.as_str()).always_approve();
+        single
+            .options
+            .system_prompt_override
+            .clone_from(&self.system_prompt);
         if let Some(sid) = session {
             single = single.resume(ResumeTarget::session(sid));
         }
@@ -331,6 +337,7 @@ mod tests {
         GrokDriver {
             command: command.into(),
             args: Vec::new(),
+            system_prompt: None,
             session_id_file: None,
             env: Vec::new(),
         }
@@ -414,6 +421,19 @@ mod tests {
         let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
         assert!(args.contains(&"--model".to_owned()), "got {args:?}");
         assert!(args.contains(&"grok-2".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn system_prompt_is_forwarded() {
+        let mut d = driver("grok");
+        d.system_prompt = Some("Prefer small patches.".into());
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        let pos = args
+            .iter()
+            .position(|a| a == "--system-prompt-override")
+            .expect("--system-prompt-override present");
+        assert_eq!(args[pos + 1], "Prefer small patches.");
     }
 
     #[test]

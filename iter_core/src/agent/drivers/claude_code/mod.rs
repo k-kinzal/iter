@@ -131,6 +131,8 @@ pub struct ClaudeCodeDriver {
     /// Additional arguments appended after the built-in flags. Useful for
     /// overriding assumptions like `--model` or `--output-format`.
     pub args: Vec<String>,
+    /// Optional replacement for Claude Code's default system prompt.
+    pub system_prompt: Option<String>,
     /// Optional path (relative to the workspace cwd, unless absolute) of a
     /// file that stores a stable Claude Code session id across iterations.
     ///
@@ -229,6 +231,7 @@ impl AgentDriver for ClaudeCodeDriver {
         let execute = ExecuteCommand {
             permission_mode: Some(PermissionMode::BypassPermissions),
             session_id,
+            system_prompt: self.system_prompt.clone(),
             ..ExecuteCommand::default()
         };
         match self.mode {
@@ -376,6 +379,7 @@ mod tests {
             command: command.into(),
             mode,
             args: Vec::new(),
+            system_prompt: None,
             session_id_file: None,
             env: Vec::new(),
             hook_isolation_key: "default".to_owned(),
@@ -469,6 +473,19 @@ mod tests {
         let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
         assert!(args.contains(&"--model".to_owned()), "got {args:?}");
         assert!(args.contains(&"opus".to_owned()), "got {args:?}");
+    }
+
+    #[test]
+    fn system_prompt_is_forwarded() {
+        let mut d = driver("claude", AgentMode::Headless);
+        d.system_prompt = Some("Act as a reviewer.".into());
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        let pos = args
+            .iter()
+            .position(|a| a == "--system-prompt")
+            .expect("--system-prompt present");
+        assert_eq!(args[pos + 1], "Act as a reviewer.");
     }
 
     #[test]

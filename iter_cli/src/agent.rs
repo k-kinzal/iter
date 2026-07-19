@@ -81,6 +81,7 @@ fn build_claude(
     mode: AstAgentMode,
     command: &str,
     args: &[String],
+    system_prompt: Option<&String>,
     session_id_file: Option<&String>,
     env: &BTreeMap<String, String>,
 ) -> ClaudeCodeDriver {
@@ -88,6 +89,7 @@ fn build_claude(
         command: command.to_owned(),
         mode: convert_mode(mode),
         args: args.to_vec(),
+        system_prompt: system_prompt.cloned(),
         session_id_file: session_id_file.map(PathBuf::from),
         env: resolve_env(env),
         hook_isolation_key: DEFAULT_HOOK_ISOLATION_KEY.to_owned(),
@@ -100,12 +102,14 @@ fn build_claude(
 fn build_grok(
     command: &str,
     args: &[String],
+    system_prompt: Option<&String>,
     session_id_file: Option<&String>,
     env: &BTreeMap<String, String>,
 ) -> GrokDriver {
     GrokDriver {
         command: command.to_owned(),
         args: args.to_vec(),
+        system_prompt: system_prompt.cloned(),
         session_id_file: session_id_file.map(PathBuf::from),
         env: resolve_env(env),
     }
@@ -134,12 +138,14 @@ fn driver_from_def(def: &AgentDef) -> Result<Box<dyn AgentDriver>, AgentBuildErr
             mode,
             command,
             args,
+            system_prompt,
             session_id_file,
             env,
         } => Box::new(build_claude(
             *mode,
             command,
             args,
+            system_prompt.as_ref(),
             session_id_file.as_ref(),
             env,
         )),
@@ -210,9 +216,15 @@ fn driver_from_def(def: &AgentDef) -> Result<Box<dyn AgentDriver>, AgentBuildErr
             args: args.clone(),
             env: resolve_env(env),
         }),
-        AgentDef::Cline { command, args, env } => Box::new(ClineDriver {
+        AgentDef::Cline {
+            command,
+            args,
+            system_prompt,
+            env,
+        } => Box::new(ClineDriver {
             command: command.clone(),
             args: args.clone(),
+            system_prompt: system_prompt.clone(),
             env: resolve_env(env),
         }),
         AgentDef::OpenCode { command, args, env } => Box::new(OpenCodeDriver {
@@ -223,9 +235,16 @@ fn driver_from_def(def: &AgentDef) -> Result<Box<dyn AgentDriver>, AgentBuildErr
         AgentDef::Grok {
             command,
             args,
+            system_prompt,
             session_id_file,
             env,
-        } => Box::new(build_grok(command, args, session_id_file.as_ref(), env)),
+        } => Box::new(build_grok(
+            command,
+            args,
+            system_prompt.as_ref(),
+            session_id_file.as_ref(),
+            env,
+        )),
         AgentDef::Noop => Box::new(NoopDriver),
         AgentDef::Fake {
             exit_code,
@@ -360,6 +379,7 @@ mod tests {
             mode,
             command: "claude".into(),
             args: Vec::new(),
+            system_prompt: None,
             session_id_file: None,
             env: empty_env(),
         }
@@ -433,6 +453,7 @@ mod tests {
                 AgentDef::Cline {
                     command: "cline".into(),
                     args: Vec::new(),
+                    system_prompt: None,
                     env: empty_env(),
                 },
                 AgentKind::Cline,
@@ -449,6 +470,7 @@ mod tests {
                 AgentDef::Grok {
                     command: "grok".into(),
                     args: Vec::new(),
+                    system_prompt: None,
                     session_id_file: None,
                     env: empty_env(),
                 },
@@ -490,12 +512,14 @@ mod tests {
             AstAgentMode::Interactive,
             "/opt/bin/claude",
             &["--model".to_string(), "opus".to_string()],
+            Some(&"Use Rust.".to_string()),
             Some(&".iter/session-id".to_string()),
             &env,
         );
         assert_eq!(driver.command, "/opt/bin/claude");
         assert_eq!(driver.mode, ImplAgentMode::Interactive);
         assert_eq!(driver.args, vec!["--model".to_string(), "opus".to_string()]);
+        assert_eq!(driver.system_prompt.as_deref(), Some("Use Rust."));
         // Declaration `String` → core `PathBuf`.
         assert_eq!(
             driver.session_id_file,
@@ -516,6 +540,7 @@ mod tests {
             "claude",
             &[],
             None,
+            None,
             &BTreeMap::new(),
         );
         assert_eq!(none.mode, ImplAgentMode::Headless);
@@ -528,6 +553,7 @@ mod tests {
         let with = build_grok(
             "grok",
             &["--output-format".to_string(), "json".to_string()],
+            Some(&"Be concise.".to_string()),
             Some(&".iter/session-id".to_string()),
             &BTreeMap::new(),
         );
@@ -536,12 +562,13 @@ mod tests {
             with.args,
             vec!["--output-format".to_string(), "json".to_string()],
         );
+        assert_eq!(with.system_prompt.as_deref(), Some("Be concise."));
         assert_eq!(
             with.session_id_file,
             Some(PathBuf::from(".iter/session-id")),
         );
 
-        let without = build_grok("grok", &[], None, &BTreeMap::new());
+        let without = build_grok("grok", &[], None, None, &BTreeMap::new());
         assert!(without.session_id_file.is_none());
     }
 
@@ -573,6 +600,7 @@ mod tests {
                     Box::new(AgentDef::Grok {
                         command: "grok".into(),
                         args: Vec::new(),
+                        system_prompt: None,
                         session_id_file: None,
                         env: empty_env(),
                     }),

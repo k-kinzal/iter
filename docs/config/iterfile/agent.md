@@ -14,24 +14,29 @@ agent <kind> {
 
 ## Supported Kinds
 
-| Kind | Backing CLI | Has `mode` | Has `subcommand` |
-| --- | --- | :---: | :---: |
-| [`claude`](#agent-claude) | Claude Code (`claude`) | ✔ | ✘ |
-| [`codex`](#agent-codex) | OpenAI Codex | ✔ | ✘ |
-| [`gemini`](#agent-gemini) | Google Gemini | ✔ | ✘ |
-| [`hermes`](#agent-hermes) | Nous Hermes (`hermes`) | ✔ | ✘ |
-| [`antigravity`](#agent-antigravity) | Google Antigravity (`agy`) | ✔ | ✘ |
-| [`copilot`](#agent-copilot) | GitHub Copilot (`gh copilot`) | ✔ | ✔ |
-| [`cursor`](#agent-cursor) | Cursor | ✘ | ✘ |
-| [`cline`](#agent-cline) | Cline | ✘ | ✘ |
-| [`opencode`](#agent-opencode) | opencode | ✘ | ✘ |
-| [`grok`](#agent-grok) | xAI Grok Build (`grok`) | ✘ | ✘ |
-| [`generic`](#agent-generic) | Arbitrary argv | ✘ | ✘ |
-| [`noop`](#agent-noop) | Built-in (no binary) | ✘ | ✘ |
-| [`fake`](#agent-fake) | Built-in (no binary) | ✘ | ✘ |
-| [`router`](#agent-router) | Built-in multi-agent router | ✘ | ✘ |
+| Kind | Backing CLI | Has `mode` | Has `subcommand` | Has `system_prompt` |
+| --- | --- | :---: | :---: | :---: |
+| [`claude`](#agent-claude) | Claude Code (`claude`) | ✔ | ✘ | ✔ |
+| [`codex`](#agent-codex) | OpenAI Codex | ✔ | ✘ | ✘ |
+| [`gemini`](#agent-gemini) | Google Gemini | ✔ | ✘ | ✘ |
+| [`hermes`](#agent-hermes) | Nous Hermes (`hermes`) | ✔ | ✘ | ✘ |
+| [`antigravity`](#agent-antigravity) | Google Antigravity (`agy`) | ✔ | ✘ | ✘ |
+| [`copilot`](#agent-copilot) | GitHub Copilot (`gh copilot`) | ✔ | ✔ | ✘ |
+| [`cursor`](#agent-cursor) | Cursor | ✘ | ✘ | ✘ |
+| [`cline`](#agent-cline) | Cline | ✘ | ✘ | ✔ |
+| [`opencode`](#agent-opencode) | opencode | ✘ | ✘ | ✘ |
+| [`grok`](#agent-grok) | xAI Grok Build (`grok`) | ✘ | ✘ | ✔ |
+| [`generic`](#agent-generic) | Arbitrary argv | ✘ | ✘ | ✘ |
+| [`noop`](#agent-noop) | Built-in (no binary) | ✘ | ✘ | ✘ |
+| [`fake`](#agent-fake) | Built-in (no binary) | ✘ | ✘ | ✘ |
+| [`router`](#agent-router) | Built-in multi-agent router | ✘ | ✘ | ✘ |
 
 Every CLI-backed named kind has a conventional default `command` matching its backing CLI. Set `command` only when you need to override that default, including pinning an absolute path for determinism or security. iter prepends mode-specific defaults (`--print`, `exec`, etc.) and appends `args` after them.
+
+`system_prompt` is deliberately available only on kinds whose typed CLI
+integration exposes a system-prompt override: `claude`, `cline`, and `grok`.
+Other kinds reject the field during validation instead of approximating it by
+combining the system instruction with the task prompt.
 
 `noop`, `fake`, and `router` do not require any external binary — they run entirely in-process.
 
@@ -163,6 +168,7 @@ agent claude {
   mode            = print
   command         = "/usr/local/bin/claude"
   args            = ["--timeout", "600", "--dangerously-skip-permissions"]
+  system_prompt   = "Review changes conservatively."
   session_id_file = ".iter/session.txt"
 }
 ```
@@ -174,6 +180,7 @@ agent claude {
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
 | `command` | `string` | Optional | `"claude"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed defaults. |
+| `system_prompt` | `string` | Optional | — | Replace Claude Code's default system prompt (`--system-prompt`). |
 | `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `--session-id <uuid>`. Omit to run each iteration as a fresh session. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
 
@@ -338,12 +345,21 @@ No `mode` field.
 
 Cline.
 
+### Example
+
+```hcl
+agent cline {
+  system_prompt = "Prefer read-only inspection."
+}
+```
+
 ### Arguments
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `command` | `string` | Optional | `"cline"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `system_prompt` | `string` | Optional | — | Replace Cline's default system prompt (`--system`). |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
@@ -369,7 +385,7 @@ xAI Grok Build (`grok`). Headless-first: iter drives the official `grok -p` head
 iter builds the command as:
 
 ```text
-grok -p "<prompt>" --always-approve [-s <session-id>] [args...]
+grok -p "<prompt>" --always-approve [-r <session-id>] [args...]
 ```
 
 Authentication uses `XAI_API_KEY` (or a prior local login). Set it through the agent `env` block or rely on it being passed through by the sandbox (the `grok` sandbox profile passes `XAI_*` / `GROK_*`).
@@ -382,6 +398,7 @@ agent grok {
 
 agent grok {
   args            = ["--output-format", "json"]
+  system_prompt   = "Keep patches small."
   session_id_file = ".iter/session.txt"
 }
 ```
@@ -391,8 +408,9 @@ agent grok {
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `command` | `string` | Optional | `"grok"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
-| `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed headless flags (`-p`, `--always-approve`, `-s`). |
-| `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `-s <uuid>` so Grok resumes the same headless session. Omit to run each iteration as a fresh session. |
+| `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed headless flags (`-p`, `--always-approve`, `-r`). |
+| `system_prompt` | `string` | Optional | — | Replace Grok's default system prompt (`--system-prompt-override`). |
+| `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `-r <uuid>` so Grok resumes the same headless session. Omit to run each iteration as a fresh session. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
 
 ---
