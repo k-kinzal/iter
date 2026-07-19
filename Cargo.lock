@@ -2185,6 +2185,7 @@ version = "0.1.0"
 dependencies = [
  "arbitrary",
  "ariadne",
+ "chrono",
  "insta",
  "pest",
  "pest_derive",

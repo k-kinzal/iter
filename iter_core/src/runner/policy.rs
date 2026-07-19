@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use super::completion::CompletionRequest;
 use super::error::ErrorSource;
 
 /// How the [`Runner`](super::Runner) acquires each Signal: wait for one to
@@ -44,12 +45,10 @@ pub enum SignalAcquisition {
 
 /// Behaviour switches for the [`Runner`](super::Runner) loop.
 ///
-/// The Runner's termination model is deliberately Signal-centric: the loop
-/// stops when the queue drains, when the cancel token fires, or when the
-/// operator passes `--once` to process exactly one signal. There are no
-/// output-sniffing or shell-exit termination conditions — if a workflow
-/// should stop on an external condition, author a Trigger that stops
-/// producing signals (or invert the pattern with a shutdown-signal Trigger).
+/// This type carries repetition/error policy. First-class semantic completion
+/// conditions are configured separately on
+/// [`RunnerBuilder::completion_conditions`](super::RunnerBuilder::completion_conditions)
+/// so adding a condition does not conflate it with Signal acquisition policy.
 ///
 /// `behavior` controls what the runner does when no signal is available:
 /// either park on the queue (`Wait`) or synthesise a fresh signal so the
@@ -101,6 +100,11 @@ pub enum RunnerTerminationReason {
     Once,
     /// The queue returned `None` from `dequeue`, signalling no more work.
     QueueDrained,
+    /// A first-class completion condition requested a safe runner exit.
+    Completed {
+        /// Latched condition decision and boundary context.
+        request: CompletionRequest,
+    },
     /// A [`SignalKind::Terminate`](crate::signal::SignalKind::Terminate)
     /// signal was dequeued. The runner exits gracefully without invoking
     /// the agent for that signal.

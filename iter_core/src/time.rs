@@ -10,17 +10,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
+use tokio::time::Instant;
 use uuid::Uuid;
 
 use crate::signal::SignalId;
 
-/// Source of wall-clock time.
+/// Source of wall-clock and monotonic time.
 pub trait Clock: fmt::Debug + Send + Sync {
     /// Return the current UTC wall-clock instant.
     fn now(&self) -> DateTime<Utc>;
 
     /// Return the current [`SystemTime`] for filesystem and queue ordering.
     fn system_time(&self) -> SystemTime;
+
+    /// Return the current monotonic instant for elapsed-time decisions.
+    ///
+    /// The default keeps existing clock implementations source-compatible;
+    /// deterministic or resumable contexts can override it.
+    fn monotonic_now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 /// System-backed [`Clock`].

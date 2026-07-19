@@ -15,6 +15,12 @@ impl Analyzer {
     ) -> BTreeMap<String, CstField> {
         let mut map = BTreeMap::new();
         if let Some(body) = body {
+            for condition in &body.conditions {
+                self.errors.push(Diagnostic::error(
+                    condition.span.clone(),
+                    "completion conditions are only valid inside a runner `completion` block",
+                ));
+            }
             for field in body.fields {
                 if map.contains_key(&field.name.name) {
                     self.errors.push(Diagnostic::error(

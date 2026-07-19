@@ -48,15 +48,18 @@ pub use prompt::{
 };
 pub use queue::{Priority, Queue};
 pub use runner::{
-    BoxError, BuilderError, ErrorSource, EventAction, EventDispatcher, EventName, HookEvent,
-    IterationContext, IterationState, PriorIterationStatus, Runner, RunnerBuilder, RunnerError,
+    BoxError, BuilderError, CompletionCondition, CompletionConditionErrorPolicy,
+    CompletionConditionInfo, CompletionConditionKind, CompletionEvent, CompletionRequest,
+    ErrorSource, EventAction, EventDispatcher, EventName, HookEvent, IterationContext,
+    IterationState, PriorIterationStatus, Runner, RunnerBuilder, RunnerError, RunnerExit,
     RunnerPolicy, RunnerTerminationReason, SharedSignal, SignalAcquisition,
 };
 pub use signal::{
     Metadata, MetadataError, MetadataKey, MetadataValue, Signal, SignalId, SignalKind,
 };
 pub use template::{
-    IterationRenderContext, RunnerRenderContext, SignalContext, Template, TemplateError,
+    CompletionRenderContext, IterationRenderContext, RunnerRenderContext, SignalContext, Template,
+    TemplateError,
 };
 pub use time::{Clock, DeterministicIdSource, FixedClock, IdSource, SystemClock, SystemIdSource};
 pub use workspace::{ActiveWorkspace, SandboxProfile, StdioMode, Workspace, match_env_pattern};

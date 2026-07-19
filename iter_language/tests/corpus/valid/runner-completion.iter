@@ -1,0 +1,38 @@
+workspace local {
+  base = "."
+}
+
+agent noop {
+}
+
+runner {
+  agent = noop
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "Explore."
+
+  completion {
+    condition iterations as iteration_budget {
+      max = 50
+    }
+    condition shell as goal_reached {
+      run = "./scripts/exploration-complete.sh"
+      timeout = 30s
+      on_error = abort
+    }
+    condition elapsed as time_budget {
+      duration = 90m
+    }
+    condition deadline as reporting_day {
+      at = "2026-08-01T00:00:00+09:00"
+    }
+  }
+
+  on runner_completing {
+    shell "echo {{completion.condition.name}}"
+  }
+  on runner_completed {
+    shell "echo {{completion.completed_at}}"
+  }
+}

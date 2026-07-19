@@ -160,7 +160,7 @@ on_section = { kw_on ~ ident ~ block }
 // Block bodies
 // ============================================================================
 block       = { "{" ~ block_entry* ~ "}" }
-block_entry = { prompt_match_default_arm | prompt_match_guard_arm | nested_event_handler | nested_route | action | field }
+block_entry = { prompt_match_default_arm | prompt_match_guard_arm | nested_condition | nested_event_handler | nested_route | action | field }
 
 // `_ => <value>` — prompt match default arm.
 prompt_match_default_arm = { "_" ~ "=>" ~ prompt_arm_value }
@@ -173,6 +173,9 @@ prompt_arm_value = { string_literal | ident }
 
 // `on <ident> { ... }` — nested event handler inside a block.
 nested_event_handler = { kw_on ~ ident ~ block }
+
+// `condition <kind> as <name> { ... }` — runner completion predicate.
+nested_condition = { kw_condition ~ ident ~ kw_as ~ ident ~ block }
 
 // `on "<pattern>" [when "<expr>"] { ... }`  (webhook routes).
 nested_route = { kw_on ~ string ~ route_when? ~ block }
@@ -198,7 +201,7 @@ field      = { field_name ~ field_rhs }
 // (`"client.dns.lookup"`) are the motivating cases. Semantic helpers that
 // accept identifier-only fields reject string keys at lowering time; the
 // concrete syntax is uniformly permitted.
-field_name = ${ !(kw_on | kw_shell) ~ (ident | string) }
+field_name = ${ !(kw_on | kw_shell | kw_condition) ~ (ident | string) }
 field_rhs  = { block | ("=" ~ value) }
 
 // ============================================================================
@@ -247,6 +250,7 @@ kw_when      = @{ "when"      ~ !ident_continue }
 kw_shell     = @{ "shell"     ~ !ident_continue }
 kw_metadata  = @{ "metadata"  ~ !ident_continue }
 kw_iteration = @{ "iteration" ~ !ident_continue }
+kw_condition = @{ "condition" ~ !ident_continue }
 
 // ============================================================================
 // Literals

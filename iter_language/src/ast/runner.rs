@@ -48,10 +48,66 @@ pub struct RunnerDef {
     /// guard, not as an SLA — `continue_on_error` governs whether the
     /// runner moves on or breaks after a timeout.
     pub iteration_timeout_secs: Option<i64>,
+    /// Optional first-class completion policy. Conditions are evaluated as
+    /// an ordered OR-set: the first satisfied condition requests completion.
+    pub completion: Option<CompletionDef>,
     /// Prompt selection expression for this runner.
     pub prompt: PromptExpr,
     /// Event handlers scoped to this runner's lifecycle.
     pub events: Vec<Spanned<EventHandlerDef>>,
+}
+
+/// Ordered completion conditions attached to a runner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionDef {
+    /// Conditions in declaration order.
+    pub conditions: Vec<Spanned<CompletionConditionDef>>,
+}
+
+/// One externally authored runner completion condition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionConditionDef {
+    /// Complete after at least `max` attempted iterations.
+    Iterations {
+        /// Stable user-facing condition name.
+        name: String,
+        /// Maximum attempted iteration count.
+        max: u32,
+    },
+    /// Run a shell predicate after iteration boundaries.
+    Shell {
+        /// Stable user-facing condition name.
+        name: String,
+        /// Shell command. Exit 0 means satisfied; 1 means pending.
+        run: String,
+        /// Predicate timeout in seconds.
+        timeout_secs: u64,
+        /// Policy for exit codes other than 0/1 and execution errors.
+        on_error: CompletionConditionErrorPolicy,
+    },
+    /// Complete after a monotonic duration from runner start.
+    Elapsed {
+        /// Stable user-facing condition name.
+        name: String,
+        /// Positive elapsed duration in seconds.
+        duration_secs: u64,
+    },
+    /// Complete at an absolute RFC 3339 instant.
+    Deadline {
+        /// Stable user-facing condition name.
+        name: String,
+        /// Validated RFC 3339 timestamp with an explicit UTC offset.
+        at: String,
+    },
+}
+
+/// Error policy for shell completion predicates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionConditionErrorPolicy {
+    /// Abort the runner when the predicate cannot produce a decision.
+    Abort,
+    /// Log the predicate error and keep the condition pending.
+    Continue,
 }
 
 /// Runner loop behaviour — what the runner does when no signal is

@@ -13,6 +13,7 @@ impl Analyzer {
         for route in routes {
             let block = CstBlock {
                 fields: route.body.fields.clone(),
+                conditions: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
                 prompt_arms: Vec::new(),

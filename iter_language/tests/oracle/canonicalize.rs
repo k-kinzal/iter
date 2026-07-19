@@ -77,6 +77,12 @@ fn canon_block(b: &mut CstBlock) {
     for f in &mut b.fields {
         canon_field(f);
     }
+    for condition in &mut b.conditions {
+        condition.span = 0..0;
+        canon_ident(&mut condition.kind);
+        canon_ident(&mut condition.name);
+        canon_block(&mut condition.body);
+    }
     for r in &mut b.routes {
         r.span = 0..0;
         if let Some(sp) = &mut r.when_span {

@@ -68,6 +68,7 @@ Iterfile {
                 iteration_timeout_secs: Some(
                     900,
                 ),
+                completion: None,
                 prompt: Single(
                     Inline(
                         "iterate",

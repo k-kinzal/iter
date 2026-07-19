@@ -40,6 +40,7 @@ Iterfile {
                     delay_secs: None,
                 },
                 iteration_timeout_secs: None,
+                completion: None,
                 prompt: Single(
                     Inline(
                         "Implicit single binding.",

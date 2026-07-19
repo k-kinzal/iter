@@ -1,14 +1,16 @@
 //! `runner { ... }` lowerer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use chrono::DateTime;
 
 use super::{
     Analyzer, CONTINUE_ON_ERROR_HINT, IMPLICIT_RUNNER_BINDING, RUNNER_BEHAVIOR_HINT,
     TemplatePosition,
 };
 use crate::ast::{
-    EventHandlerDef, PromptArm, PromptExpr, PromptValue, RunnerDef, SignalAcquisition, Span,
-    Spanned,
+    CompletionConditionDef, CompletionConditionErrorPolicy, CompletionDef, EventHandlerDef,
+    PromptArm, PromptExpr, PromptValue, RunnerDef, SignalAcquisition, Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
@@ -63,6 +65,12 @@ impl Analyzer {
                 "prompt match arms are not valid directly in a runner block; use `prompt { guard => \"...\" }`",
             ));
         }
+        for condition in &block.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions must be nested inside `completion { ... }`",
+            ));
+        }
 
         // Lower nested `on <event> { ... }` event handlers from the block.
         for handler in block.event_handlers {
@@ -89,6 +97,7 @@ impl Analyzer {
         );
         let behavior = self.take_required_runner_behavior(&mut fields, keyword_span);
         let iteration_timeout_secs = self.take_iteration_timeout_secs(&mut fields);
+        let completion = self.take_completion(&mut fields);
 
         // Parse prompt expression.
         let prompt = self.take_prompt_expr(&mut fields, keyword_span);
@@ -102,6 +111,7 @@ impl Analyzer {
                 "continue_on_error",
                 "behavior",
                 "iteration_timeout_secs",
+                "completion",
                 "prompt",
             ],
             "runner",
@@ -126,6 +136,7 @@ impl Analyzer {
             continue_on_error: continue_on_error?,
             behavior: behavior?,
             iteration_timeout_secs,
+            completion,
             prompt,
             events,
         })
@@ -178,6 +189,12 @@ impl Analyzer {
                 "prompt match arms are not valid directly in a runner block; use `prompt { guard => \"...\" }`",
             ));
         }
+        for condition in &block.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions must be nested inside `completion { ... }`",
+            ));
+        }
 
         // Lower nested `on <event> { ... }` event handlers from the block.
         for handler in block.event_handlers {
@@ -197,6 +214,7 @@ impl Analyzer {
         );
         let behavior = self.take_required_runner_behavior(&mut fields, keyword_span);
         let iteration_timeout_secs = self.take_iteration_timeout_secs(&mut fields);
+        let completion = self.take_completion(&mut fields);
         let prompt = self.take_prompt_expr(&mut fields, keyword_span);
         // Inline services have no named-prompt scope (`compose.iter` has no
         // `prompt as <name>` construct), so a bareword prompt reference can
@@ -210,6 +228,7 @@ impl Analyzer {
                 "continue_on_error",
                 "behavior",
                 "iteration_timeout_secs",
+                "completion",
                 "prompt",
             ],
             "runner",
@@ -223,6 +242,7 @@ impl Analyzer {
             continue_on_error: continue_on_error?,
             behavior: behavior?,
             iteration_timeout_secs,
+            completion,
             prompt,
             events,
         })
@@ -513,6 +533,291 @@ impl Analyzer {
             return None;
         }
         Some(secs)
+    }
+
+    fn take_completion(
+        &mut self,
+        fields: &mut BTreeMap<String, CstField>,
+    ) -> Option<CompletionDef> {
+        let field = fields.remove("completion")?;
+        let CstValue::Block(block) = field.value else {
+            self.errors.push(Diagnostic::error(
+                field.span,
+                "`completion` must be a block containing named conditions",
+            ));
+            return None;
+        };
+
+        for ordinary in &block.fields {
+            self.errors.push(Diagnostic::error(
+                ordinary.span.clone(),
+                format!(
+                    "unknown field `{}` in completion; use `condition <kind> as <name> {{ ... }}`",
+                    ordinary.name.name
+                ),
+            ));
+        }
+        self.reject_non_condition_completion_entries(&block);
+        if block.conditions.is_empty() {
+            self.errors.push(Diagnostic::error(
+                block.span.clone(),
+                "completion requires at least one condition",
+            ));
+            return None;
+        }
+
+        let mut names = BTreeSet::new();
+        let mut conditions = Vec::new();
+        for condition in block.conditions {
+            if !names.insert(condition.name.name.clone()) {
+                self.errors.push(Diagnostic::error(
+                    condition.name.span.clone(),
+                    format!(
+                        "duplicate completion condition name `{}`",
+                        condition.name.name
+                    ),
+                ));
+                continue;
+            }
+            if let Some(lowered) = self.lower_completion_condition(condition) {
+                conditions.push(lowered);
+            }
+        }
+        Some(CompletionDef { conditions })
+    }
+
+    fn reject_non_condition_completion_entries(&mut self, block: &CstBlock) {
+        for route in &block.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "routes are not valid inside completion",
+            ));
+        }
+        for action in &block.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "shell actions are not valid directly inside completion; use `condition shell`",
+            ));
+        }
+        for arm in &block.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid inside completion",
+            ));
+        }
+        for handler in &block.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "event handlers are not valid inside completion",
+            ));
+        }
+    }
+
+    fn lower_completion_condition(
+        &mut self,
+        condition: crate::parser::CstCondition,
+    ) -> Option<Spanned<CompletionConditionDef>> {
+        let span = condition.span;
+        let kind_span = condition.kind.span;
+        let kind = condition.kind.name;
+        let name = condition.name.name;
+        self.reject_nested_condition_entries(&condition.body, &kind);
+        let mut fields = self.collect_fields_from_vec(condition.body.fields);
+
+        let node = match kind.as_str() {
+            "iterations" => {
+                let value_span = fields.get("max").map(|f| f.value.span());
+                let max = self.take_optional_int(&mut fields, "max");
+                if max.is_none() {
+                    self.errors.push(
+                        Diagnostic::error(kind_span.clone(), "condition iterations requires `max`")
+                            .with_hint("add `max = 50`"),
+                    );
+                }
+                self.reject_unknown_fields(&mut fields, &["max"], "condition iterations");
+                let max = max?;
+                let Ok(max) = u32::try_from(max) else {
+                    self.errors.push(Diagnostic::error(
+                        value_span.unwrap_or(kind_span),
+                        "`max` must be a positive 32-bit integer",
+                    ));
+                    return None;
+                };
+                if max == 0 {
+                    self.errors.push(Diagnostic::error(
+                        value_span.unwrap_or(kind_span),
+                        "`max` must be positive",
+                    ));
+                    return None;
+                }
+                CompletionConditionDef::Iterations { name, max }
+            }
+            "shell" => {
+                let run =
+                    self.take_required_string(&mut fields, "run", &kind_span, "condition shell");
+                let timeout_span = fields.get("timeout").map(|f| f.value.span());
+                let timeout = self.take_optional_duration(&mut fields, "timeout");
+                if timeout.is_none() {
+                    self.errors.push(
+                        Diagnostic::error(kind_span.clone(), "condition shell requires `timeout`")
+                            .with_hint("add `timeout = 30s`"),
+                    );
+                }
+                let on_error = self.take_completion_on_error(&mut fields, &kind_span);
+                self.reject_unknown_fields(
+                    &mut fields,
+                    &["run", "timeout", "on_error"],
+                    "condition shell",
+                );
+                let timeout = timeout?;
+                let Ok(timeout_secs) = u64::try_from(timeout) else {
+                    self.errors.push(Diagnostic::error(
+                        timeout_span.unwrap_or(kind_span),
+                        "`timeout` must be a positive duration",
+                    ));
+                    return None;
+                };
+                if timeout_secs == 0 {
+                    self.errors.push(Diagnostic::error(
+                        timeout_span.unwrap_or(kind_span),
+                        "`timeout` must be positive",
+                    ));
+                    return None;
+                }
+                CompletionConditionDef::Shell {
+                    name,
+                    run: run?,
+                    timeout_secs,
+                    on_error: on_error?,
+                }
+            }
+            "elapsed" => {
+                let duration_span = fields.get("duration").map(|f| f.value.span());
+                let duration = self.take_optional_duration(&mut fields, "duration");
+                if duration.is_none() {
+                    self.errors.push(
+                        Diagnostic::error(
+                            kind_span.clone(),
+                            "condition elapsed requires `duration`",
+                        )
+                        .with_hint("add `duration = 90m`"),
+                    );
+                }
+                self.reject_unknown_fields(&mut fields, &["duration"], "condition elapsed");
+                let duration = duration?;
+                let Ok(duration_secs) = u64::try_from(duration) else {
+                    self.errors.push(Diagnostic::error(
+                        duration_span.unwrap_or(kind_span),
+                        "`duration` must be a positive duration",
+                    ));
+                    return None;
+                };
+                if duration_secs == 0 {
+                    self.errors.push(Diagnostic::error(
+                        duration_span.unwrap_or(kind_span),
+                        "`duration` must be positive",
+                    ));
+                    return None;
+                }
+                CompletionConditionDef::Elapsed {
+                    name,
+                    duration_secs,
+                }
+            }
+            "deadline" => {
+                let at_span = fields.get("at").map(|f| f.value.span());
+                let at =
+                    self.take_required_string(&mut fields, "at", &kind_span, "condition deadline");
+                self.reject_unknown_fields(&mut fields, &["at"], "condition deadline");
+                let at = at?;
+                if DateTime::parse_from_rfc3339(&at).is_err() {
+                    self.errors.push(Diagnostic::error(
+                        at_span.unwrap_or(kind_span),
+                        "`at` must be an RFC 3339 timestamp with an explicit UTC offset",
+                    ));
+                    return None;
+                }
+                CompletionConditionDef::Deadline { name, at }
+            }
+            other => {
+                self.errors.push(
+                    Diagnostic::error(
+                        kind_span,
+                        format!("unknown completion condition kind `{other}`"),
+                    )
+                    .with_hint("valid kinds: iterations, shell, elapsed, deadline"),
+                );
+                return None;
+            }
+        };
+        Some(Spanned::new(node, span))
+    }
+
+    fn take_completion_on_error(
+        &mut self,
+        fields: &mut BTreeMap<String, CstField>,
+        kind_span: &Span,
+    ) -> Option<CompletionConditionErrorPolicy> {
+        let Some(field) = fields.remove("on_error") else {
+            self.errors.push(
+                Diagnostic::error(kind_span.clone(), "condition shell requires `on_error`")
+                    .with_hint("add `on_error = abort` or `on_error = continue`"),
+            );
+            return None;
+        };
+        match field.value {
+            CstValue::Ident(value, span) => match value.as_str() {
+                "abort" => Some(CompletionConditionErrorPolicy::Abort),
+                "continue" => Some(CompletionConditionErrorPolicy::Continue),
+                _ => {
+                    self.errors.push(Diagnostic::error(
+                        span,
+                        "`on_error` must be `abort` or `continue`",
+                    ));
+                    None
+                }
+            },
+            other => {
+                self.errors.push(Diagnostic::error(
+                    other.span(),
+                    "`on_error` must be `abort` or `continue`",
+                ));
+                None
+            }
+        }
+    }
+
+    fn reject_nested_condition_entries(&mut self, block: &CstBlock, kind: &str) {
+        for condition in &block.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                format!("nested conditions are not valid inside condition {kind}"),
+            ));
+        }
+        for route in &block.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                format!("routes are not valid inside condition {kind}"),
+            ));
+        }
+        for action in &block.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                format!("actions are not valid inside condition {kind}"),
+            ));
+        }
+        for arm in &block.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                format!("prompt arms are not valid inside condition {kind}"),
+            ));
+        }
+        for handler in &block.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                format!("event handlers are not valid inside condition {kind}"),
+            ));
+        }
     }
 
     fn take_required_runner_behavior(

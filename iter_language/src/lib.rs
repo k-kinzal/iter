@@ -59,7 +59,8 @@ mod parser;
 mod semantic;
 
 pub use ast::{
-    Action, AgentDef, AgentMode, ApplyBackDef, ArgDef, CloneApplyBackMode, CmpOp, Compose,
+    Action, AgentDef, AgentMode, ApplyBackDef, ArgDef, CloneApplyBackMode, CmpOp,
+    CompletionConditionDef, CompletionConditionErrorPolicy, CompletionDef, Compose,
     ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef, DlqTargetDef, EventHandlerDef,
     EventName, ExtractExpr, FilesSource, GitFastForward, GitLocator, InlineService, IterationField,
     Iterfile, MetadataSource, NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService,
@@ -73,8 +74,8 @@ pub use ast::{
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{
-    CstAction, CstBlock, CstCmpOp, CstEventHandler, CstField, CstFile, CstGuard, CstIdent,
-    CstPromptMatchArm, CstRoute, CstSection, CstValue,
+    CstAction, CstBlock, CstCmpOp, CstCondition, CstEventHandler, CstField, CstFile, CstGuard,
+    CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue,
 };
 
 /// Semantic version of the grammar implemented by this crate.
@@ -92,7 +93,7 @@ pub use parser::{
 /// component. Adding a new optional field, a new kind that is parsed but not
 /// required, or a new diagnostic message bumps the minor component. Bug
 /// fixes and documentation changes bump the patch component.
-pub const GRAMMAR_VERSION: &str = "4.2.0";
+pub const GRAMMAR_VERSION: &str = "4.3.0";
 
 /// Parse the given source text into a validated [`Iterfile`].
 ///

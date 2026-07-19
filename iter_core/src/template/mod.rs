@@ -17,7 +17,9 @@
 pub mod context;
 pub mod error;
 
-pub use context::{IterationRenderContext, RunnerRenderContext, SignalContext};
+pub use context::{
+    CompletionRenderContext, IterationRenderContext, RunnerRenderContext, SignalContext,
+};
 pub use error::TemplateError;
 
 use std::fmt;

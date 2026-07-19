@@ -11,7 +11,9 @@ use crate::prompt::{PromptSelector, PromptTemplate};
 use crate::queue::Queue;
 use crate::runner::event::EventName;
 use crate::runner::observer::{DynRunnerObserver, RunnerObserver};
-use crate::runner::{EventAction, EventDispatcher, Runner, RunnerPolicy, SignalAcquisition};
+use crate::runner::{
+    CompletionCondition, EventAction, EventDispatcher, Runner, RunnerPolicy, SignalAcquisition,
+};
 use crate::time::{Clock, IdSource, SystemClock, SystemIdSource};
 use crate::workspace::Workspace;
 
@@ -46,6 +48,7 @@ pub struct RunnerBuilder {
     events: EventDispatcher,
     observers: Vec<Arc<dyn DynRunnerObserver>>,
     config: RunnerPolicy,
+    completion_conditions: Vec<CompletionCondition>,
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
     clock: Arc<dyn Clock>,
     id_source: Arc<dyn IdSource>,
@@ -61,6 +64,7 @@ impl Default for RunnerBuilder {
             events: EventDispatcher::new(),
             observers: Vec::new(),
             config: RunnerPolicy::default(),
+            completion_conditions: Vec::new(),
             stdio_sink: None,
             clock: Arc::new(SystemClock),
             id_source: Arc::new(SystemIdSource),
@@ -129,6 +133,19 @@ impl RunnerBuilder {
     pub fn config(mut self, config: RunnerPolicy) -> Self {
         self.config = config;
         self
+    }
+
+    /// Replace the ordered OR-set of first-class completion conditions.
+    pub fn completion_conditions(mut self, conditions: Vec<CompletionCondition>) -> Self {
+        self.completion_conditions = conditions;
+        self
+    }
+
+    /// Clone the configured event dispatcher for deferred operator-owned
+    /// lifecycle events such as `runner_completed`.
+    #[must_use]
+    pub fn event_dispatcher(&self) -> EventDispatcher {
+        self.events.clone()
     }
 
     /// Register an [`EventAction`] for a specific [`EventName`].
@@ -262,6 +279,7 @@ impl RunnerBuilder {
             events: self.events,
             observers: self.observers,
             config: self.config,
+            completion_conditions: self.completion_conditions,
             clock: self.clock,
             id_source: self.id_source,
         })

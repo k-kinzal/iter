@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
 
+use crate::runner::completion::{CompletionConditionInfo, CompletionEvent};
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
 use crate::signal::metadata::MetadataValue;
@@ -119,6 +120,54 @@ impl<'a> RunnerRenderContext<'a> {
     }
 }
 
+/// Render context for `runner_completing` and `runner_completed`.
+///
+/// It adds `completion.*` and `runner.*` roots without inventing a current
+/// `signal.*` root for idle time-based completion.
+#[derive(Debug, Serialize)]
+pub struct CompletionRenderContext<'a> {
+    today: String,
+    iteration: &'a IterationContext,
+    completion: CompletionView<'a>,
+    runner: CompletionRunnerView,
+}
+
+#[derive(Debug, Serialize)]
+struct CompletionView<'a> {
+    condition: &'a CompletionConditionInfo,
+    requested_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    completed_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CompletionRunnerView {
+    started_at: String,
+    elapsed_seconds: u64,
+    last_signal_id: Option<String>,
+}
+
+impl<'a> CompletionRenderContext<'a> {
+    /// Build a completion lifecycle render context.
+    #[must_use]
+    pub fn new(event: &'a CompletionEvent, iteration: &'a IterationContext) -> Self {
+        Self {
+            today: Local::now().date_naive().format("%Y-%m-%d").to_string(),
+            iteration,
+            completion: CompletionView {
+                condition: &event.request.condition,
+                requested_at: event.request.requested_at.to_rfc3339(),
+                completed_at: event.completed_at.map(|value| value.to_rfc3339()),
+            },
+            runner: CompletionRunnerView {
+                started_at: event.request.runner_started_at.to_rfc3339(),
+                elapsed_seconds: event.request.elapsed_seconds,
+                last_signal_id: event.request.last_signal_id.map(|id| id.to_string()),
+            },
+        }
+    }
+}
+
 /// Convert a [`MetadataValue`] to the string it should render as inside a
 /// template. Note: deliberately distinct from [`MetadataValue`]'s `Display`
 /// impl — that one emits the literal `"null"` for [`MetadataValue::Null`],
@@ -136,6 +185,9 @@ fn metadata_value_to_string(value: &MetadataValue) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::{
+        CompletionConditionInfo, CompletionConditionKind, CompletionEvent, CompletionRequest,
+    };
     use crate::signal::metadata::{Metadata, MetadataKey};
 
     fn signal_with(metadata: Metadata) -> Signal {
@@ -208,5 +260,37 @@ mod tests {
         assert!(json.get("iteration").is_some());
         assert!(json.get("signal").is_none());
         assert!(json.get("metadata").is_none());
+    }
+
+    #[test]
+    fn completion_context_exposes_completion_and_runner_roots() {
+        let now = DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+            .expect("valid timestamp")
+            .with_timezone(&Utc);
+        let event = CompletionEvent::completed(
+            CompletionRequest {
+                condition: CompletionConditionInfo {
+                    name: "budget".into(),
+                    kind: CompletionConditionKind::Iterations,
+                    max: Some(7),
+                    duration_seconds: None,
+                    at: None,
+                },
+                iteration_count: 7,
+                last_signal_id: None,
+                requested_at: now,
+                runner_started_at: now,
+                elapsed_seconds: 12,
+            },
+            now,
+        );
+        let iteration = IterationContext::for_count(7);
+        let json = serde_json::to_value(CompletionRenderContext::new(&event, &iteration))
+            .expect("serialize");
+        assert_eq!(json["completion"]["condition"]["name"], "budget");
+        assert_eq!(json["completion"]["condition"]["kind"], "iterations");
+        assert_eq!(json["completion"]["completed_at"], now.to_rfc3339());
+        assert_eq!(json["runner"]["elapsed_seconds"], 12);
+        assert!(json.get("signal").is_none());
     }
 }

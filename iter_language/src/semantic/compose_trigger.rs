@@ -84,6 +84,7 @@ impl Analyzer {
                 .into_iter()
                 .filter(|f| f.name.name != "target" && f.name.name != "terminate_on_completion")
                 .collect(),
+            conditions: b.conditions,
             routes: b.routes,
             actions: b.actions,
             prompt_arms: b.prompt_arms,

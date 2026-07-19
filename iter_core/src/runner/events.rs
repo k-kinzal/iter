@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 
+use super::completion::{CompletionEvent, CompletionRequest};
 use super::error::ErrorSource;
 use super::event::{HookEvent, SharedSignal};
 use super::event_emitter::EventDispatcher;
@@ -230,5 +231,20 @@ impl RunnerEmitter {
             observer_error_count: self.observer_error_count,
         };
         self.observe(&lifecycle).await;
+    }
+
+    pub(super) async fn runner_completing(
+        &mut self,
+        request: CompletionRequest,
+        snap: &IterationContext,
+    ) {
+        self.emit(
+            HookEvent::RunnerCompleting {
+                completion: CompletionEvent::completing(request),
+            },
+            None,
+            snap,
+        )
+        .await;
     }
 }

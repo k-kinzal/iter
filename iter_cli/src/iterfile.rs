@@ -19,9 +19,14 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::process::{AdoptError, ProcessError, ProcessId, ProcessRuntime};
+use crate::process::{
+    AdoptError, ProcessError, ProcessId, ProcessRuntime, RunOutcome, write_outcome,
+};
 use iter_core::os_signal::install_signal_handlers;
-use iter_core::{BuilderError, RunnerError};
+use iter_core::{
+    BuilderError, Clock, CompletionEvent, HookEvent, RunnerError, RunnerTerminationReason,
+    SystemClock,
+};
 use iter_language::{Diagnostic, Iterfile, parse};
 use thiserror::Error;
 use tokio_util::sync::CancellationToken;
@@ -168,6 +173,9 @@ pub(crate) enum IterfileError {
     /// flipped to a terminal state.
     #[error("finalize failed to write terminal status: {0}")]
     FinalizeStatus(#[source] ProcessError),
+    /// Publishing the durable semantic outcome failed.
+    #[error("writing process outcome: {0}")]
+    Outcome(#[source] std::io::Error),
     /// `--service NAME` was given but the compose file did not declare
     /// such a service.
     #[error("compose file {} has no service named `{name}`", path.display())]
@@ -209,6 +217,18 @@ pub(crate) async fn handle(input: RunInput) -> Result<(), IterfileError> {
     };
 
     let run_result = run_inner(&input, &mut runtime).await;
+
+    if let Err(err) = &run_result
+        && let Some((rt, _)) = runtime.as_ref()
+    {
+        let outcome = RunOutcome::failed(err.to_string(), SystemClock.now());
+        if let Err(outcome_err) = write_outcome(rt.session().paths().dir(), &outcome) {
+            tracing::warn!(
+                error = %outcome_err,
+                "failed to write failed semantic outcome"
+            );
+        }
+    }
 
     let finalize_err = if let Some((rt, termination)) = runtime {
         let failure_msg = run_result.as_ref().err().map(ToString::to_string);
@@ -270,6 +290,7 @@ async fn run_inner(
             crate::process::install_global_log_sender(sender);
         }
     }
+    let deferred_events = builder.event_dispatcher();
     let runner = builder.build()?;
 
     info!(
@@ -290,15 +311,32 @@ async fn run_inner(
         runner.run(cancel).await
     };
 
-    match runner_result {
-        Ok(()) => {}
+    let exit = match runner_result {
+        Ok(exit) => exit,
         Err(err) => {
             error!(error = %err, "runner exited with error");
             return Err(IterfileError::Runner(err));
         }
-    }
+    };
 
     dispose_active_source(active_source, runtime.as_ref()).await?;
+
+    let completed_at = SystemClock.now();
+    let outcome = RunOutcome::from_exit(&exit, completed_at);
+    if let Some((runtime, _)) = runtime.as_ref() {
+        write_outcome(runtime.session().paths().dir(), &outcome).map_err(IterfileError::Outcome)?;
+    }
+
+    if let RunnerTerminationReason::Completed { request } = &exit.reason {
+        deferred_events
+            .emit(
+                &HookEvent::RunnerCompleted {
+                    completion: CompletionEvent::completed(request.clone(), completed_at),
+                },
+                &exit.iteration,
+            )
+            .await;
+    }
     Ok(())
 }
 

@@ -34,7 +34,7 @@ fn ident_name() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,7}".prop_filter("not a reserved word in ident position", |s| {
         !matches!(
             s.as_str(),
-            "true" | "false" | "null" | "on" | "shell" | "when" | "metadata"
+            "true" | "false" | "null" | "on" | "shell" | "condition" | "when" | "metadata"
         )
     })
 }
@@ -112,6 +112,7 @@ fn value_strategy() -> impl Strategy<Value = CstValue> {
                         .collect();
                     CstValue::Block(CstBlock {
                         fields,
+                        conditions: Vec::new(),
                         routes: Vec::new(),
                         actions: Vec::new(),
                         prompt_arms: Vec::new(),
@@ -156,6 +157,7 @@ fn route_strategy() -> impl Strategy<Value = CstRoute> {
             when,
             body: CstBlock {
                 fields,
+                conditions: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
                 prompt_arms: Vec::new(),
@@ -174,6 +176,7 @@ fn block_strategy() -> impl Strategy<Value = CstBlock> {
     )
         .prop_map(|(fields, routes, actions)| CstBlock {
             fields,
+            conditions: Vec::new(),
             routes,
             actions,
             prompt_arms: Vec::new(),

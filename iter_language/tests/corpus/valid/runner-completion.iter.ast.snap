@@ -1,0 +1,112 @@
+---
+source: iter_language/tests/conformance.rs
+description: runner-completion.iter
+---
+Iterfile {
+    args: [],
+    queues: [],
+    workspaces: [
+        Spanned {
+            node: NamedDef {
+                name: "local",
+                decl: Local {
+                    base: ".",
+                    source: None,
+                },
+            },
+            span: 0..32,
+        },
+    ],
+    sources: [],
+    agents: [
+        Spanned {
+            node: NamedDef {
+                name: "noop",
+                decl: Noop,
+            },
+            span: 34..48,
+        },
+    ],
+    prompts: [],
+    runners: [
+        Spanned {
+            node: RunnerDef {
+                name: None,
+                agent: "noop",
+                workspace: "local",
+                queue: None,
+                continue_on_error: false,
+                behavior: Synthesize {
+                    delay_secs: None,
+                },
+                iteration_timeout_secs: None,
+                completion: Some(
+                    CompletionDef {
+                        conditions: [
+                            Spanned {
+                                node: Iterations {
+                                    name: "iteration_budget",
+                                    max: 50,
+                                },
+                                span: 182..245,
+                            },
+                            Spanned {
+                                node: Shell {
+                                    name: "goal_reached",
+                                    run: "./scripts/exploration-complete.sh",
+                                    timeout_secs: 30,
+                                    on_error: Abort,
+                                },
+                                span: 250..380,
+                            },
+                            Spanned {
+                                node: Elapsed {
+                                    name: "time_budget",
+                                    duration_secs: 5400,
+                                },
+                                span: 385..446,
+                            },
+                            Spanned {
+                                node: Deadline {
+                                    name: "reporting_day",
+                                    at: "2026-08-01T00:00:00+09:00",
+                                },
+                                span: 451..533,
+                            },
+                        ],
+                    },
+                ),
+                prompt: Single(
+                    Inline(
+                        "Explore.",
+                    ),
+                ),
+                events: [
+                    Spanned {
+                        node: EventHandlerDef {
+                            event: RunnerCompleting,
+                            actions: [
+                                Shell(
+                                    "echo {{completion.condition.name}}",
+                                ),
+                            ],
+                        },
+                        span: 541..614,
+                    },
+                    Spanned {
+                        node: EventHandlerDef {
+                            event: RunnerCompleted,
+                            actions: [
+                                Shell(
+                                    "echo {{completion.completed_at}}",
+                                ),
+                            ],
+                        },
+                        span: 617..687,
+                    },
+                ],
+            },
+            span: 50..689,
+        },
+    ],
+}

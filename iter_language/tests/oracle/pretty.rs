@@ -75,13 +75,29 @@ fn pp_section(out: &mut String, s: &CstSection, depth: usize) {
 }
 
 fn pp_block(out: &mut String, b: &CstBlock, depth: usize) {
-    if b.fields.is_empty() && b.routes.is_empty() && b.actions.is_empty() {
+    if b.fields.is_empty()
+        && b.conditions.is_empty()
+        && b.routes.is_empty()
+        && b.actions.is_empty()
+        && b.prompt_arms.is_empty()
+        && b.event_handlers.is_empty()
+    {
         out.push_str("{}");
         return;
     }
     out.push_str("{\n");
     for f in &b.fields {
         pp_field(out, f, depth + 1);
+    }
+    for condition in &b.conditions {
+        indent(out, depth + 1);
+        out.push_str("condition ");
+        out.push_str(&condition.kind.name);
+        out.push_str(" as ");
+        out.push_str(&condition.name.name);
+        out.push(' ');
+        pp_block(out, &condition.body, depth + 1);
+        out.push('\n');
     }
     for r in &b.routes {
         pp_route(out, r, depth + 1);

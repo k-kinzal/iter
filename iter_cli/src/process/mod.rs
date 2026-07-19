@@ -45,6 +45,7 @@ pub(crate) mod lifetime_lock;
 pub(crate) mod log;
 pub(crate) mod metadata;
 pub(crate) mod observer;
+pub(crate) mod outcome;
 pub(crate) mod paths;
 pub(crate) mod pid_file;
 pub(crate) mod posix_signal;
@@ -72,6 +73,7 @@ pub(crate) use metadata::ProcessMetadata;
 pub(crate) use observer::{
     DEFAULT_LIFECYCLE_BUFFER, LIFECYCLE_BUFFER_ENV, LIFECYCLE_TARGET, LifecycleObserver,
 };
+pub(crate) use outcome::{RunOutcome, write_outcome};
 pub(crate) use paths::{DIR_MODE, FILE_MODE, LOCKS_SUBDIR, ProcPaths, proc_root_default};
 pub(crate) use pid_file::{
     CorruptKind, FileTypeName, PidFileState, ProcessIdentity, PublishError, PublishStep,

@@ -65,6 +65,7 @@ Iterfile {
                 continue_on_error: false,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                completion: None,
                 prompt: Single(
                     Inline(
                         "Use {{arg.model}} for this task.",

@@ -2,7 +2,7 @@
 //! agent / trigger / runner) and their shared block parser.
 
 use super::Parser;
-use super::cst::{CstBlock, CstField, CstFile, CstIdent, CstSection, CstValue};
+use super::cst::{CstBlock, CstCondition, CstField, CstFile, CstIdent, CstSection, CstValue};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
@@ -184,6 +184,7 @@ impl Parser<'_> {
                     value: CstValue::String(value, value_span),
                     span: field_span,
                 }],
+                conditions: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
                 prompt_arms: Vec::new(),
@@ -215,6 +216,7 @@ impl Parser<'_> {
     fn empty_block(span: std::ops::Range<usize>) -> CstBlock {
         CstBlock {
             fields: Vec::new(),
+            conditions: Vec::new(),
             routes: Vec::new(),
             actions: Vec::new(),
             prompt_arms: Vec::new(),
@@ -225,6 +227,7 @@ impl Parser<'_> {
 
     fn parse_block_body(&mut self, start: usize) -> CstBlock {
         let mut fields = Vec::new();
+        let mut conditions = Vec::new();
         let mut routes = Vec::new();
         let mut actions = Vec::new();
         let mut prompt_arms = Vec::new();
@@ -237,6 +240,7 @@ impl Parser<'_> {
                     self.bump();
                     return CstBlock {
                         fields,
+                        conditions,
                         routes,
                         actions,
                         prompt_arms,
@@ -251,6 +255,7 @@ impl Parser<'_> {
                     ));
                     return CstBlock {
                         fields,
+                        conditions,
                         routes,
                         actions,
                         prompt_arms,
@@ -286,6 +291,13 @@ impl Parser<'_> {
                             }
                         } else if let Some(route) = self.parse_nested_route() {
                             routes.push(route);
+                        } else {
+                            self.recover_inside_block();
+                        }
+                    }
+                    "condition" => {
+                        if let Some(condition) = self.parse_nested_condition() {
+                            conditions.push(condition);
                         } else {
                             self.recover_inside_block();
                         }
@@ -335,5 +347,44 @@ impl Parser<'_> {
                 }
             }
         }
+    }
+
+    /// Parse `condition <kind> as <name> { ... }`.
+    fn parse_nested_condition(&mut self) -> Option<CstCondition> {
+        let start = self.peek_span().start;
+        self.bump(); // `condition`
+        let kind = self.expect_ident()?;
+        if !matches!(self.peek(), Some(Token::Ident(name)) if name == "as") {
+            let span = self.peek_span();
+            let got = self
+                .peek()
+                .map_or_else(|| "end of file".to_string(), Token::describe);
+            self.errors.push(Diagnostic::error(
+                span,
+                format!("expected `as` after completion condition kind, found {got}"),
+            ));
+            return None;
+        }
+        self.bump(); // `as`
+        let name = self.expect_ident()?;
+        if !matches!(self.peek(), Some(Token::LBrace)) {
+            let span = self.peek_span();
+            let got = self
+                .peek()
+                .map_or_else(|| "end of file".to_string(), Token::describe);
+            self.errors.push(Diagnostic::error(
+                span,
+                format!("completion condition requires a body, found {got}"),
+            ));
+            return None;
+        }
+        let body = self.parse_block();
+        let end = body.span.end;
+        Some(CstCondition {
+            kind,
+            name,
+            body,
+            span: start..end,
+        })
     }
 }

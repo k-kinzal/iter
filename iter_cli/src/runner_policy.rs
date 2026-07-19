@@ -1,11 +1,9 @@
 //! `runner_policy_from_def` — translate the Iterfile's `runner` section and the
 //! CLI-supplied `--once` flag into a [`RunnerPolicy`].
 //!
-//! The iter DSL has no termination-condition clause: the Runner's loop is
-//! Signal-driven, so shutdown is authored into the Trigger side (stop
-//! producing signals, or produce a dedicated shutdown signal). The only
-//! termination condition the Runner itself honours is `--once`, which this
-//! function plumbs through from the CLI to the [`RunnerPolicy`].
+//! Repetition/error policy remains separate from the Runner's ordered
+//! first-class completion conditions. This module lowers both surfaces;
+//! `--once` remains a CLI-owned one-iteration completion boundary.
 //!
 //! `continue_on_error` and `behavior` come from the Iterfile's `runner { }`
 //! block. iter ships no project-shaped default for either: whether one bad
@@ -14,8 +12,13 @@
 
 use std::time::Duration;
 
-use iter_core::{RunnerPolicy, SignalAcquisition};
-use iter_language::{RunnerDef, SignalAcquisition as DslSignalAcquisition};
+use iter_core::{
+    CompletionCondition, CompletionConditionErrorPolicy, RunnerPolicy, SignalAcquisition,
+};
+use iter_language::{
+    CompletionConditionDef, CompletionConditionErrorPolicy as DslCompletionErrorPolicy, RunnerDef,
+    SignalAcquisition as DslSignalAcquisition,
+};
 
 /// Build a [`RunnerPolicy`] from a [`RunnerDef`] plus the CLI `--once` flag.
 ///
@@ -42,6 +45,63 @@ pub(crate) fn runner_policy_from_def(runner: &RunnerDef, once: bool) -> RunnerPo
             ))
         }),
     }
+}
+
+/// Lower the runner's ordered completion declaration into runtime conditions.
+#[must_use]
+pub(crate) fn completion_conditions_from_def(runner: &RunnerDef) -> Vec<CompletionCondition> {
+    runner
+        .completion
+        .as_ref()
+        .map(|completion| {
+            completion
+                .conditions
+                .iter()
+                .map(|condition| match &condition.node {
+                    CompletionConditionDef::Iterations { name, max } => {
+                        CompletionCondition::Iterations {
+                            name: name.clone(),
+                            max: *max,
+                        }
+                    }
+                    CompletionConditionDef::Shell {
+                        name,
+                        run,
+                        timeout_secs,
+                        on_error,
+                    } => CompletionCondition::Shell {
+                        name: name.clone(),
+                        command: run.clone(),
+                        timeout: Duration::from_secs(*timeout_secs),
+                        on_error: match on_error {
+                            DslCompletionErrorPolicy::Abort => {
+                                CompletionConditionErrorPolicy::Abort
+                            }
+                            DslCompletionErrorPolicy::Continue => {
+                                CompletionConditionErrorPolicy::Continue
+                            }
+                        },
+                    },
+                    CompletionConditionDef::Elapsed {
+                        name,
+                        duration_secs,
+                    } => CompletionCondition::Elapsed {
+                        name: name.clone(),
+                        duration: Duration::from_secs(*duration_secs),
+                    },
+                    CompletionConditionDef::Deadline { name, at } => {
+                        let at = chrono::DateTime::parse_from_rfc3339(at)
+                            .expect("semantic analyzer validated completion deadline")
+                            .with_timezone(&chrono::Utc);
+                        CompletionCondition::Deadline {
+                            name: name.clone(),
+                            at,
+                        }
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn lower_behavior(behavior: &DslSignalAcquisition) -> SignalAcquisition {
@@ -73,6 +133,7 @@ mod tests {
             continue_on_error,
             behavior,
             iteration_timeout_secs,
+            completion: None,
             prompt: PromptExpr::Single(PromptValue::Inline(String::new())),
             events: Vec::new(),
         }

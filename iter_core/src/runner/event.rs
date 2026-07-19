@@ -7,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::agent::AgentRun;
 use crate::prompt::Prompt;
+use crate::runner::completion::CompletionEvent;
 use crate::runner::policy::RunnerTerminationReason;
 use crate::signal::{Signal, SignalId};
 
@@ -190,6 +191,25 @@ pub enum HookEvent {
         /// Stringified error message.
         error: String,
     },
+    /// A first-class completion predicate could not produce a decision.
+    CompletionConditionFailed {
+        /// Stable condition name.
+        condition_name: String,
+        /// Redacted execution failure.
+        error: String,
+    },
+    /// A completion condition has been latched and the runner is at a safe
+    /// boundary, before operator-owned source finalization.
+    RunnerCompleting {
+        /// Completion request and runner state.
+        completion: CompletionEvent,
+    },
+    /// Operator-owned finalization succeeded and the completed outcome is
+    /// durable. Emitted outside the core loop.
+    RunnerCompleted {
+        /// Durable completion data.
+        completion: CompletionEvent,
+    },
     /// The runner has finished its per-signal loop and is about to return
     /// from [`Runner::run`](crate::runner::Runner::run). Fired exactly once
     /// regardless of termination reason — including `RunnerError` exit
@@ -243,6 +263,10 @@ pub enum EventName {
     WorkspaceTeardownFinished,
     /// `runner_error` — covers all error variants.
     RunnerError,
+    /// `runner_completing`
+    RunnerCompleting,
+    /// `runner_completed`
+    RunnerCompleted,
     /// `runner_finished`
     RunnerFinished,
 }
@@ -259,6 +283,8 @@ impl EventName {
         EventName::WorkspaceTeardownStarting,
         EventName::WorkspaceTeardownFinished,
         EventName::RunnerError,
+        EventName::RunnerCompleting,
+        EventName::RunnerCompleted,
         EventName::RunnerFinished,
     ];
 }
@@ -284,7 +310,10 @@ impl HookEvent {
             | Self::RenderPromptFailed { .. }
             | Self::WorkspaceSetupFailed { .. }
             | Self::AgentRunFailed { .. }
-            | Self::WorkspaceTeardownFailed { .. } => EventName::RunnerError,
+            | Self::WorkspaceTeardownFailed { .. }
+            | Self::CompletionConditionFailed { .. } => EventName::RunnerError,
+            Self::RunnerCompleting { .. } => EventName::RunnerCompleting,
+            Self::RunnerCompleted { .. } => EventName::RunnerCompleted,
             Self::RunnerFinished { .. } => EventName::RunnerFinished,
         }
     }
@@ -306,9 +335,12 @@ impl HookEvent {
             | Self::WorkspaceSetupFailed { signal_id, .. }
             | Self::AgentRunFailed { signal_id, .. }
             | Self::WorkspaceTeardownFailed { signal_id, .. } => Some(*signal_id),
-            Self::DequeueFailed { .. } | Self::RunnerStarting {} | Self::RunnerFinished { .. } => {
-                None
-            }
+            Self::DequeueFailed { .. }
+            | Self::CompletionConditionFailed { .. }
+            | Self::RunnerStarting {}
+            | Self::RunnerCompleting { .. }
+            | Self::RunnerCompleted { .. }
+            | Self::RunnerFinished { .. } => None,
         }
     }
 
@@ -338,7 +370,10 @@ impl HookEvent {
             | Self::AgentRunFailed { .. }
             | Self::WorkspaceTeardownFailed { .. }
             | Self::DequeueFailed { .. }
+            | Self::CompletionConditionFailed { .. }
             | Self::RunnerStarting {}
+            | Self::RunnerCompleting { .. }
+            | Self::RunnerCompleted { .. }
             | Self::RunnerFinished { .. } => None,
         }
     }
@@ -434,6 +469,8 @@ mod tests {
                 | EventName::WorkspaceTeardownStarting
                 | EventName::WorkspaceTeardownFinished
                 | EventName::RunnerError
+                | EventName::RunnerCompleting
+                | EventName::RunnerCompleted
                 | EventName::RunnerFinished => {}
             }
         }
@@ -444,7 +481,7 @@ mod tests {
         );
         assert_eq!(
             EventName::ALL.len(),
-            10,
+            12,
             "EventName variant count changed — update ALL",
         );
     }

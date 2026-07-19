@@ -27,6 +27,8 @@ pub(crate) enum TemplatePosition {
     Prompt,
     /// `on <event> { shell "..." }` action commands.
     ShellAction,
+    /// Shell actions on runner completion lifecycle events.
+    CompletionShellAction,
     /// A webhook subscription's `when` guard and per-subscription metadata.
     WebhookSubscription,
     /// A trigger's base `metadata { ... }` (stamped before any event, so no
@@ -45,6 +47,7 @@ impl TemplatePosition {
             TemplatePosition::Prompt
             | TemplatePosition::ShellAction
             | TemplatePosition::TriggerBaseMetadata => &["signal", "metadata", "iteration"],
+            TemplatePosition::CompletionShellAction => &["completion", "runner", "iteration"],
             TemplatePosition::WebhookSubscription => &["signal", "metadata", "iteration", "event"],
             TemplatePosition::DeadLetterReason => &["error"],
         }
@@ -223,6 +226,18 @@ mod tests {
     fn shell_action_matches_prompt_minus_event() {
         assert!(accepts("{{signal.id}}", TemplatePosition::ShellAction));
         assert!(!accepts("{{event.action}}", TemplatePosition::ShellAction));
+    }
+
+    #[test]
+    fn completion_shell_action_has_completion_runner_and_iteration() {
+        assert!(accepts(
+            "{{completion.condition.name}} {{runner.elapsed_seconds}} {{iteration.count}}",
+            TemplatePosition::CompletionShellAction
+        ));
+        assert!(!accepts(
+            "{{signal.id}}",
+            TemplatePosition::CompletionShellAction
+        ));
     }
 
     #[test]

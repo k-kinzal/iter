@@ -58,7 +58,10 @@ pub use queue::{
     DlqPolicyDef, DlqTargetDef, MetadataSource, QueueDef, RetryPolicyDef, SqsConfig, SqsConsumer,
     SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,
 };
-pub use runner::{RunnerDef, SignalAcquisition};
+pub use runner::{
+    CompletionConditionDef, CompletionConditionErrorPolicy, CompletionDef, RunnerDef,
+    SignalAcquisition,
+};
 pub use source::{
     GitFastForward, GitLocator, SourceDef, SourceDerive, SourceDisposition, WorkspaceSourceRef,
 };

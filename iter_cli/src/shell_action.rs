@@ -40,8 +40,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use iter_core::{
-    BoxError, EventAction, HookEvent, IterationContext, IterationRenderContext,
-    RunnerRenderContext, Signal, Template, TemplateError,
+    BoxError, CompletionRenderContext, EventAction, HookEvent, IterationContext,
+    IterationRenderContext, RunnerRenderContext, Signal, Template, TemplateError,
 };
 use tokio::process::Command;
 use tracing::warn;
@@ -102,12 +102,17 @@ impl EventAction for ShellAction {
         iteration: &IterationContext,
     ) -> Result<(), BoxError> {
         let (signal, cwd) = extract_context(event);
-        let render_result = match signal {
-            Some(signal) => {
+        let render_result = match event {
+            HookEvent::RunnerCompleting { completion }
+            | HookEvent::RunnerCompleted { completion } => self
+                .compiled
+                .render(&CompletionRenderContext::new(completion, iteration)),
+            _ if signal.is_some() => {
+                let signal = signal.expect("guarded by is_some");
                 let ctx = IterationRenderContext::new(signal, iteration);
                 self.compiled.render(&ctx)
             }
-            None => self.compiled.render(&RunnerRenderContext::new(iteration)),
+            _ => self.compiled.render(&RunnerRenderContext::new(iteration)),
         };
         let rendered = match render_result {
             Ok(text) => text,
@@ -144,7 +149,10 @@ fn extract_context(event: &HookEvent) -> (Option<&Signal>, Option<PathBuf>) {
         | HookEvent::WorkspaceSetupFailed { .. }
         | HookEvent::AgentRunFailed { .. }
         | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::CompletionConditionFailed { .. }
         | HookEvent::RunnerStarting {}
+        | HookEvent::RunnerCompleting { .. }
+        | HookEvent::RunnerCompleted { .. }
         | HookEvent::RunnerFinished { .. } => (None, None),
     }
 }

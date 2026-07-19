@@ -15,6 +15,10 @@ runner {
   behavior               = <wait | loop [{ delay_secs = <int> }]>
   prompt                 = <string | prompt-name | match-block>
   iteration_timeout_secs = <int | duration>   # optional
+  completion {                              # optional
+    condition <kind> as <name> { ... }
+    ...
+  }
 }
 ```
 
@@ -62,6 +66,76 @@ runner {
 | `behavior` | `enum { wait \| loop { ... } }` | Required | — | What to do when the queue yields no Signal (or when there is no queue at all). No default. |
 | `prompt` | string, identifier, or match block | Required | — | Prompt expression to send to the agent each iteration. |
 | `iteration_timeout_secs` | `integer` or `duration` | Optional | unbounded | Hard upper bound on a single iteration. When the agent (and its descendants) exceed this, iter cancels the iteration, kills the agent process tree, and feeds an `IterationTimeout` error into the normal `continue_on_error` path. Must be positive. |
+| `completion` | block | Optional | no declared completion condition | Ordered OR-set of named completion conditions. |
+
+### `completion`
+
+`completion` gives the Runner a first-class semantic end state without moving
+the project-specific definition of “done” into iter. It may contain one or
+more named conditions:
+
+```hcl
+runner {
+  continue_on_error = true
+  behavior          = loop { delay_secs = 30s }
+  prompt            = "Continue the exploration."
+
+  completion {
+    condition iterations as iteration_budget {
+      max = 50
+    }
+
+    condition shell as goal_reached {
+      run      = "./scripts/exploration-complete.sh"
+      timeout  = 30s
+      on_error = abort
+    }
+
+    condition elapsed as time_budget {
+      duration = 90m
+    }
+
+    condition deadline as reporting_day {
+      at = "2026-08-01T00:00:00+09:00"
+    }
+  }
+}
+```
+
+Conditions form an OR-set. They are evaluated in declaration order at
+iteration boundaries; the first satisfied condition wins. Multiple
+conditions of the same kind are valid, but every condition name must be
+unique within the runner.
+
+| Kind | Fields | Decision |
+| --- | --- | --- |
+| `iterations` | `max` (positive integer) | Satisfied when attempted iteration count is at least `max`. Failed iterations count. |
+| `shell` | `run` (string), `timeout` (positive duration), `on_error = abort \| continue` | Evaluated after iteration boundaries. Exit 0 is satisfied, exit 1 is pending; any other exit, signal, spawn failure, or timeout follows `on_error`. |
+| `elapsed` | `duration` (positive duration) | Satisfied after a monotonic duration measured from Runner start. Queue wait, loop delay, Agent execution, and teardown all count. |
+| `deadline` | `at` (RFC 3339 string with UTC offset) | Satisfied at an absolute instant. A deadline already in the past completes with zero iterations. |
+
+`elapsed` and `deadline` are active timers. They wake a Runner parked on its
+queue or in a loop delay without consuming a Signal. If one expires while an
+iteration is active, iter latches the completion request but does not kill the
+Agent: the iteration and workspace teardown settle first, then the Runner
+completes. Use `iteration_timeout_secs` when a single iteration itself needs a
+hard limit.
+
+The shell command is a predicate, not a lifecycle action. Its 0/1 exit
+protocol affects the Runner decision, while `on ... { shell "..." }` remains
+a best-effort side effect. The command text is deliberately omitted from the
+durable completion outcome because it may contain secrets.
+
+After source disposition succeeds, a recorded iter process publishes
+`~/.iter/proc/<id>/outcome.json` with `kind = "completed"`, the redacted
+condition, iteration count, last Signal id, request time, and completion time.
+This semantic outcome is separate from the operational `status` file:
+successful processes still transition to `stopped`.
+
+This operator-side publication and `runner_completed` dispatch are currently
+wired for `iter run`. Cross-service Compose completion/barrier semantics are
+deliberately deferred; the Runner-level condition decision itself remains
+independent of Compose.
 
 ### `continue_on_error`
 

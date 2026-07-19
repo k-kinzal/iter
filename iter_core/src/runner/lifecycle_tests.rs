@@ -548,6 +548,8 @@ async fn synthesized_signal_uses_injected_clock_and_id_source() {
         .find_map(|event| match event {
             HookEvent::SignalReceived { signal } => Some(signal.clone()),
             HookEvent::RunnerStarting { .. }
+            | HookEvent::RunnerCompleting { .. }
+            | HookEvent::RunnerCompleted { .. }
             | HookEvent::RunnerFinished { .. }
             | HookEvent::WorkspaceSetupStarting { .. }
             | HookEvent::WorkspaceSetupFinished { .. }
@@ -559,7 +561,8 @@ async fn synthesized_signal_uses_injected_clock_and_id_source() {
             | HookEvent::RenderPromptFailed { .. }
             | HookEvent::WorkspaceSetupFailed { .. }
             | HookEvent::AgentRunFailed { .. }
-            | HookEvent::WorkspaceTeardownFailed { .. } => None,
+            | HookEvent::WorkspaceTeardownFailed { .. }
+            | HookEvent::CompletionConditionFailed { .. } => None,
         })
         .expect("signal received");
 
@@ -732,6 +735,7 @@ async fn error_path_emits_runner_starting_and_finished_exactly_once() {
         other @ (RunnerTerminationReason::Cancelled
         | RunnerTerminationReason::Once
         | RunnerTerminationReason::QueueDrained
+        | RunnerTerminationReason::Completed { .. }
         | RunnerTerminationReason::TerminateSignalReceived) => {
             panic!("expected Error reason, got {other:?}")
         }
@@ -1002,6 +1006,8 @@ async fn iteration_timeout_kills_long_running_agent() {
     let saw_timeout = events.iter().any(|e| match e {
         HookEvent::AgentRunFailed { error, .. } => error.contains("iteration"),
         HookEvent::RunnerStarting { .. }
+        | HookEvent::RunnerCompleting { .. }
+        | HookEvent::RunnerCompleted { .. }
         | HookEvent::SignalReceived { .. }
         | HookEvent::WorkspaceSetupStarting { .. }
         | HookEvent::WorkspaceSetupFinished { .. }
@@ -1013,6 +1019,7 @@ async fn iteration_timeout_kills_long_running_agent() {
         | HookEvent::RenderPromptFailed { .. }
         | HookEvent::WorkspaceSetupFailed { .. }
         | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::CompletionConditionFailed { .. }
         | HookEvent::RunnerFinished { .. } => false,
     });
     assert!(
@@ -1555,6 +1562,7 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
                 other @ (RunnerTerminationReason::Cancelled
                 | RunnerTerminationReason::Once
                 | RunnerTerminationReason::QueueDrained
+                | RunnerTerminationReason::Completed { .. }
                 | RunnerTerminationReason::TerminateSignalReceived) => {
                     panic!("expected Error reason, got {other:?}")
                 }
@@ -1565,6 +1573,8 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
             );
         }
         HookEvent::RunnerStarting { .. }
+        | HookEvent::RunnerCompleting { .. }
+        | HookEvent::RunnerCompleted { .. }
         | HookEvent::SignalReceived { .. }
         | HookEvent::WorkspaceSetupStarting { .. }
         | HookEvent::WorkspaceSetupFinished { .. }
@@ -1576,7 +1586,8 @@ async fn dequeue_failure_without_continue_on_error_exits_with_error() {
         | HookEvent::RenderPromptFailed { .. }
         | HookEvent::WorkspaceSetupFailed { .. }
         | HookEvent::AgentRunFailed { .. }
-        | HookEvent::WorkspaceTeardownFailed { .. } => panic!("expected RunnerFinished event"),
+        | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::CompletionConditionFailed { .. } => panic!("expected RunnerFinished event"),
     }
 }
 
@@ -1723,6 +1734,8 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
     let teardown_path = events.iter().find_map(|e| match e {
         HookEvent::WorkspaceTeardownFinished { path, .. } => Some(path.clone()),
         HookEvent::RunnerStarting { .. }
+        | HookEvent::RunnerCompleting { .. }
+        | HookEvent::RunnerCompleted { .. }
         | HookEvent::SignalReceived { .. }
         | HookEvent::WorkspaceSetupStarting { .. }
         | HookEvent::WorkspaceSetupFinished { .. }
@@ -1734,11 +1747,344 @@ async fn transient_workspace_teardown_event_carries_persistent_path() {
         | HookEvent::WorkspaceSetupFailed { .. }
         | HookEvent::AgentRunFailed { .. }
         | HookEvent::WorkspaceTeardownFailed { .. }
+        | HookEvent::CompletionConditionFailed { .. }
         | HookEvent::RunnerFinished { .. } => None,
     });
     assert_eq!(
         teardown_path.as_deref(),
         Some(expected.as_path()),
         "post-teardown event must carry the persistent path, not the transient working directory",
+    );
+}
+
+#[tokio::test]
+async fn iterations_condition_returns_typed_completion_and_emits_completing_once() {
+    let handler = CapturingHandler::default();
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Iterations {
+            name: "budget".into(),
+            max: 2,
+        }])
+        .on_all(handler.clone())
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    let request = exit.completion_request().expect("condition completion");
+    assert_eq!(request.condition.name, "budget");
+    assert_eq!(request.condition.kind, CompletionConditionKind::Iterations);
+    assert_eq!(request.condition.max, Some(2));
+    assert_eq!(request.iteration_count, 2);
+    assert_eq!(exit.iteration_count, 2);
+
+    let events = handler.events.lock().unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, HookEvent::RunnerCompleting { .. }))
+            .count(),
+        1
+    );
+    let completing = events
+        .iter()
+        .position(|event| matches!(event, HookEvent::RunnerCompleting { .. }))
+        .expect("runner_completing");
+    let finished = events
+        .iter()
+        .position(|event| matches!(event, HookEvent::RunnerFinished { .. }))
+        .expect("runner_finished");
+    assert!(completing < finished);
+}
+
+#[tokio::test]
+async fn past_deadline_completes_without_consuming_a_signal() {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-07-19T12:00:00Z")
+        .expect("valid timestamp")
+        .with_timezone(&chrono::Utc);
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Deadline {
+            name: "already_due".into(),
+            at: now - chrono::Duration::seconds(1),
+        }])
+        .clock(Arc::new(FixedClock::new(now)))
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    assert_eq!(exit.iteration_count, 0);
+    let request = exit.completion_request().expect("deadline completion");
+    assert_eq!(request.condition.kind, CompletionConditionKind::Deadline);
+    assert!(request.last_signal_id.is_none());
+}
+
+#[tokio::test]
+async fn elapsed_condition_latches_during_agent_run_and_waits_for_teardown() {
+    let started = tokio::time::Instant::now();
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(sleepy_agent(Duration::from_secs(1)))
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Elapsed {
+            name: "short_budget".into(),
+            duration: Duration::from_millis(50),
+        }])
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    assert_eq!(exit.iteration_count, 1);
+    assert_eq!(
+        exit.completion_request().expect("elapsed").condition.kind,
+        CompletionConditionKind::Elapsed
+    );
+    assert!(
+        started.elapsed() >= Duration::from_millis(800),
+        "elapsed completion must not drop/cancel the active iteration"
+    );
+}
+
+#[tokio::test]
+async fn declaration_order_precedes_a_timer_latched_during_an_iteration() {
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(sleepy_agent(Duration::from_secs(1)))
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![
+            CompletionCondition::Iterations {
+                name: "iteration_budget".into(),
+                max: 1,
+            },
+            CompletionCondition::Elapsed {
+                name: "time_budget".into(),
+                duration: Duration::from_millis(50),
+            },
+        ])
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    assert_eq!(
+        exit.completion_request()
+            .expect("ordered completion")
+            .condition
+            .name,
+        "iteration_budget"
+    );
+}
+
+#[tokio::test]
+async fn shell_condition_exit_zero_completes_at_iteration_boundary() {
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Shell {
+            name: "goal".into(),
+            command: "exit 0".into(),
+            timeout: Duration::from_secs(1),
+            on_error: CompletionConditionErrorPolicy::Abort,
+        }])
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    assert_eq!(exit.iteration_count, 1);
+    let request = exit.completion_request().expect("shell completion");
+    assert_eq!(request.condition.kind, CompletionConditionKind::Shell);
+    assert_eq!(request.condition.name, "goal");
+}
+
+#[tokio::test]
+async fn shell_condition_exit_one_remains_pending() {
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![
+            CompletionCondition::Shell {
+                name: "not_yet".into(),
+                command: "exit 1".into(),
+                timeout: Duration::from_secs(1),
+                on_error: CompletionConditionErrorPolicy::Abort,
+            },
+            CompletionCondition::Iterations {
+                name: "fallback".into(),
+                max: 2,
+            },
+        ])
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    assert_eq!(exit.iteration_count, 2);
+    assert_eq!(
+        exit.completion_request()
+            .expect("completion")
+            .condition
+            .name,
+        "fallback"
+    );
+}
+
+#[tokio::test]
+async fn shell_condition_error_policy_controls_abort() {
+    let aborting = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Shell {
+            name: "broken".into(),
+            command: "exit 2".into(),
+            timeout: Duration::from_secs(1),
+            on_error: CompletionConditionErrorPolicy::Abort,
+        }])
+        .build()
+        .unwrap();
+    let error = aborting
+        .run(CancellationToken::new())
+        .await
+        .expect_err("exit 2 should abort");
+    assert_eq!(error.error_source(), ErrorSource::CompletionCondition);
+
+    let continuing = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![
+            CompletionCondition::Shell {
+                name: "broken".into(),
+                command: "exit 2".into(),
+                timeout: Duration::from_secs(1),
+                on_error: CompletionConditionErrorPolicy::Continue,
+            },
+            CompletionCondition::Iterations {
+                name: "fallback".into(),
+                max: 1,
+            },
+        ])
+        .build()
+        .unwrap();
+    let exit = continuing
+        .run(CancellationToken::new())
+        .await
+        .expect("continue policy");
+    assert_eq!(
+        exit.completion_request()
+            .expect("completion")
+            .condition
+            .name,
+        "fallback"
+    );
+}
+
+#[tokio::test]
+async fn shell_condition_timeout_aborts_without_leaking_the_predicate() {
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize { delay: None },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Shell {
+            name: "slow_predicate".into(),
+            command: "sleep 5".into(),
+            timeout: Duration::from_millis(50),
+            on_error: CompletionConditionErrorPolicy::Abort,
+        }])
+        .build()
+        .unwrap();
+
+    let error = tokio::time::timeout(Duration::from_secs(2), runner.run(CancellationToken::new()))
+        .await
+        .expect("predicate timeout should bound the run")
+        .expect_err("predicate timeout should abort");
+    assert_eq!(error.error_source(), ErrorSource::CompletionCondition);
+}
+
+#[tokio::test]
+async fn elapsed_condition_interrupts_loop_delay_without_extra_iteration() {
+    let started = tokio::time::Instant::now();
+    let runner = Runner::builder()
+        .workspace(make_workspace())
+        .agent(stub_agent())
+        .prompt_template(PromptTemplate::new("hello").unwrap())
+        .config(RunnerPolicy {
+            once: false,
+            continue_on_error: false,
+            behavior: SignalAcquisition::Synthesize {
+                delay: Some(Duration::from_secs(5)),
+            },
+            iteration_timeout: None,
+        })
+        .completion_conditions(vec![CompletionCondition::Elapsed {
+            name: "timer".into(),
+            duration: Duration::from_millis(500),
+        }])
+        .build()
+        .unwrap();
+
+    let exit = runner.run(CancellationToken::new()).await.expect("run");
+    assert_eq!(exit.iteration_count, 1);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "completion timer should wake loop delay"
     );
 }

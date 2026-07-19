@@ -85,6 +85,8 @@ pub struct CstIdent {
 pub struct CstBlock {
     /// Field assignments such as `port = 8080`.
     pub fields: Vec<CstField>,
+    /// Nested `condition <kind> as <name> { ... }` declarations.
+    pub conditions: Vec<CstCondition>,
     /// Nested `on "..." { ... }` routes (used by webhook trigger).
     pub routes: Vec<CstRoute>,
     /// Nested `shell "<cmd>"` actions (used by top-level event handlers).
@@ -95,6 +97,22 @@ pub struct CstBlock {
     /// Nested `on <ident> { ... }` event handlers (used inside runner blocks).
     pub event_handlers: Vec<CstEventHandler>,
     /// Full span of the block including braces.
+    pub span: Span,
+}
+
+/// A named completion condition declaration inside a `completion` block.
+///
+/// The parser records this shape generically; the semantic layer decides
+/// whether the containing block is a runner completion declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CstCondition {
+    /// Condition kind (`iterations`, `shell`, `elapsed`, or `deadline`).
+    pub kind: CstIdent,
+    /// User-facing condition name following `as`.
+    pub name: CstIdent,
+    /// Condition-specific fields.
+    pub body: CstBlock,
+    /// Span covering the complete declaration.
     pub span: Span,
 }
 

@@ -30,9 +30,26 @@ The runner emits events in this order:
 | `workspace_teardown_starting` | Before workspace teardown (apply-back, cleanup). |
 | `workspace_teardown_finished` | After workspace teardown completes. |
 | `runner_error` | A preceding stage failed. Fires instead of any later lifecycle events for that iteration. |
-| `runner_finished` | Once, just before `iter run` returns — regardless of why the runner stopped. |
+| `runner_completing` | A declared completion condition requested exit and the active iteration, if any, has settled. Fires before source disposition. |
+| `runner_finished` | Once when the core Runner loop has ended, regardless of why it stopped. |
+| `runner_completed` | Source disposition succeeded and the semantic completed outcome is durable. Only condition-driven completion emits this event. |
 
-`runner_starting` / `runner_finished` fire **per-runner** (exactly once each); the rest fire **per-iteration**. Use the runner-level pair for one-shot setup or teardown that must not repeat — for example, creating a git worktree on first launch.
+`runner_starting` / `runner_finished` fire **per-runner** (exactly once each).
+`runner_completing` / `runner_completed` each fire at most once and only on
+condition-driven completion; the rest fire per iteration. The condition path
+orders its final events as:
+
+```text
+runner_completing
+runner_finished
+source disposition
+outcome.json publication
+runner_completed
+```
+
+Use `runner_completing` for finalization that must happen before the source is
+disposed. Use `runner_completed` for integration work that must only happen
+after completion is durable.
 
 Misspellings fail at parse time. Some older spellings (`workspace_setting_up`, `workspace_set_up`, `workspace_tearing_down`, `workspace_torndown`) are still accepted as deprecated aliases for the canonical `workspace_setup_starting` / `workspace_setup_finished` / `workspace_teardown_starting` / `workspace_teardown_finished`. Using them produces a deprecation warning; new Iterfiles should use the canonical names.
 
@@ -50,9 +67,11 @@ Runs the command string through the user's shell (`/bin/sh -c <command>` on POSI
 
 | Root | Example | Notes |
 | --- | --- | --- |
-| `signal.*` | `{{signal.id}}` | Properties of the Signal being processed. Not available in `runner_starting` / `runner_finished` (no signal in scope). |
+| `signal.*` | `{{signal.id}}` | Properties of the Signal being processed. Not available in runner-level completion events; a time condition can fire while idle. |
 | `metadata.*` | `{{metadata.task}}` | User-attached key/value pairs on the Signal. Same scope as `signal.*`. |
 | `iteration.*` | `{{iteration.count}}` | Runner iteration state — available in **every** event including `runner_starting` (initial state, `count == 0`, `previous_result == "none"`) and `runner_finished` (terminal state). See [`iterfile/prompt.md`](prompt.md#iterationfield-reference) for the field set. |
+| `completion.*` | `{{completion.condition.name}}` | Only in `runner_completing` / `runner_completed`. Includes `condition.name`, `condition.kind`, condition-specific redacted fields, `requested_at`, and (only after durability) `completed_at`. |
+| `runner.*` | `{{runner.elapsed_seconds}}` | Only in completion events. Includes `started_at`, monotonic `elapsed_seconds`, and `last_signal_id`. |
 | `workspace.*` | `{{workspace.path}}` | Workspace paths (available from `workspace_setup_finished` onwards). |
 | `agent.*` | `{{agent.exit_code}}` | Agent result info (available from `agent_finished` onwards). |
 | `error.*` | `{{error.message}}` | Only defined inside `on runner_error`. |
@@ -76,6 +95,24 @@ event: `0` at `runner_starting` (no turns yet), `N` at
 the count of the turn that errored. Per-iteration events
 (`signal_received` through `workspace_teardown_finished`) see the same
 1-indexed value the prompt template sees for that turn.
+
+Completion hooks intentionally have no current `signal.*` root. Use
+`{{runner.last_signal_id}}` when a last attempted Signal is useful, and allow
+for it to be absent when a deadline or elapsed budget completes before the
+first iteration.
+
+```hcl
+runner {
+  # ...
+  on runner_completing {
+    shell "scripts/finalize-exploration.sh {{completion.condition.name}}"
+  }
+
+  on runner_completed {
+    shell "scripts/publish-evaluation-signal.sh {{completion.condition.kind}}"
+  }
+}
+```
 
 ### Multiple actions
 

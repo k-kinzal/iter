@@ -23,6 +23,8 @@ fn to_core_event_name(name: iter_language::EventName) -> EventName {
         iter_language::EventName::WorkspaceTeardownStarting => EventName::WorkspaceTeardownStarting,
         iter_language::EventName::WorkspaceTeardownFinished => EventName::WorkspaceTeardownFinished,
         iter_language::EventName::RunnerError => EventName::RunnerError,
+        iter_language::EventName::RunnerCompleting => EventName::RunnerCompleting,
+        iter_language::EventName::RunnerCompleted => EventName::RunnerCompleted,
         iter_language::EventName::RunnerFinished => EventName::RunnerFinished,
     }
 }
@@ -119,6 +121,8 @@ mod tests {
                 EventName::WorkspaceTeardownFinished,
             ),
             (Lang::RunnerError, EventName::RunnerError),
+            (Lang::RunnerCompleting, EventName::RunnerCompleting),
+            (Lang::RunnerCompleted, EventName::RunnerCompleted),
             (Lang::RunnerFinished, EventName::RunnerFinished),
         ];
         for (lang, expected) in cases {

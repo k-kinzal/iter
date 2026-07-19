@@ -10,6 +10,7 @@ description = "Parser, AST, and semantic analyzer for the iter workflow definiti
 
 [dependencies]
 ariadne.workspace = true
+chrono.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]

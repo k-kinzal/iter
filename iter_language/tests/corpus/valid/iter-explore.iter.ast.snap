@@ -66,6 +66,7 @@ Iterfile {
                     delay_secs: None,
                 },
                 iteration_timeout_secs: None,
+                completion: None,
                 prompt: Single(
                     Inline(
                         "Continue improving iter. When you believe the iteration is complete, write \"ITER_DONE\".",

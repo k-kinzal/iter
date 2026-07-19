@@ -38,7 +38,15 @@ impl Analyzer {
             self.errors.push(diag);
             return None;
         };
-        let actions = self.lower_actions(body);
+        let position = if matches!(
+            event_name,
+            EventName::RunnerCompleting | EventName::RunnerCompleted
+        ) {
+            TemplatePosition::CompletionShellAction
+        } else {
+            TemplatePosition::ShellAction
+        };
+        let actions = self.lower_actions(body, position);
         if !body.fields.is_empty() {
             for f in &body.fields {
                 self.errors.push(Diagnostic::error(
@@ -57,6 +65,12 @@ impl Analyzer {
                     "nested `on \"...\"` routes are only valid inside `trigger webhook`",
                 ));
             }
+        }
+        for condition in &body.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions are not valid inside an event handler block",
+            ));
         }
         for arm in &body.prompt_arms {
             self.errors.push(Diagnostic::error(
@@ -79,11 +93,15 @@ impl Analyzer {
         ))
     }
 
-    pub(super) fn lower_actions(&mut self, block: &CstBlock) -> Vec<Action> {
+    pub(super) fn lower_actions(
+        &mut self,
+        block: &CstBlock,
+        position: TemplatePosition,
+    ) -> Vec<Action> {
         let mut out = Vec::new();
         for raw in &block.actions {
             let CstAction { command, .. } = raw;
-            self.validate_template(command, &raw.span, TemplatePosition::ShellAction);
+            self.validate_template(command, &raw.span, position);
             out.push(Action::Shell(command.clone()));
         }
         out

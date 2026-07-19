@@ -87,6 +87,57 @@ runner {
 }
 
 #[test]
+fn completion_hooks_accept_completion_and_runner_roots() {
+    let src = r#"
+workspace local { base = "." }
+agent claude { mode = print command = "claude" }
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "ok"
+  completion {
+    condition iterations as budget { max = 1 }
+  }
+  on runner_completing {
+    shell "echo {{completion.condition.name}} {{runner.elapsed_seconds}} {{iteration.count}}"
+  }
+  on runner_completed {
+    shell "echo {{completion.completed_at}}"
+  }
+}
+"#;
+    assert!(
+        parse(src).is_ok(),
+        "completion hooks accept their completion-specific roots"
+    );
+}
+
+#[test]
+fn completion_hooks_reject_current_signal_root() {
+    let src = r#"
+workspace local { base = "." }
+agent claude { mode = print command = "claude" }
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "ok"
+  completion {
+    condition elapsed as budget { duration = 1m }
+  }
+  on runner_completed { shell "echo {{signal.id}}" }
+}
+"#;
+    assert!(
+        parse(src).is_err(),
+        "completion can happen idle and has no current signal root"
+    );
+}
+
+#[test]
 fn undeclared_arg_reference_is_an_error() {
     let src = iterfile("", "{{arg.missing}}");
     assert!(

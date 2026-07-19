@@ -16,6 +16,7 @@
 //! each of those belongs to the party that owns it.
 
 pub mod builder;
+pub mod completion;
 /// Error types for [`Runner::run`].
 pub mod error;
 pub mod event;
@@ -41,6 +42,10 @@ use crate::time::{Clock, IdSource};
 use crate::workspace::{ActiveWorkspace, Workspace};
 
 pub use builder::{BuilderError, RunnerBuilder};
+pub use completion::{
+    CompletionCondition, CompletionConditionErrorPolicy, CompletionConditionInfo,
+    CompletionConditionKind, CompletionEvent, CompletionRequest, RunnerExit,
+};
 pub use error::{ErrorSource, RunnerError};
 pub use event::{EventName, HookEvent, SharedSignal};
 pub use event_emitter::EventDispatcher;
@@ -50,6 +55,7 @@ pub use lifecycle::{RedactedMetadata, RunnerLifecycleEvent};
 pub use observer::{DynRunnerObserver, ObserveFuture, RunnerObserver};
 pub use policy::{RunnerPolicy, RunnerTerminationReason, SignalAcquisition};
 
+use completion::CompletionTracker;
 use events::RunnerEmitter;
 
 /// Drives a queue of signals through a workspace and agent.
@@ -71,6 +77,7 @@ pub struct Runner {
     pub(crate) prompt_selector: PromptSelector,
     pub(crate) events: EventDispatcher,
     pub(crate) config: RunnerPolicy,
+    pub(crate) completion_conditions: Vec<CompletionCondition>,
     /// System-contract observer fan-out.
     ///
     /// Each registered observer receives the
@@ -99,6 +106,7 @@ impl Runner {
     /// * the supplied [`CancellationToken`] is fired,
     /// * the queue is drained (`dequeue` returns `Ok(None)`) — only when
     ///   the runner has a queue and `behavior = wait`,
+    /// * a configured completion condition requests a safe exit,
     /// * `once` is set in [`RunnerPolicy`] and one signal was processed, or
     /// * a processing error occurs and `continue_on_error` is `false`.
     ///
@@ -107,7 +115,7 @@ impl Runner {
     /// applying the configured `delay` between successive synthesised
     /// iterations. The first iteration runs without delay so a one-shot
     /// `behavior = loop` invocation starts immediately.
-    pub async fn run(self, cancel: CancellationToken) -> Result<(), RunnerError> {
+    pub async fn run(self, cancel: CancellationToken) -> Result<RunnerExit, RunnerError> {
         let Runner {
             queue,
             mut workspace,
@@ -115,6 +123,7 @@ impl Runner {
             prompt_selector,
             events: emitter,
             config,
+            completion_conditions,
             observers,
             clock,
             id_source,
@@ -124,6 +133,11 @@ impl Runner {
         let mut iter_state = IterationState::new(runner_started_at);
         let mut iteration_count: u32 = 0;
         let mut last_signal_id: Option<SignalId> = None;
+        let completion = CompletionTracker::new(
+            completion_conditions,
+            runner_started_at,
+            clock.monotonic_now(),
+        );
 
         events.bootstrap(runner_started_at).await;
         let bootstrap_snapshot = iter_state.snapshot(0);
@@ -135,6 +149,7 @@ impl Runner {
             &agent,
             &prompt_selector,
             &config,
+            &completion,
             &cancel,
             clock.as_ref(),
             id_source.as_ref(),
@@ -153,6 +168,11 @@ impl Runner {
             },
         };
         let runner_finished_snapshot = iter_state.snapshot(iteration_count);
+        if let RunnerTerminationReason::Completed { request } = &final_reason {
+            events
+                .runner_completing(request.clone(), &runner_finished_snapshot)
+                .await;
+        }
         events
             .runner_finished(
                 final_reason,
@@ -162,7 +182,12 @@ impl Runner {
             )
             .await;
 
-        loop_result.map(|_| ())
+        loop_result.map(|reason| RunnerExit {
+            reason,
+            iteration_count,
+            last_signal_id,
+            iteration: runner_finished_snapshot,
+        })
     }
 }
 
@@ -774,6 +799,7 @@ async fn run_loop(
     agent: &Agent,
     prompt_selector: &PromptSelector,
     config: &RunnerPolicy,
+    completion: &CompletionTracker,
     cancel: &CancellationToken,
     clock: &dyn Clock,
     id_source: &dyn IdSource,
@@ -786,22 +812,49 @@ async fn run_loop(
         if cancel.is_cancelled() {
             return Ok(RunnerTerminationReason::Cancelled);
         }
+        if let Some(request) = completion.due_time_request(
+            *iteration_count,
+            *last_signal_id,
+            clock.now(),
+            clock.monotonic_now(),
+        ) {
+            return Ok(RunnerTerminationReason::Completed { request });
+        }
 
         // Pre-iteration snapshot (count = iteration_count + 1) so a
         // dequeue-failure `runner_error` hook still sees the iteration
         // number that *would* have run.
         let snap = iter_state.snapshot(*iteration_count + 1);
 
-        match next_signal(
+        let next = next_signal(
             queue,
             &config.behavior,
             cancel,
             *iteration_count,
             clock,
             id_source,
-        )
-        .await
-        {
+        );
+        tokio::pin!(next);
+        let next = if let Some((condition_index, deadline)) = completion.next_time_condition() {
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(deadline) => {
+                    let request = completion.time_request(
+                        condition_index,
+                        *iteration_count,
+                        *last_signal_id,
+                        clock.now(),
+                        clock.monotonic_now(),
+                    );
+                    return Ok(RunnerTerminationReason::Completed { request });
+                }
+                next = &mut next => next,
+            }
+        } else {
+            next.await
+        };
+
+        match next {
             NextSignal::Drained => {
                 return Ok(RunnerTerminationReason::QueueDrained);
             }
@@ -858,30 +911,54 @@ async fn run_loop(
                     signal_id.to_string(),
                     signal.kind().to_string(),
                 );
-                match iter_tracing::iteration_scope(
-                    iteration_attrs,
-                    run_iteration(
-                        workspace,
-                        agent,
-                        prompt_selector,
-                        config,
-                        cancel,
-                        clock,
-                        events,
-                        iter_state,
-                        *iteration_count,
-                        signal,
-                    )
-                    .instrument(span.clone()),
-                )
-                .await
-                {
+                let (iteration_result, latched_completion) = {
+                    let iteration = iter_tracing::iteration_scope(
+                        iteration_attrs,
+                        run_iteration(
+                            workspace,
+                            agent,
+                            prompt_selector,
+                            config,
+                            cancel,
+                            clock,
+                            events,
+                            iter_state,
+                            *iteration_count,
+                            signal,
+                        )
+                        .instrument(span.clone()),
+                    );
+                    tokio::pin!(iteration);
+                    let mut latched_completion = None;
+                    let result = if let Some((condition_index, deadline)) =
+                        completion.next_time_condition()
+                    {
+                        tokio::select! {
+                            biased;
+                            result = &mut iteration => result,
+                            () = tokio::time::sleep_until(deadline) => {
+                                latched_completion = Some(completion.time_request(
+                                    condition_index,
+                                    *iteration_count,
+                                    *last_signal_id,
+                                    clock.now(),
+                                    clock.monotonic_now(),
+                                ));
+                                iteration.as_mut().await
+                            }
+                        }
+                    } else {
+                        iteration.as_mut().await
+                    };
+                    (result, latched_completion)
+                };
+
+                let mut once_after_iteration = false;
+                match iteration_result {
                     Ok(()) => {
                         span.record("iter.runner.result", "success");
                         *iteration_count += 1;
-                        if config.once {
-                            return Ok(RunnerTerminationReason::Once);
-                        }
+                        once_after_iteration = config.once;
                     }
                     Err(failure) => {
                         span.record("iter.runner.result", "failure");
@@ -895,13 +972,71 @@ async fn run_loop(
                         match decide_after_processing_failure(config) {
                             FailureDecision::Retry => {}
                             FailureDecision::Once => {
-                                return Ok(RunnerTerminationReason::Once);
+                                once_after_iteration = true;
                             }
                             FailureDecision::Bubble => {
                                 return Err(failure.into_error());
                             }
                         }
                     }
+                }
+
+                let latched_completion = latched_completion.map(|mut request| {
+                    request.iteration_count = *iteration_count;
+                    request.last_signal_id = *last_signal_id;
+                    request
+                });
+                let boundary = match completion
+                    .evaluate_boundary(
+                        *iteration_count,
+                        *last_signal_id,
+                        clock.now(),
+                        clock.monotonic_now(),
+                    )
+                    .await
+                {
+                    Ok(boundary) => boundary,
+                    Err(source) => {
+                        let message = source.to_string();
+                        let failure_event = HookEvent::CompletionConditionFailed {
+                            condition_name: source.condition_name().to_owned(),
+                            error: source.message().to_owned(),
+                        };
+                        let final_snapshot = iter_state.snapshot(*iteration_count);
+                        events
+                            .runner_error(
+                                ErrorSource::CompletionCondition,
+                                *last_signal_id,
+                                &message,
+                                failure_event,
+                                &final_snapshot,
+                            )
+                            .await;
+                        return Err(RunnerError {
+                            error_source: ErrorSource::CompletionCondition,
+                            message,
+                            source: Box::new(source),
+                        });
+                    }
+                };
+                if let Some(request) = boundary {
+                    if let Some(latched) = latched_completion
+                        && latched.condition == request.condition
+                    {
+                        // Boundary evaluation preserves declaration-order
+                        // precedence. Reuse the timer's original request
+                        // timestamp when it is the winning condition.
+                        return Ok(RunnerTerminationReason::Completed { request: latched });
+                    }
+                    return Ok(RunnerTerminationReason::Completed { request });
+                }
+                if let Some(request) = latched_completion {
+                    // Defensive fallback: the latched time condition should
+                    // also be due during boundary evaluation.
+                    return Ok(RunnerTerminationReason::Completed { request });
+                }
+                if once_after_iteration {
+                    return Ok(RunnerTerminationReason::Once);
                 }
             }
         }

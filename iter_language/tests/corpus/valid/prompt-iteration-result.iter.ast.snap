@@ -64,6 +64,7 @@ Iterfile {
                 continue_on_error: true,
                 behavior: Wait,
                 iteration_timeout_secs: None,
+                completion: None,
                 prompt: Match {
                     arms: [
                         PromptArm {

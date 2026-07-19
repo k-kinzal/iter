@@ -31,6 +31,8 @@ pub enum ErrorSource {
     AgentRun,
     /// Tearing down the Workspace.
     WorkspaceTeardown,
+    /// Evaluating a first-class completion condition.
+    CompletionCondition,
 }
 
 impl ErrorSource {
@@ -48,6 +50,7 @@ impl ErrorSource {
             Self::WorkspaceSetup => "workspace_setup",
             Self::AgentRun => "agent_run",
             Self::WorkspaceTeardown => "workspace_teardown",
+            Self::CompletionCondition => "completion_condition",
         }
     }
 
@@ -59,6 +62,7 @@ impl ErrorSource {
             Self::WorkspaceSetup => "workspace setup",
             Self::AgentRun => "agent run",
             Self::WorkspaceTeardown => "workspace teardown",
+            Self::CompletionCondition => "completion condition",
         }
     }
 }

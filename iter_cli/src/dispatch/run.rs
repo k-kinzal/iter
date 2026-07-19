@@ -116,6 +116,7 @@ fn iterfile_error_exit_code(e: &IterfileError) -> i32 {
         | IterfileError::UnknownService { .. } => exit_codes::CONFIG,
         IterfileError::RegistryOpen(_)
         | IterfileError::Adopt { .. }
+        | IterfileError::Outcome(_)
         | IterfileError::FinalizeStatus(_) => exit_codes::INTERNAL,
     }
 }

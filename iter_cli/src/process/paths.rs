@@ -53,6 +53,8 @@ pub(crate) mod names {
     pub(crate) const STARTED_AT: &str = "started_at";
     /// JSON-serialised [`ProcessMetadata`](crate::process::metadata::ProcessMetadata).
     pub(crate) const META: &str = "meta.json";
+    /// Durable semantic run result, separate from operational `status`.
+    pub(crate) const OUTCOME: &str = "outcome.json";
     /// Append-only NDJSON of `{ts, stream, line}` records — the unified
     /// docker-logs-parity stream that captures everything the worker
     /// process emits (agent stdout/stderr, runner tracing, lifecycle

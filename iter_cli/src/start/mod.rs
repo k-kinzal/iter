@@ -21,7 +21,7 @@ use thiserror::Error;
 use crate::agent::{AgentBuildError, agent_from_def};
 use crate::events::register_event_actions_from_events;
 use crate::prompt::{PromptBuildError, prompt_selector_from_defs};
-use crate::runner_policy::runner_policy_from_def;
+use crate::runner_policy::{completion_conditions_from_def, runner_policy_from_def};
 use crate::workspace::workspace_from_def;
 use iter_core::Queue;
 
@@ -78,12 +78,14 @@ pub(crate) fn runner_builder_from_plan(
     let workspace = workspace_from_def(workspace_decl, profile);
     let prompt_selector = prompt_selector_from_defs(prompts)?;
     let runner_config = runner_policy_from_def(runner_decl, once);
+    let completion_conditions = completion_conditions_from_def(runner_decl);
 
     let mut builder = Runner::builder()
         .workspace(workspace)
         .agent(agent)
         .prompt_selector(prompt_selector)
-        .config(runner_config);
+        .config(runner_config)
+        .completion_conditions(completion_conditions);
     if let Some(queue) = queue {
         builder = builder.queue(queue);
     }
@@ -255,6 +257,7 @@ mod tests {
             continue_on_error: false,
             behavior: SignalAcquisition::Synthesize { delay_secs: None },
             iteration_timeout_secs: None,
+            completion: None,
             prompt: PromptExpr::Single(PromptValue::Inline("test prompt".into())),
             events: Vec::new(),
         }
@@ -301,6 +304,7 @@ mod tests {
                 continue_on_error: false,
                 behavior: SignalAcquisition::Wait,
                 iteration_timeout_secs: None,
+                completion: None,
                 prompt: PromptExpr::Single(PromptValue::Inline("test prompt".into())),
                 events: Vec::new(),
             },

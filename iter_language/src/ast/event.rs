@@ -31,6 +31,11 @@ pub enum EventName {
     WorkspaceTeardownFinished,
     /// `runner_error` — fired when any earlier stage fails.
     RunnerError,
+    /// `runner_completing` — a condition requested completion and the
+    /// current iteration has settled.
+    RunnerCompleting,
+    /// `runner_completed` — finalization succeeded and the outcome is durable.
+    RunnerCompleted,
     /// `runner_finished` — fired exactly once just before the runner stops,
     /// regardless of termination reason.
     RunnerFinished,
@@ -50,6 +55,8 @@ impl EventName {
             EventName::WorkspaceTeardownStarting => "workspace_teardown_starting",
             EventName::WorkspaceTeardownFinished => "workspace_teardown_finished",
             EventName::RunnerError => "runner_error",
+            EventName::RunnerCompleting => "runner_completing",
+            EventName::RunnerCompleted => "runner_completed",
             EventName::RunnerFinished => "runner_finished",
         }
     }
@@ -84,6 +91,8 @@ impl EventName {
             "workspace_teardown_starting" => (EventName::WorkspaceTeardownStarting, None),
             "workspace_teardown_finished" => (EventName::WorkspaceTeardownFinished, None),
             "runner_error" => (EventName::RunnerError, None),
+            "runner_completing" => (EventName::RunnerCompleting, None),
+            "runner_completed" => (EventName::RunnerCompleted, None),
             "runner_finished" => (EventName::RunnerFinished, None),
 
             // Deprecated aliases.
@@ -121,6 +130,8 @@ impl EventName {
         "workspace_teardown_starting",
         "workspace_teardown_finished",
         "runner_error",
+        "runner_completing",
+        "runner_completed",
         "runner_finished",
     ];
 }

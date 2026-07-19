@@ -8,8 +8,8 @@
 //! each call site.
 
 use iter_language::{
-    CstAction, CstBlock, CstCmpOp, CstEventHandler, CstField, CstFile, CstGuard, CstIdent,
-    CstPromptMatchArm, CstRoute, CstSection, CstValue, Span,
+    CstAction, CstBlock, CstCmpOp, CstCondition, CstEventHandler, CstField, CstFile, CstGuard,
+    CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue, Span,
 };
 use pest::iterators::Pair;
 
@@ -66,6 +66,7 @@ fn lower_arg_section(pair: Pair<Rule>) -> CstSection {
                 value: CstValue::String(value, value_span),
                 span: field_span,
             }],
+            conditions: Vec::new(),
             routes: Vec::new(),
             actions: Vec::new(),
             prompt_arms: Vec::new(),
@@ -431,6 +432,7 @@ fn lower_block(pair: Pair<Rule>) -> CstBlock {
     assert_eq!(pair.as_rule(), Rule::block);
     let span = pair_span(&pair);
     let mut fields = Vec::new();
+    let mut conditions = Vec::new();
     let mut routes = Vec::new();
     let mut actions = Vec::new();
     let mut prompt_arms = Vec::new();
@@ -449,6 +451,9 @@ fn lower_block(pair: Pair<Rule>) -> CstBlock {
                     Rule::nested_event_handler => {
                         event_handlers.push(lower_nested_event_handler(inner));
                     }
+                    Rule::nested_condition => {
+                        conditions.push(lower_nested_condition(inner));
+                    }
                     Rule::nested_route => routes.push(lower_nested_route(inner)),
                     Rule::action => actions.push(lower_action(inner)),
                     Rule::field => fields.push(lower_field(inner)),
@@ -460,10 +465,33 @@ fn lower_block(pair: Pair<Rule>) -> CstBlock {
     }
     CstBlock {
         fields,
+        conditions,
         routes,
         actions,
         prompt_arms,
         event_handlers,
+        span,
+    }
+}
+
+fn lower_nested_condition(pair: Pair<Rule>) -> CstCondition {
+    assert_eq!(pair.as_rule(), Rule::nested_condition);
+    let span = pair_span(&pair);
+    let mut idents = Vec::new();
+    let mut body = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::kw_condition | Rule::kw_as => {}
+            Rule::ident => idents.push(lower_ident(&child)),
+            Rule::block => body = Some(lower_block(child)),
+            other => panic!("unexpected nested_condition child: {other:?}"),
+        }
+    }
+    let mut idents = idents.into_iter();
+    CstCondition {
+        kind: idents.next().expect("condition kind"),
+        name: idents.next().expect("condition name"),
+        body: body.expect("condition body"),
         span,
     }
 }
