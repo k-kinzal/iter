@@ -91,12 +91,26 @@ pub struct CstBlock {
     pub routes: Vec<CstRoute>,
     /// Nested `shell "<cmd>"` actions (used by top-level event handlers).
     pub actions: Vec<CstAction>,
+    /// Nested `capture <name> { ... }` declarations used by block-form
+    /// shell actions.
+    pub captures: Vec<CstCapture>,
     /// Prompt match arms: `<guard> => <value>` entries (used inside runner
     /// prompt match blocks).
     pub prompt_arms: Vec<CstPromptMatchArm>,
     /// Nested `on <ident> { ... }` event handlers (used inside runner blocks).
     pub event_handlers: Vec<CstEventHandler>,
     /// Full span of the block including braces.
+    pub span: Span,
+}
+
+/// A named stream capture nested inside a block-form shell action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CstCapture {
+    /// Capture name, exposed below `var.<name>`.
+    pub name: CstIdent,
+    /// Capture-specific fields.
+    pub body: CstBlock,
+    /// Span covering the complete declaration.
     pub span: Span,
 }
 
@@ -216,15 +230,29 @@ pub struct CstRoute {
     pub span: Span,
 }
 
-/// A `shell "<command>"` action.
+/// A `shell "<command>"` or `shell { ... }` action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CstAction {
     /// Source span of the `shell` keyword.
     pub keyword_span: Span,
-    /// The literal command string.
-    pub command: String,
+    /// Shorthand or expanded action body.
+    pub body: CstActionBody,
     /// Full span of the action statement.
     pub span: Span,
+}
+
+/// Concrete body forms accepted after the `shell` keyword.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CstActionBody {
+    /// Backward-compatible `shell "<script>"` form.
+    Shorthand {
+        /// Literal shell script.
+        script: String,
+        /// Span of the script literal.
+        script_span: Span,
+    },
+    /// Expanded `shell { script = "..."; capture ... }` form.
+    Block(CstBlock),
 }
 
 /// Boolean guard expression as captured by the parser.

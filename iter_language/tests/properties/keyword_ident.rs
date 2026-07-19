@@ -3,8 +3,8 @@
 //! identifier rather than as a keyword followed by a remainder.
 //!
 //! For example, `truest` must be one identifier, not `true` plus `st`.
-//! Likewise for `false`, `on`, `shell`, `when`, `metadata`, and every
-//! block keyword.
+//! Likewise for `false`, `on`, `shell`, `capture`, `when`, `metadata`, and
+//! every block keyword.
 
 use iter_language::{CstSection, CstValue, parse_to_cst};
 

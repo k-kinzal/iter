@@ -114,7 +114,10 @@ Iterfile {
                             event: WorkspaceTeardownFinished,
                             actions: [
                                 Shell(
-                                    "./scripts/persist-worker-run.sh {{signal.id}}",
+                                    ShellActionDef {
+                                        script: "./scripts/persist-worker-run.sh {{signal.id}}",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },

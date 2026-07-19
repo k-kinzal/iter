@@ -67,15 +67,16 @@ pub use ast::{
     NamedQueue, NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDef,
     PromptExpr, PromptGuard, PromptValue, QueueDef, QueueRef, RetryPolicyDef, RouterFallbackClass,
     RouterFallbackTriggers, RouterStrategy, RunnerDef, SandboxNetworkDef, SandboxPolicyDef,
-    SecretExpr, ServiceSource, SignalAcquisition, SourceDef, SourceDerive, SourceDisposition, Span,
-    Spanned, SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity,
-    SqsProducer, Subscription, TelemetryDef, TelemetryProtocol, TriggerDef, Value, WatchEventKind,
-    WorkspaceDef, WorkspaceSourceRef,
+    SecretExpr, ServiceSource, ShellActionDef, ShellCaptureDef, ShellCaptureFormat,
+    ShellCaptureMode, ShellCaptureParse, ShellCaptureStream, SignalAcquisition, SourceDef,
+    SourceDerive, SourceDisposition, Span, Spanned, SqsConfig, SqsConsumer, SqsCredentialKind,
+    SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer, Subscription, TelemetryDef,
+    TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef, WorkspaceSourceRef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{
-    CstAction, CstBlock, CstCmpOp, CstCondition, CstEventHandler, CstField, CstFile, CstGuard,
-    CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue,
+    CstAction, CstActionBody, CstBlock, CstCapture, CstCmpOp, CstCondition, CstEventHandler,
+    CstField, CstFile, CstGuard, CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue,
 };
 
 /// Semantic version of the grammar implemented by this crate.
@@ -93,7 +94,7 @@ pub use parser::{
 /// component. Adding a new optional field, a new kind that is parsed but not
 /// required, or a new diagnostic message bumps the minor component. Bug
 /// fixes and documentation changes bump the patch component.
-pub const GRAMMAR_VERSION: &str = "4.4.0";
+pub const GRAMMAR_VERSION: &str = "4.5.0";
 
 /// Parse the given source text into a validated [`Iterfile`].
 ///

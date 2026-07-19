@@ -365,11 +365,130 @@ impl EventName {
     ];
 }
 
-/// Action to perform when a top-level event handler fires.
+/// A shell action executed by a Runner or Compose lifecycle hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellActionDef {
+    /// Shell source rendered immediately before execution.
+    pub script: String,
+    /// Ordered stream captures published after the process exits.
+    pub captures: Vec<ShellCaptureDef>,
+}
+
+impl ShellActionDef {
+    /// Build the backward-compatible `shell "<script>"` form.
+    #[must_use]
+    pub fn simple(script: impl Into<String>) -> Self {
+        Self {
+            script: script.into(),
+            captures: Vec::new(),
+        }
+    }
+}
+
+/// One named capture produced by a block-form shell action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellCaptureDef {
+    /// Name exposed below the `var.*` template root.
+    pub name: String,
+    /// Process stream to capture.
+    pub stream: ShellCaptureStream,
+    /// Whether the captured bytes replace or append to the existing value.
+    pub mode: ShellCaptureMode,
+    /// Structured parsing policy applied after the raw stream is updated.
+    pub parse: ShellCaptureParse,
+}
+
+/// Process stream selected by a shell capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellCaptureStream {
+    /// Capture standard output.
+    Stdout,
+    /// Capture standard error.
+    Stderr,
+}
+
+/// Update mode for an existing named capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellCaptureMode {
+    /// Replace the previous raw stream.
+    Replace,
+    /// Append bytes to the previous raw stream, then parse the whole value.
+    Append,
+}
+
+/// Parser selection for one shell capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellCaptureParse {
+    /// Try the conservative built-in sequence, then fall back to text.
+    Auto,
+    /// Try formats in declaration order.
+    Ordered(Vec<ShellCaptureFormat>),
+}
+
+/// Formats supported by shell capture decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellCaptureFormat {
+    /// Raw UTF-8 text.
+    Text,
+    /// Text split into logical lines.
+    Lines,
+    /// One JSON value.
+    Json,
+    /// One JSON value per non-empty line.
+    Ndjson,
+    /// A YAML document.
+    Yaml,
+    /// A TOML document.
+    Toml,
+    /// Comma-separated rows.
+    Csv,
+    /// Tab-separated rows.
+    Tsv,
+}
+
+impl ShellCaptureFormat {
+    /// Parse a source-form format name.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "text" => Some(Self::Text),
+            "lines" => Some(Self::Lines),
+            "json" => Some(Self::Json),
+            "ndjson" => Some(Self::Ndjson),
+            "yaml" => Some(Self::Yaml),
+            "toml" => Some(Self::Toml),
+            "csv" => Some(Self::Csv),
+            "tsv" => Some(Self::Tsv),
+            _ => None,
+        }
+    }
+
+    /// Canonical source spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Lines => "lines",
+            Self::Json => "json",
+            Self::Ndjson => "ndjson",
+            Self::Yaml => "yaml",
+            Self::Toml => "toml",
+            Self::Csv => "csv",
+            Self::Tsv => "tsv",
+        }
+    }
+
+    /// Every accepted source spelling.
+    pub const ALL: &'static [&'static str] = &[
+        "text", "lines", "json", "ndjson", "yaml", "toml", "csv", "tsv",
+    ];
+}
+
+/// Action to perform when a lifecycle event fires.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// `shell "<command>"` action.
-    Shell(String),
+    /// `shell "<script>"` or block-form `shell { ... }` action.
+    Shell(ShellActionDef),
 }
 
 #[cfg(test)]

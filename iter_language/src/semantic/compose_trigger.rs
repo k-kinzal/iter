@@ -87,6 +87,7 @@ impl Analyzer {
             conditions: b.conditions,
             routes: b.routes,
             actions: b.actions,
+            captures: b.captures,
             prompt_arms: b.prompt_arms,
             event_handlers: b.event_handlers,
             span: b.span,

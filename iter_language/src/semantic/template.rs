@@ -46,10 +46,13 @@ impl TemplatePosition {
     /// universal `arg.*` plan-time axis and the bare `today` root.
     fn dotted_roots(self) -> &'static [&'static str] {
         match self {
-            TemplatePosition::Prompt
-            | TemplatePosition::ShellAction
-            | TemplatePosition::TriggerBaseMetadata => &["signal", "metadata", "iteration"],
-            TemplatePosition::CompletionShellAction => &["completion", "runner", "iteration"],
+            TemplatePosition::Prompt | TemplatePosition::ShellAction => {
+                &["signal", "metadata", "iteration", "var"]
+            }
+            TemplatePosition::TriggerBaseMetadata => &["signal", "metadata", "iteration"],
+            TemplatePosition::CompletionShellAction => {
+                &["completion", "runner", "iteration", "var"]
+            }
             TemplatePosition::ComposeShellAction => &[
                 "event", "compose", "service", "trigger", "services", "triggers", "error",
             ],
@@ -188,10 +191,17 @@ impl Analyzer {
             return;
         }
         for seg in &tail {
+            let bracket_index = seg
+                .strip_prefix('[')
+                .and_then(|value| value.strip_suffix(']'))
+                .is_some_and(|value| {
+                    !value.is_empty() && value.chars().all(|c| c.is_ascii_digit())
+                });
             if seg.is_empty()
-                || !seg
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                || (!bracket_index
+                    && !seg
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'))
             {
                 self.errors.push(
                     Diagnostic::error(span, format!("invalid template reference `{inner}`"))
@@ -225,11 +235,19 @@ mod tests {
         assert!(!accepts("{{event.action}}", TemplatePosition::Prompt));
         // `error` is only legal in a dead-letter template.
         assert!(!accepts("{{error.kind}}", TemplatePosition::Prompt));
+        assert!(accepts(
+            "{{var.context.value.foo}} {{var.context.lines.[0]}}",
+            TemplatePosition::Prompt
+        ));
     }
 
     #[test]
     fn shell_action_matches_prompt_minus_event() {
         assert!(accepts("{{signal.id}}", TemplatePosition::ShellAction));
+        assert!(accepts(
+            "{{var.context.text}}",
+            TemplatePosition::ShellAction
+        ));
         assert!(!accepts("{{event.action}}", TemplatePosition::ShellAction));
     }
 

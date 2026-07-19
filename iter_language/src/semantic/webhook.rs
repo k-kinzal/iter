@@ -16,6 +16,7 @@ impl Analyzer {
                 conditions: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
+                captures: Vec::new(),
                 prompt_arms: Vec::new(),
                 event_handlers: Vec::new(),
                 span: route.body.span.clone(),

@@ -205,9 +205,32 @@ Zero or more per Iterfile. Events (in order):
 Deprecated aliases (still parse, emit warning): `workspace_setting_up`,
 `workspace_set_up`, `workspace_tearing_down`, `workspace_torndown`.
 
-Action: `shell "<command>"`. Runs through `/bin/sh -c` (POSIX) and accepts
-`{{...}}` placeholders. Multiple actions in one block run sequentially;
-non-zero exit aborts the handler and surfaces `runner_error`.
+Actions:
+
+```hcl
+shell "<command>"
+
+shell {
+  script = "<command>"
+  capture context {
+    stream = stdout
+    mode   = replace
+    parse  = auto
+  }
+}
+```
+
+Both forms run through `/bin/sh -c` (POSIX) and accept `{{...}}`
+placeholders. Block-form capture is Runner-only; top-level Compose hooks do
+not support it. Capture defaults are `stdout`, `replace`, and `auto`.
+Supported formats: `text`, `lines`, `json`, `ndjson`, `yaml`, `toml`, `csv`,
+and `tsv`; `parse` may also be an ordered list. Auto tries JSON → NDJSON →
+TOML → YAML → text and never guesses CSV/TSV.
+
+`capture context` publishes `var.context.text`, `.lines`, `.format`, and
+`.value`. Values are visible only after the action completes:
+`runner_starting` and `signal_received` can affect the next Prompt render;
+`agent_starting` and later cannot change the current Prompt.
 
 Placeholder roots:
 
@@ -215,8 +238,6 @@ Placeholder roots:
 | --- | --- |
 | `signal.*`, `metadata.*` | per-iteration events only |
 | `iteration.*` | every event (`count == 0` at `runner_starting`) |
-| `workspace.*` | from `workspace_setup_finished` onwards |
-| `agent.*` | from `agent_finished` onwards |
-| `error.*` | only inside `runner_error` |
+| `var.*` | after an earlier capture in the same Runner |
 
 Multiple `on <same-event>` blocks are allowed; each is a separate handler.

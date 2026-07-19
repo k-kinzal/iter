@@ -21,6 +21,63 @@ fn run_iter(cwd: &Path, args: &[&str]) -> std::process::Output {
         .expect("spawning iter binary")
 }
 
+#[test]
+fn pre_prompt_captures_are_available_to_the_first_prompt() {
+    let home = TempDir::new().expect("home tempdir");
+    let project = home.path().join("capture-prompt");
+    std::fs::create_dir_all(&project).expect("create project");
+    std::fs::write(
+        project.join("Iterfile"),
+        r#"
+workspace local { base = "." }
+agent generic { command = ["sh", "-c", "cat > prompt.txt"] }
+runner {
+  agent = generic
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "{{var.startup.value.foo}}/{{var.current.value.bar}}/{{var.startup.lines.[0]}}"
+
+  on runner_starting {
+    shell {
+      script = "printf '{\"foo\":1}\n'"
+      capture startup {
+        stream = stdout
+        mode = replace
+        parse = auto
+      }
+    }
+  }
+
+  on signal_received {
+    shell {
+      script = "printf '{\"bar\":2}\n'"
+      capture current {}
+    }
+  }
+}
+"#,
+    )
+    .expect("write Iterfile");
+
+    let output = Command::new(iter_bin())
+        .current_dir(&project)
+        .env("HOME", home.path())
+        .args(["run", "--once", "Iterfile"])
+        .output()
+        .expect("run Iterfile");
+    assert!(
+        output.status.success(),
+        "iter run exit={:?}; stderr=\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(project.join("prompt.txt")).expect("captured first prompt"),
+        "1/2/{\"foo\":1}"
+    );
+}
+
 /// Every shell flavour produces a non-empty completion script on stdout.
 #[test]
 fn completions_emit_non_empty_script_per_shell() {

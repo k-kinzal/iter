@@ -88,3 +88,34 @@ fn invalid_corpus_syntax_agreement() {
         );
     }
 }
+
+#[test]
+fn block_shell_capture_syntax_agreement() {
+    let source = r#"
+on runner_starting {
+  shell {
+    script = "./calculate"
+    capture context {
+      stream = stdout
+      mode = append
+      parse = [json, yaml, csv]
+    }
+  }
+}
+"#;
+    let (handwritten, diagnostics) = parse_to_cst(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == iter_language::Severity::Error),
+        "hand-written diagnostics: {diagnostics:?}"
+    );
+    let (oracle, oracle_ok) = oracle_parse(source);
+    assert!(oracle_ok, "oracle rejected block-form capture");
+
+    let mut handwritten = handwritten.expect("hand-written CST");
+    let mut oracle = oracle.expect("oracle CST");
+    canonicalize(&mut handwritten);
+    canonicalize(&mut oracle);
+    assert_eq!(handwritten, oracle);
+}

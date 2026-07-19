@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
 use crate::template::{IterationRenderContext, Template, TemplateError};
+use crate::variable::VariableStore;
 
 use super::prompt::Prompt;
 
@@ -56,6 +57,23 @@ impl PromptTemplate {
         let context = IterationRenderContext::new(signal, iteration);
         self.template.render(&context).map(Prompt::from)
     }
+
+    /// Render with the Runner's current dynamic `var.*` bindings.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`TemplateError`] when a referenced variable is absent or
+    /// the underlying template cannot render the selected value.
+    pub fn render_with_variables(
+        &self,
+        signal: &Signal,
+        iteration: &IterationContext,
+        variables: &VariableStore,
+    ) -> Result<Prompt, TemplateError> {
+        let context =
+            IterationRenderContext::with_variables(signal, iteration, variables.snapshot());
+        self.template.render(&context).map(Prompt::from)
+    }
 }
 
 impl fmt::Display for PromptTemplate {
@@ -69,6 +87,8 @@ mod tests {
     use super::*;
     use crate::prompt::test_helpers::signal_with;
     use crate::signal::metadata::{Metadata, MetadataKey, MetadataValue};
+    use crate::variable::VariableStore;
+    use serde_json::json;
 
     fn iter_ctx() -> IterationContext {
         IterationContext::for_test()
@@ -96,6 +116,26 @@ mod tests {
             template.render(&signal, &iter_ctx()).unwrap().as_str(),
             "Hi, alice!"
         );
+    }
+
+    #[test]
+    fn renders_runner_variables_and_line_indexes() {
+        let variables = VariableStore::new();
+        variables.set(
+            "context",
+            json!({
+                "text": "{\"foo\":1}\n",
+                "lines": ["{\"foo\":1}"],
+                "format": "json",
+                "value": {"foo": 1},
+            }),
+        );
+        let template = PromptTemplate::new("{{var.context.value.foo}}/{{var.context.lines.[0]}}")
+            .expect("compile");
+        let rendered = template
+            .render_with_variables(&signal_with(Metadata::new()), &iter_ctx(), &variables)
+            .expect("render");
+        assert_eq!(rendered.as_str(), "1/{\"foo\":1}");
     }
 
     #[test]

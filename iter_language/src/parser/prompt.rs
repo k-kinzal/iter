@@ -1,7 +1,10 @@
 //! `prompt`, top-level `on`, nested route, and `shell` action parsers.
 
 use super::Parser;
-use super::cst::{CstAction, CstEventHandler, CstPromptMatchArm, CstRoute, CstSection, CstValue};
+use super::cst::{
+    CstAction, CstActionBody, CstCapture, CstEventHandler, CstPromptMatchArm, CstRoute, CstSection,
+    CstValue,
+};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::Token;
 
@@ -75,11 +78,47 @@ impl Parser<'_> {
     pub(super) fn parse_action(&mut self) -> Option<CstAction> {
         let kw_span = self.peek_span();
         self.bump(); // `shell`
-        let (cmd, cmd_span) = self.expect_string()?;
+        let body = match self.peek() {
+            Some(Token::String(_)) => {
+                let (script, script_span) = self.expect_string()?;
+                CstActionBody::Shorthand {
+                    script,
+                    script_span,
+                }
+            }
+            Some(Token::LBrace) => CstActionBody::Block(self.parse_block()),
+            other => {
+                let span = self.peek_span();
+                let got = other.map_or_else(|| "end of file".to_string(), Token::describe);
+                self.errors.push(Diagnostic::error(
+                    span,
+                    format!("expected a string literal or `{{` after `shell`, found {got}"),
+                ));
+                return None;
+            }
+        };
+        let end = match &body {
+            CstActionBody::Shorthand { script_span, .. } => script_span.end,
+            CstActionBody::Block(block) => block.span.end,
+        };
         Some(CstAction {
             keyword_span: kw_span.clone(),
-            command: cmd,
-            span: kw_span.start..cmd_span.end,
+            body,
+            span: kw_span.start..end,
+        })
+    }
+
+    /// Parse `capture <name> { ... }` inside an expanded shell action.
+    pub(super) fn parse_nested_capture(&mut self) -> Option<CstCapture> {
+        let capture_span = self.peek_span();
+        self.bump(); // `capture`
+        let name = self.expect_ident()?;
+        let body = self.parse_block();
+        let end = body.span.end;
+        Some(CstCapture {
+            name,
+            body,
+            span: capture_span.start..end,
         })
     }
 

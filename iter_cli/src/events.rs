@@ -64,14 +64,15 @@ pub(crate) fn register_event_actions_from_events(
     mut builder: RunnerBuilder,
     events: &[Spanned<EventHandlerDef>],
 ) -> Result<RunnerBuilder, TemplateError> {
+    let variables = builder.variable_store();
     for spanned in events {
         let Spanned { node, .. } = spanned;
         let EventHandlerDef { event, actions } = node;
         let core_name = to_core_event_name(*event);
         for action in actions {
             match action {
-                Action::Shell(cmd) => {
-                    let handler = ShellAction::new(cmd.clone())?;
+                Action::Shell(definition) => {
+                    let handler = ShellAction::from_def(definition, variables.clone())?;
                     builder = builder.on(core_name, handler);
                 }
             }
@@ -83,13 +84,13 @@ pub(crate) fn register_event_actions_from_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_language::{Action, EventHandlerDef, Spanned};
+    use iter_language::{Action, EventHandlerDef, ShellActionDef, Spanned};
 
     fn handler_decl(event: iter_language::EventName, cmd: &str) -> Spanned<EventHandlerDef> {
         Spanned::new(
             EventHandlerDef {
                 event,
-                actions: vec![Action::Shell(cmd.to_owned())],
+                actions: vec![Action::Shell(ShellActionDef::simple(cmd))],
             },
             0..0,
         )

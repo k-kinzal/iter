@@ -9,7 +9,9 @@
 //! today but the spec guarantee is shape, not span byte ranges). We
 //! compare shape explicitly and leave span equivalence as a non-goal.
 
-use iter_language::{CstBlock, CstField, CstFile, CstGuard, CstIdent, CstSection, CstValue};
+use iter_language::{
+    CstActionBody, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstSection, CstValue,
+};
 
 pub(crate) fn canonicalize(file: &mut CstFile) {
     for s in &mut file.sections {
@@ -93,6 +95,15 @@ fn canon_block(b: &mut CstBlock) {
     for a in &mut b.actions {
         a.keyword_span = 0..0;
         a.span = 0..0;
+        match &mut a.body {
+            CstActionBody::Shorthand { script_span, .. } => *script_span = 0..0,
+            CstActionBody::Block(block) => canon_block(block),
+        }
+    }
+    for capture in &mut b.captures {
+        capture.span = 0..0;
+        canon_ident(&mut capture.name);
+        canon_block(&mut capture.body);
     }
 }
 

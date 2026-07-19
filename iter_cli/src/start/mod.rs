@@ -321,7 +321,9 @@ mod tests {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
-                actions: vec![Action::Shell("echo start".into())],
+                actions: vec![Action::Shell(iter_language::ShellActionDef::simple(
+                    "echo start",
+                ))],
             },
             0..0,
         )];
@@ -343,7 +345,9 @@ mod tests {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
-                actions: vec![Action::Shell("echo {{".into())],
+                actions: vec![Action::Shell(iter_language::ShellActionDef::simple(
+                    "echo {{",
+                ))],
             },
             0..0,
         )];

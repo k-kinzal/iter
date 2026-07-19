@@ -4,7 +4,8 @@
 //! test-only pretty printer in `pretty.rs` can render them back to source
 //! without loss. Specifically:
 //!   * identifiers are drawn from a bareword alphabet and never equal a
-//!     contextual block-entry keyword (`on`, `shell`) when placed as a
+//!     contextual block-entry keyword (`on`, `shell`, `condition`, `capture`)
+//!     when placed as a
 //!     field name, since the formal grammar rejects such fields,
 //!   * booleans and `null` are emitted as `CstValue::Bool`/`CstValue::Null`,
 //!     never as `CstValue::Ident` with name `"true"`/`"false"`/`"null"`, to
@@ -18,7 +19,8 @@
 //! shape should run `canonicalize::canonicalize` on both sides anyway.
 
 use iter_language::{
-    CstAction, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstRoute, CstSection, CstValue,
+    CstAction, CstActionBody, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstRoute,
+    CstSection, CstValue,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -34,7 +36,15 @@ fn ident_name() -> impl Strategy<Value = String> {
     "[a-z][a-z0-9_]{0,7}".prop_filter("not a reserved word in ident position", |s| {
         !matches!(
             s.as_str(),
-            "true" | "false" | "null" | "on" | "shell" | "condition" | "when" | "metadata"
+            "true"
+                | "false"
+                | "null"
+                | "on"
+                | "shell"
+                | "condition"
+                | "capture"
+                | "when"
+                | "metadata"
         )
     })
 }
@@ -115,6 +125,7 @@ fn value_strategy() -> impl Strategy<Value = CstValue> {
                         conditions: Vec::new(),
                         routes: Vec::new(),
                         actions: Vec::new(),
+                        captures: Vec::new(),
                         prompt_arms: Vec::new(),
                         event_handlers: Vec::new(),
                         span: 0..0,
@@ -138,9 +149,12 @@ fn field_strategy() -> impl Strategy<Value = CstField> {
 }
 
 fn action_strategy() -> impl Strategy<Value = CstAction> {
-    string_lit().prop_map(|command| CstAction {
+    string_lit().prop_map(|script| CstAction {
         keyword_span: 0..0,
-        command,
+        body: CstActionBody::Shorthand {
+            script,
+            script_span: 0..0,
+        },
         span: 0..0,
     })
 }
@@ -160,6 +174,7 @@ fn route_strategy() -> impl Strategy<Value = CstRoute> {
                 conditions: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
+                captures: Vec::new(),
                 prompt_arms: Vec::new(),
                 event_handlers: Vec::new(),
                 span: 0..0,
@@ -179,6 +194,7 @@ fn block_strategy() -> impl Strategy<Value = CstBlock> {
             conditions: Vec::new(),
             routes,
             actions,
+            captures: Vec::new(),
             prompt_arms: Vec::new(),
             event_handlers: Vec::new(),
             span: 0..0,

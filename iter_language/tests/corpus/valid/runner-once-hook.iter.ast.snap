@@ -76,7 +76,10 @@ Iterfile {
                             event: RunnerStarting,
                             actions: [
                                 Shell(
-                                    "test -d .iter/wt || git worktree add .iter/wt HEAD",
+                                    ShellActionDef {
+                                        script: "test -d .iter/wt || git worktree add .iter/wt HEAD",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },
@@ -87,7 +90,10 @@ Iterfile {
                             event: RunnerFinished,
                             actions: [
                                 Shell(
-                                    "echo 'runner done; worktree retained at .iter/wt'",
+                                    ShellActionDef {
+                                        script: "echo 'runner done; worktree retained at .iter/wt'",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },

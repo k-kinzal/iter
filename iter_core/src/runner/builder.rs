@@ -15,6 +15,7 @@ use crate::runner::{
     CompletionCondition, EventAction, EventDispatcher, Runner, RunnerPolicy, SignalAcquisition,
 };
 use crate::time::{Clock, IdSource, SystemClock, SystemIdSource};
+use crate::variable::VariableStore;
 use crate::workspace::Workspace;
 
 /// Errors emitted by [`RunnerBuilder::build`].
@@ -52,6 +53,7 @@ pub struct RunnerBuilder {
     stdio_sink: Option<Arc<dyn crate::log::OutputSink>>,
     clock: Arc<dyn Clock>,
     id_source: Arc<dyn IdSource>,
+    variables: VariableStore,
 }
 
 impl Default for RunnerBuilder {
@@ -68,6 +70,7 @@ impl Default for RunnerBuilder {
             stdio_sink: None,
             clock: Arc::new(SystemClock),
             id_source: Arc::new(SystemIdSource),
+            variables: VariableStore::new(),
         }
     }
 }
@@ -146,6 +149,15 @@ impl RunnerBuilder {
     #[must_use]
     pub fn event_dispatcher(&self) -> EventDispatcher {
         self.events.clone()
+    }
+
+    /// Clone the Runner-scoped dynamic variable store.
+    ///
+    /// Operator actions use this handle to publish `var.*` values; the
+    /// Runner keeps the same store for prompt rendering.
+    #[must_use]
+    pub fn variable_store(&self) -> VariableStore {
+        self.variables.clone()
     }
 
     /// Register an [`EventAction`] for a specific [`EventName`].
@@ -282,6 +294,7 @@ impl RunnerBuilder {
             completion_conditions: self.completion_conditions,
             clock: self.clock,
             id_source: self.id_source,
+            variables: self.variables,
         })
     }
 }

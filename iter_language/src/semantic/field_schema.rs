@@ -21,6 +21,12 @@ impl Analyzer {
                     "completion conditions are only valid inside a runner `completion` block",
                 ));
             }
+            for capture in &body.captures {
+                self.errors.push(Diagnostic::error(
+                    capture.span.clone(),
+                    "`capture` is only valid inside a block-form `shell { ... }` action",
+                ));
+            }
             for field in body.fields {
                 if map.contains_key(&field.name.name) {
                     self.errors.push(Diagnostic::error(

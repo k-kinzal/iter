@@ -23,6 +23,7 @@ use crate::runner::completion::{CompletionConditionInfo, CompletionEvent};
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
 use crate::signal::metadata::MetadataValue;
+use crate::variable::VariableSnapshot;
 
 /// Serializable view of a [`Signal`] for Handlebars rendering.
 ///
@@ -81,6 +82,7 @@ pub struct IterationRenderContext<'a> {
     #[serde(flatten)]
     signal: SignalContext<'a>,
     iteration: &'a IterationContext,
+    var: VariableSnapshot,
 }
 
 impl<'a> IterationRenderContext<'a> {
@@ -90,6 +92,21 @@ impl<'a> IterationRenderContext<'a> {
         Self {
             signal: SignalContext::from_signal(signal),
             iteration,
+            var: VariableSnapshot::default(),
+        }
+    }
+
+    /// Build a render context with one point-in-time `var.*` snapshot.
+    #[must_use]
+    pub fn with_variables(
+        signal: &'a Signal,
+        iteration: &'a IterationContext,
+        var: VariableSnapshot,
+    ) -> Self {
+        Self {
+            signal: SignalContext::from_signal(signal),
+            iteration,
+            var,
         }
     }
 
@@ -109,6 +126,7 @@ impl<'a> IterationRenderContext<'a> {
 pub struct RunnerRenderContext<'a> {
     today: String,
     iteration: &'a IterationContext,
+    var: VariableSnapshot,
 }
 
 impl<'a> RunnerRenderContext<'a> {
@@ -116,7 +134,22 @@ impl<'a> RunnerRenderContext<'a> {
     #[must_use]
     pub fn new(iteration: &'a IterationContext) -> Self {
         let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        Self { today, iteration }
+        Self {
+            today,
+            iteration,
+            var: VariableSnapshot::default(),
+        }
+    }
+
+    /// Build a signal-less lifecycle context with a `var.*` snapshot.
+    #[must_use]
+    pub fn with_variables(iteration: &'a IterationContext, var: VariableSnapshot) -> Self {
+        let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        Self {
+            today,
+            iteration,
+            var,
+        }
     }
 }
 
@@ -130,6 +163,7 @@ pub struct CompletionRenderContext<'a> {
     iteration: &'a IterationContext,
     completion: CompletionView<'a>,
     runner: CompletionRunnerView,
+    var: VariableSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -164,7 +198,20 @@ impl<'a> CompletionRenderContext<'a> {
                 elapsed_seconds: event.request.elapsed_seconds,
                 last_signal_id: event.request.last_signal_id.map(|id| id.to_string()),
             },
+            var: VariableSnapshot::default(),
         }
+    }
+
+    /// Build a completion context with a `var.*` snapshot.
+    #[must_use]
+    pub fn with_variables(
+        event: &'a CompletionEvent,
+        iteration: &'a IterationContext,
+        var: VariableSnapshot,
+    ) -> Self {
+        let mut context = Self::new(event, iteration);
+        context.var = var;
+        context
     }
 }
 
@@ -249,6 +296,18 @@ mod tests {
         // New `iteration` root sits alongside.
         assert_eq!(json["iteration"]["count"], 3);
         assert_eq!(json["iteration"]["previous_result"], "none");
+        assert_eq!(json["var"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn render_context_exposes_variable_snapshot() {
+        let signal = signal_with(Metadata::new());
+        let iteration = IterationContext::for_count(3);
+        let store = crate::variable::VariableStore::new();
+        store.set("context", serde_json::json!({"value": {"foo": 1}}));
+        let ctx = IterationRenderContext::with_variables(&signal, &iteration, store.snapshot());
+        let json = serde_json::to_value(&ctx).expect("serialize");
+        assert_eq!(json["var"]["context"]["value"]["foo"], 1);
     }
 
     #[test]

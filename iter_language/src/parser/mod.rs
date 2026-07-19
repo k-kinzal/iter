@@ -25,8 +25,8 @@ mod section;
 mod value;
 
 pub use cst::{
-    CstAction, CstBlock, CstCmpOp, CstCondition, CstEventHandler, CstField, CstFile, CstGuard,
-    CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue,
+    CstAction, CstActionBody, CstBlock, CstCapture, CstCmpOp, CstCondition, CstEventHandler,
+    CstField, CstFile, CstGuard, CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue,
 };
 
 use crate::diagnostic::Diagnostic;

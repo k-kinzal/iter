@@ -37,6 +37,7 @@ pub mod source;
 pub mod telemetry;
 pub mod template;
 pub mod time;
+pub mod variable;
 pub mod workspace;
 
 pub use agent::{
@@ -62,4 +63,5 @@ pub use template::{
     TemplateError,
 };
 pub use time::{Clock, DeterministicIdSource, FixedClock, IdSource, SystemClock, SystemIdSource};
+pub use variable::{VariableSnapshot, VariableStore};
 pub use workspace::{ActiveWorkspace, SandboxProfile, StdioMode, Workspace, match_env_pattern};

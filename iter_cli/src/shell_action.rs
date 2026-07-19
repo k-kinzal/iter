@@ -41,8 +41,13 @@ use std::process::Stdio;
 
 use iter_core::{
     BoxError, CompletionRenderContext, EventAction, HookEvent, IterationContext,
-    IterationRenderContext, RunnerRenderContext, Signal, Template, TemplateError,
+    IterationRenderContext, RunnerRenderContext, Signal, Template, TemplateError, VariableStore,
 };
+use iter_language::{
+    ShellActionDef, ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse,
+    ShellCaptureStream,
+};
+use serde_json::{Value, json};
 use tokio::process::Command;
 use tracing::warn;
 
@@ -55,6 +60,8 @@ use tracing::warn;
 pub(crate) struct ShellAction {
     command_source: String,
     compiled: Template,
+    captures: Vec<ShellCaptureDef>,
+    variables: VariableStore,
 }
 
 impl ShellAction {
@@ -65,11 +72,22 @@ impl ShellAction {
     /// Returns [`TemplateError::InvalidSyntax`] if `command` is not a valid
     /// Handlebars template.
     pub(crate) fn new(command: impl Into<String>) -> Result<Self, TemplateError> {
-        let command_source = command.into();
+        Self::from_def(&ShellActionDef::simple(command), VariableStore::new())
+    }
+
+    /// Compile a language-level shell definition against the Runner's shared
+    /// variable store.
+    pub(crate) fn from_def(
+        definition: &ShellActionDef,
+        variables: VariableStore,
+    ) -> Result<Self, TemplateError> {
+        let command_source = definition.script.clone();
         let compiled = Template::compile(command_source.clone())?;
         Ok(Self {
             command_source,
             compiled,
+            captures: definition.captures.clone(),
+            variables,
         })
     }
 }
@@ -117,15 +135,27 @@ impl EventAction for ShellAction {
         let (signal, cwd) = extract_context(event);
         let render_result = match event {
             HookEvent::RunnerCompleting { completion }
-            | HookEvent::RunnerCompleted { completion } => self
-                .compiled
-                .render(&CompletionRenderContext::new(completion, iteration)),
+            | HookEvent::RunnerCompleted { completion } => {
+                self.compiled
+                    .render(&CompletionRenderContext::with_variables(
+                        completion,
+                        iteration,
+                        self.variables.snapshot(),
+                    ))
+            }
             _ if signal.is_some() => {
                 let signal = signal.expect("guarded by is_some");
-                let ctx = IterationRenderContext::new(signal, iteration);
+                let ctx = IterationRenderContext::with_variables(
+                    signal,
+                    iteration,
+                    self.variables.snapshot(),
+                );
                 self.compiled.render(&ctx)
             }
-            _ => self.compiled.render(&RunnerRenderContext::new(iteration)),
+            _ => self.compiled.render(&RunnerRenderContext::with_variables(
+                iteration,
+                self.variables.snapshot(),
+            )),
         };
         let rendered = match render_result {
             Ok(text) => text,
@@ -138,9 +168,229 @@ impl EventAction for ShellAction {
                 return Ok(());
             }
         };
-        run_shell_command(&rendered, cwd.as_deref(), &[]).await?;
+        if self.captures.is_empty() {
+            run_shell_command(&rendered, cwd.as_deref(), &[]).await?;
+        } else {
+            let output =
+                run_captured_shell_command(&rendered, cwd.as_deref(), &self.captures).await?;
+            self.publish_captures(&output)?;
+        }
         Ok(())
     }
+}
+
+impl ShellAction {
+    fn publish_captures(&self, output: &std::process::Output) -> Result<(), BoxError> {
+        let mut updates = Vec::with_capacity(self.captures.len());
+        for capture in &self.captures {
+            let bytes = match capture.stream {
+                ShellCaptureStream::Stdout => &output.stdout,
+                ShellCaptureStream::Stderr => &output.stderr,
+            };
+            let current = String::from_utf8(bytes.clone()).map_err(|error| {
+                Box::new(CaptureError::InvalidUtf8 {
+                    name: capture.name.clone(),
+                    source: error,
+                }) as BoxError
+            })?;
+            let text = match capture.mode {
+                ShellCaptureMode::Replace => current,
+                ShellCaptureMode::Append => {
+                    let previous = self
+                        .variables
+                        .get(&capture.name)
+                        .and_then(|value| {
+                            value
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .map(ToOwned::to_owned)
+                        })
+                        .unwrap_or_default();
+                    previous + &current
+                }
+            };
+            let value = capture_value(&capture.name, &text, &capture.parse)
+                .map_err(|error| Box::new(error) as BoxError)?;
+            updates.push((capture.name.clone(), value));
+        }
+        self.variables.set_many(updates);
+        Ok(())
+    }
+}
+
+async fn run_captured_shell_command(
+    rendered: &str,
+    cwd: Option<&Path>,
+    captures: &[ShellCaptureDef],
+) -> Result<std::process::Output, BoxError> {
+    let capture_stdout = captures
+        .iter()
+        .any(|capture| capture.stream == ShellCaptureStream::Stdout);
+    let capture_stderr = captures
+        .iter()
+        .any(|capture| capture.stream == ShellCaptureStream::Stderr);
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(rendered)
+        .stdin(Stdio::null())
+        .stdout(if capture_stdout {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        })
+        .stderr(if capture_stderr {
+            Stdio::piped()
+        } else {
+            Stdio::inherit()
+        });
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    let output = command
+        .output()
+        .await
+        .map_err(|error| -> BoxError { Box::new(error) })?;
+    if !output.status.success() {
+        warn!(
+            command = %rendered,
+            cwd = ?cwd,
+            exit = ?output.status.code(),
+            "captured shell action exited non-zero"
+        );
+    }
+    Ok(output)
+}
+
+fn capture_value(name: &str, text: &str, parse: &ShellCaptureParse) -> Result<Value, CaptureError> {
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|line| Value::String(line.to_owned()))
+        .collect();
+    let (format, value) = match parse {
+        ShellCaptureParse::Auto => decode_auto(text),
+        ShellCaptureParse::Ordered(formats) => {
+            let mut failures = Vec::new();
+            let mut decoded = None;
+            for format in formats {
+                match decode(*format, text) {
+                    Ok(value) => {
+                        decoded = Some((*format, value));
+                        break;
+                    }
+                    Err(message) => failures.push(format!("{}: {message}", format.as_str())),
+                }
+            }
+            decoded.ok_or_else(|| CaptureError::Parse {
+                name: name.to_owned(),
+                details: failures.join("; "),
+            })?
+        }
+    };
+    Ok(json!({
+        "text": text,
+        "lines": lines,
+        "format": format.as_str(),
+        "value": value,
+    }))
+}
+
+fn decode_auto(text: &str) -> (ShellCaptureFormat, Value) {
+    if let Ok(value) = decode(ShellCaptureFormat::Json, text)
+        && matches!(value, Value::Object(_) | Value::Array(_))
+    {
+        return (ShellCaptureFormat::Json, value);
+    }
+    if non_empty_lines(text) >= 2
+        && let Ok(value) = decode(ShellCaptureFormat::Ndjson, text)
+    {
+        return (ShellCaptureFormat::Ndjson, value);
+    }
+    if let Ok(value) = decode(ShellCaptureFormat::Toml, text)
+        && value.as_object().is_some_and(|object| !object.is_empty())
+    {
+        return (ShellCaptureFormat::Toml, value);
+    }
+    if let Ok(value) = decode(ShellCaptureFormat::Yaml, text)
+        && matches!(value, Value::Object(_) | Value::Array(_))
+    {
+        return (ShellCaptureFormat::Yaml, value);
+    }
+    (ShellCaptureFormat::Text, Value::String(text.to_owned()))
+}
+
+fn decode(format: ShellCaptureFormat, text: &str) -> Result<Value, String> {
+    match format {
+        ShellCaptureFormat::Text => Ok(Value::String(text.to_owned())),
+        ShellCaptureFormat::Lines => Ok(Value::Array(
+            text.lines()
+                .map(|line| Value::String(line.to_owned()))
+                .collect(),
+        )),
+        ShellCaptureFormat::Json => serde_json::from_str(text).map_err(|error| error.to_string()),
+        ShellCaptureFormat::Ndjson => decode_ndjson(text),
+        ShellCaptureFormat::Yaml => serde_yml::from_str(text).map_err(|error| error.to_string()),
+        ShellCaptureFormat::Toml => {
+            let value: toml::Value = toml::from_str(text).map_err(|error| error.to_string())?;
+            serde_json::to_value(value).map_err(|error| error.to_string())
+        }
+        ShellCaptureFormat::Csv => decode_delimited(text, b','),
+        ShellCaptureFormat::Tsv => decode_delimited(text, b'\t'),
+    }
+}
+
+fn decode_ndjson(text: &str) -> Result<Value, String> {
+    let mut values = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value =
+            serde_json::from_str(line).map_err(|error| format!("line {}: {error}", index + 1))?;
+        values.push(value);
+    }
+    if values.is_empty() {
+        return Err("no non-empty JSON lines".to_owned());
+    }
+    Ok(Value::Array(values))
+}
+
+fn decode_delimited(text: &str, delimiter: u8) -> Result<Value, String> {
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(false)
+        .flexible(false)
+        .from_reader(text.as_bytes());
+    let mut rows = Vec::new();
+    for record in reader.records() {
+        let record = record.map_err(|error| error.to_string())?;
+        rows.push(Value::Array(
+            record
+                .iter()
+                .map(|field| Value::String(field.to_owned()))
+                .collect(),
+        ));
+    }
+    if rows.is_empty() {
+        return Err("no delimited rows".to_owned());
+    }
+    Ok(Value::Array(rows))
+}
+
+fn non_empty_lines(text: &str) -> usize {
+    text.lines().filter(|line| !line.trim().is_empty()).count()
+}
+
+#[derive(Debug, thiserror::Error)]
+enum CaptureError {
+    #[error("capture `{name}` was not valid UTF-8")]
+    InvalidUtf8 {
+        name: String,
+        #[source]
+        source: std::string::FromUtf8Error,
+    },
+    #[error("capture `{name}` did not match any configured parser: {details}")]
+    Parse { name: String, details: String },
 }
 
 /// Extract the signal + optional workspace-path pair that a shell action
@@ -173,7 +423,9 @@ fn extract_context(event: &HookEvent) -> (Option<&Signal>, Option<PathBuf>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_core::{EventDispatcher, EventName, Metadata, MetadataKey, MetadataValue, Signal};
+    use iter_core::{
+        EventDispatcher, EventName, Metadata, MetadataKey, MetadataValue, Signal, VariableStore,
+    };
 
     fn iter_ctx() -> IterationContext {
         IterationContext::for_test()
@@ -187,6 +439,20 @@ mod tests {
         HookEvent::WorkspaceTeardownFinished {
             signal: empty_signal().into(),
             path,
+        }
+    }
+
+    fn capture(
+        name: &str,
+        stream: ShellCaptureStream,
+        mode: ShellCaptureMode,
+        parse: ShellCaptureParse,
+    ) -> ShellCaptureDef {
+        ShellCaptureDef {
+            name: name.to_owned(),
+            stream,
+            mode,
+            parse,
         }
     }
 
@@ -208,6 +474,208 @@ mod tests {
             .handle(&torndown_event(PathBuf::from("/tmp")), &iter_ctx())
             .await
             .expect("must not propagate");
+    }
+
+    #[tokio::test]
+    async fn capture_publishes_json_for_later_templates() {
+        let variables = VariableStore::new();
+        let definition = ShellActionDef {
+            script: "printf '{\"foo\":1}\\n'".into(),
+            captures: vec![capture(
+                "context",
+                ShellCaptureStream::Stdout,
+                ShellCaptureMode::Replace,
+                ShellCaptureParse::Auto,
+            )],
+        };
+        let action = ShellAction::from_def(&definition, variables.clone()).expect("compile");
+        action
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
+            .await
+            .expect("capture");
+
+        let template = Template::compile("{{var.context.value.foo}}/{{var.context.lines.[0]}}")
+            .expect("template");
+        let rendered = template
+            .render(&RunnerRenderContext::with_variables(
+                &iter_ctx(),
+                variables.snapshot(),
+            ))
+            .expect("render captured var");
+        assert_eq!(rendered, "1/{\"foo\":1}");
+    }
+
+    #[tokio::test]
+    async fn append_reparses_the_complete_stream_as_ndjson() {
+        let variables = VariableStore::new();
+        let replace = ShellActionDef {
+            script: "printf '{\"foo\":1}\\n'".into(),
+            captures: vec![capture(
+                "context",
+                ShellCaptureStream::Stdout,
+                ShellCaptureMode::Replace,
+                ShellCaptureParse::Auto,
+            )],
+        };
+        let append = ShellActionDef {
+            script: "printf '{\"foo\":2}\\n'".into(),
+            captures: vec![capture(
+                "context",
+                ShellCaptureStream::Stdout,
+                ShellCaptureMode::Append,
+                ShellCaptureParse::Auto,
+            )],
+        };
+        ShellAction::from_def(&replace, variables.clone())
+            .expect("replace compile")
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
+            .await
+            .expect("replace");
+        ShellAction::from_def(&append, variables.clone())
+            .expect("append compile")
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
+            .await
+            .expect("append");
+
+        let value = variables.get("context").expect("context");
+        assert_eq!(value["format"], "ndjson");
+        assert_eq!(value["value"][0]["foo"], 1);
+        assert_eq!(value["value"][1]["foo"], 2);
+    }
+
+    #[test]
+    fn text_and_lines_are_always_available_when_auto_falls_back() {
+        let value =
+            capture_value("table", "a,b\n1,2\n", &ShellCaptureParse::Auto).expect("text fallback");
+        assert_eq!(value["format"], "text");
+        assert_eq!(value["text"], "a,b\n1,2\n");
+        assert_eq!(value["lines"], json!(["a,b", "1,2"]));
+        assert_eq!(value["value"], "a,b\n1,2\n");
+    }
+
+    #[test]
+    fn auto_does_not_misclassify_empty_or_comment_only_text_as_toml() {
+        for source in ["", "# generated later\n"] {
+            let value =
+                capture_value("context", source, &ShellCaptureParse::Auto).expect("text fallback");
+            assert_eq!(value["format"], "text", "source={source:?}");
+            assert_eq!(value["value"], source);
+        }
+    }
+
+    #[test]
+    fn every_explicit_format_decodes_to_a_json_shaped_value() {
+        let cases = [
+            (ShellCaptureFormat::Text, "plain\n", json!("plain\n")),
+            (
+                ShellCaptureFormat::Lines,
+                "alpha\nbeta\n",
+                json!(["alpha", "beta"]),
+            ),
+            (ShellCaptureFormat::Json, "{\"foo\":1}", json!({"foo": 1})),
+            (
+                ShellCaptureFormat::Ndjson,
+                "{\"foo\":1}\n{\"foo\":2}\n",
+                json!([{"foo": 1}, {"foo": 2}]),
+            ),
+            (
+                ShellCaptureFormat::Csv,
+                "name,count\nalpha,1\n",
+                json!([["name", "count"], ["alpha", "1"]]),
+            ),
+            (
+                ShellCaptureFormat::Tsv,
+                "name\tcount\nalpha\t1\n",
+                json!([["name", "count"], ["alpha", "1"]]),
+            ),
+            (ShellCaptureFormat::Yaml, "foo: 1\n", json!({"foo": 1})),
+            (ShellCaptureFormat::Toml, "foo = 1\n", json!({"foo": 1})),
+        ];
+        for (format, source, expected) in cases {
+            assert_eq!(
+                decode(format, source).unwrap_or_else(|error| panic!("{format:?}: {error}")),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_parsers_use_the_first_successful_format() {
+        let value = capture_value(
+            "table",
+            "name,count\nalpha,1\n",
+            &ShellCaptureParse::Ordered(vec![
+                ShellCaptureFormat::Json,
+                ShellCaptureFormat::Csv,
+                ShellCaptureFormat::Text,
+            ]),
+        )
+        .expect("CSV fallback");
+
+        assert_eq!(value["format"], "csv");
+        assert_eq!(value["value"], json!([["name", "count"], ["alpha", "1"]]));
+    }
+
+    #[tokio::test]
+    async fn stdout_and_stderr_can_be_captured_independently() {
+        let variables = VariableStore::new();
+        let definition = ShellActionDef {
+            script: "printf out; printf err >&2".into(),
+            captures: vec![
+                capture(
+                    "output",
+                    ShellCaptureStream::Stdout,
+                    ShellCaptureMode::Replace,
+                    ShellCaptureParse::Ordered(vec![ShellCaptureFormat::Text]),
+                ),
+                capture(
+                    "errors",
+                    ShellCaptureStream::Stderr,
+                    ShellCaptureMode::Replace,
+                    ShellCaptureParse::Ordered(vec![ShellCaptureFormat::Text]),
+                ),
+            ],
+        };
+        ShellAction::from_def(&definition, variables.clone())
+            .expect("compile")
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
+            .await
+            .expect("capture");
+
+        assert_eq!(variables.get("output").expect("output")["text"], "out");
+        assert_eq!(variables.get("errors").expect("errors")["text"], "err");
+    }
+
+    #[tokio::test]
+    async fn multi_capture_publish_is_atomic_when_one_parser_fails() {
+        let variables = VariableStore::new();
+        variables.set("output", json!({"text": "old"}));
+        let definition = ShellActionDef {
+            script: "printf new; printf not-json >&2".into(),
+            captures: vec![
+                capture(
+                    "output",
+                    ShellCaptureStream::Stdout,
+                    ShellCaptureMode::Replace,
+                    ShellCaptureParse::Ordered(vec![ShellCaptureFormat::Text]),
+                ),
+                capture(
+                    "errors",
+                    ShellCaptureStream::Stderr,
+                    ShellCaptureMode::Replace,
+                    ShellCaptureParse::Ordered(vec![ShellCaptureFormat::Json]),
+                ),
+            ],
+        };
+        let error = ShellAction::from_def(&definition, variables.clone())
+            .expect("compile")
+            .handle(&HookEvent::RunnerStarting {}, &iter_ctx())
+            .await
+            .expect_err("second parser must fail");
+
+        assert!(error.to_string().contains("capture `errors`"));
+        assert_eq!(variables.get("output"), Some(json!({"text": "old"})));
+        assert_eq!(variables.get("errors"), None);
     }
 
     #[tokio::test]

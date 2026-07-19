@@ -7,7 +7,8 @@
 //! build a random `CstFile`, print it, re-parse it, and compare shapes.
 
 use iter_language::{
-    CstAction, CstBlock, CstCmpOp, CstField, CstFile, CstGuard, CstRoute, CstSection, CstValue,
+    CstAction, CstActionBody, CstBlock, CstCmpOp, CstField, CstFile, CstGuard, CstRoute,
+    CstSection, CstValue,
 };
 
 pub(crate) fn pretty(file: &CstFile) -> String {
@@ -79,6 +80,7 @@ fn pp_block(out: &mut String, b: &CstBlock, depth: usize) {
         && b.conditions.is_empty()
         && b.routes.is_empty()
         && b.actions.is_empty()
+        && b.captures.is_empty()
         && b.prompt_arms.is_empty()
         && b.event_handlers.is_empty()
     {
@@ -104,6 +106,14 @@ fn pp_block(out: &mut String, b: &CstBlock, depth: usize) {
     }
     for a in &b.actions {
         pp_action(out, a, depth + 1);
+    }
+    for capture in &b.captures {
+        indent(out, depth + 1);
+        out.push_str("capture ");
+        out.push_str(&capture.name.name);
+        out.push(' ');
+        pp_block(out, &capture.body, depth + 1);
+        out.push('\n');
     }
     indent(out, depth);
     out.push('}');
@@ -153,7 +163,10 @@ fn pp_route(out: &mut String, r: &CstRoute, depth: usize) {
 fn pp_action(out: &mut String, a: &CstAction, depth: usize) {
     indent(out, depth);
     out.push_str("shell ");
-    pp_string(out, &a.command);
+    match &a.body {
+        CstActionBody::Shorthand { script, .. } => pp_string(out, script),
+        CstActionBody::Block(block) => pp_block(out, block, depth),
+    }
     out.push('\n');
 }
 
@@ -200,9 +213,10 @@ fn pp_value(out: &mut String, v: &CstValue, depth: usize) {
 /// Mirrors the grammar's `ident` rule (and the contextual block-entry
 /// keywords that the field-name rule excludes): leading ASCII letter or
 /// underscore, then ASCII alphanumerics or underscores, never the literal
-/// `on` or `shell` (those would re-route to action / nested-route parsing).
+/// `on`, `shell`, `condition`, or `capture` (those would re-route to a
+/// contextual nested declaration).
 fn is_bareword_field_name(name: &str) -> bool {
-    if matches!(name, "on" | "shell") {
+    if matches!(name, "on" | "shell" | "condition" | "capture") {
         return false;
     }
     let mut chars = name.chars();

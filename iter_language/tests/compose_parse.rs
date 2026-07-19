@@ -401,6 +401,27 @@ fn compose_hook_lowers_selectors_and_shell_actions() {
 }
 
 #[test]
+fn compose_hook_rejects_runner_scoped_shell_capture() {
+    let errors = parse_err(
+        r#"
+            on compose_starting {
+                shell {
+                    script = "printf context"
+                    capture context {}
+                }
+            }
+        "#,
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|message| message
+                .contains("shell capture is only available in Runner lifecycle hooks")),
+        "got: {errors:#?}"
+    );
+}
+
+#[test]
 fn every_compose_hook_event_parses() {
     let source = ComposeEventName::ALL
         .iter()

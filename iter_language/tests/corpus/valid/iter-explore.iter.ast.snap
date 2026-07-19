@@ -78,7 +78,10 @@ Iterfile {
                             event: WorkspaceTeardownFinished,
                             actions: [
                                 Shell(
-                                    "./scripts/on-torndown.sh {{signal.id}}",
+                                    ShellActionDef {
+                                        script: "./scripts/on-torndown.sh {{signal.id}}",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },

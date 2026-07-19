@@ -500,8 +500,8 @@ fn render_event(
 ) -> Result<(), ArgError> {
     for action in &mut event.actions {
         match action {
-            iter_language::Action::Shell(cmd) => {
-                render_str(cmd, values)?;
+            iter_language::Action::Shell(definition) => {
+                render_str(&mut definition.script, values)?;
             }
         }
     }
@@ -644,8 +644,8 @@ runner {
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
         match &root.runners.first().unwrap().node.events[0].node.actions[0] {
-            iter_language::Action::Shell(cmd) => {
-                assert_eq!(cmd, "mkdir -p /tmp/work");
+            iter_language::Action::Shell(definition) => {
+                assert_eq!(definition.script, "mkdir -p /tmp/work");
             }
         }
     }

@@ -161,9 +161,9 @@ per `iter run`; the rest fire once per iteration.
    failure)
 7. `runner_finished`
 
-Each `on <event>` block carries one or more `shell` actions. `shell` strings
-support `{{...}}` placeholders (`signal.*`, `metadata.*`, `iteration.*`,
-`workspace.*`, `agent.*`, `error.*`).
+Each `on <event>` block carries one or more `shell` actions. The shorthand is
+`shell "<command>"`. Use `shell { script = "..." ... }` when command output
+must be captured into the Runner-scoped `var.*` template root.
 
 ```hcl
 workspace local { base = "." }
@@ -177,7 +177,14 @@ runner {
   prompt    = "x"
 
   on runner_starting {
-    shell "test -d .iter/wt || git worktree add .iter/wt HEAD"
+    shell {
+      script = "./scripts/calculate-context"
+      capture context {
+        stream = stdout
+        mode   = replace
+        parse  = auto
+      }
+    }
   }
 
   on agent_finished {
@@ -194,10 +201,23 @@ runner {
 }
 ```
 
-Beyond the validator-checked roots (`metadata.*`, `signal.*`, `event.*`,
-`iteration.*`, `today`), the runner exposes `workspace.*`, `agent.*`, and
-`error.*` at runtime — see `docs/config/iterfile/on.md` for the full
-placeholder vocabulary.
+Capture fields default to `stream = stdout`, `mode = replace`, and
+`parse = auto`. Explicit formats are `text`, `lines`, `json`, `ndjson`,
+`yaml`, `toml`, `csv`, and `tsv`; an ordered list such as
+`parse = [json, yaml, text]` is also valid. Auto-detection tries JSON, NDJSON,
+TOML, YAML, then text; it never guesses CSV/TSV.
+
+Each capture publishes `var.<name>.text`, `.lines`, `.format`, and `.value`.
+The value is forward-only: `runner_starting` is visible to the first Prompt,
+and `signal_received` to that Signal's Prompt. `agent_starting` and later
+events run after the current Prompt was rendered. Values persist across
+iterations of that Runner, but not across Runner processes or Compose
+services. Capture is invalid in top-level Compose hooks.
+
+Runner Prompt and shell templates accept `signal.*`, `metadata.*`,
+`iteration.*`, `var.*`, and `today` as applicable. Completion shell actions
+instead add `completion.*` and `runner.*` and have no current Signal. See
+`docs/config/iterfile/on.md` for the full placeholder and timing contract.
 
 Multiple `on <event>` blocks for the same event are allowed — each is a
 separate handler, all run in source order.

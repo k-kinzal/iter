@@ -161,7 +161,8 @@ pub(crate) fn build_hook_plans(
         let mut actions = Vec::with_capacity(hook.actions.len());
         for action in &hook.actions {
             match action {
-                Action::Shell(source) => {
+                Action::Shell(definition) => {
+                    let source = &definition.script;
                     let template = Template::compile(source.clone()).map_err(|source| {
                         ComposeHookBuildError::Template {
                             event: hook.event.as_str(),
@@ -722,7 +723,9 @@ mod tests {
                 event,
                 services: services.map(|names| names.into_iter().map(str::to_owned).collect()),
                 triggers: triggers.map(|names| names.into_iter().map(str::to_owned).collect()),
-                actions: vec![Action::Shell(command.to_owned())],
+                actions: vec![Action::Shell(iter_language::ShellActionDef::simple(
+                    command,
+                ))],
             },
             0..0,
         )

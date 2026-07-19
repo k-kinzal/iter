@@ -3,6 +3,7 @@
 
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
+use crate::variable::VariableStore;
 
 use super::error::SelectorError;
 use super::guard::PromptGuard;
@@ -82,6 +83,28 @@ impl PromptSelector {
         }
         match &self.default {
             Some(template) => Ok(template.render(signal, iteration)?),
+            None => Err(SelectorError::NoMatchingPrompt),
+        }
+    }
+
+    /// Select and render a prompt with the Runner's current `var.*` values.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::render`].
+    pub fn render_with_variables(
+        &self,
+        signal: &Signal,
+        iteration: &IterationContext,
+        variables: &VariableStore,
+    ) -> Result<Prompt, SelectorError> {
+        for (guard, template) in &self.branches {
+            if guard.matches(signal, iteration) {
+                return Ok(template.render_with_variables(signal, iteration, variables)?);
+            }
+        }
+        match &self.default {
+            Some(template) => Ok(template.render_with_variables(signal, iteration, variables)?),
             None => Err(SelectorError::NoMatchingPrompt),
         }
     }

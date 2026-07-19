@@ -187,6 +187,7 @@ impl Parser<'_> {
                 conditions: Vec::new(),
                 routes: Vec::new(),
                 actions: Vec::new(),
+                captures: Vec::new(),
                 prompt_arms: Vec::new(),
                 event_handlers: Vec::new(),
                 span: name.span.start..span_end,
@@ -219,6 +220,7 @@ impl Parser<'_> {
             conditions: Vec::new(),
             routes: Vec::new(),
             actions: Vec::new(),
+            captures: Vec::new(),
             prompt_arms: Vec::new(),
             event_handlers: Vec::new(),
             span,
@@ -230,6 +232,7 @@ impl Parser<'_> {
         let mut conditions = Vec::new();
         let mut routes = Vec::new();
         let mut actions = Vec::new();
+        let mut captures = Vec::new();
         let mut prompt_arms = Vec::new();
         let mut event_handlers = Vec::new();
 
@@ -243,6 +246,7 @@ impl Parser<'_> {
                         conditions,
                         routes,
                         actions,
+                        captures,
                         prompt_arms,
                         event_handlers,
                         span: start..end,
@@ -258,6 +262,7 @@ impl Parser<'_> {
                         conditions,
                         routes,
                         actions,
+                        captures,
                         prompt_arms,
                         event_handlers,
                         span: start..self.source_len,
@@ -298,6 +303,13 @@ impl Parser<'_> {
                     "condition" => {
                         if let Some(condition) = self.parse_nested_condition() {
                             conditions.push(condition);
+                        } else {
+                            self.recover_inside_block();
+                        }
+                    }
+                    "capture" => {
+                        if let Some(capture) = self.parse_nested_capture() {
+                            captures.push(capture);
                         } else {
                             self.recover_inside_block();
                         }

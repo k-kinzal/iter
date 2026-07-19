@@ -9,6 +9,15 @@ AST: `EventHandlerDef`, `EventName`, and `Action` in `iter_language/src/ast/even
 ```hcl
 on <event-name> {
   shell "<command>"
+
+  shell {
+    script = "<command>"
+    capture <variable-name> {
+      stream = stdout
+      mode   = replace
+      parse  = auto
+    }
+  }
   ...
 }
 ```
@@ -55,13 +64,91 @@ Misspellings fail at parse time. Some older spellings (`workspace_setting_up`, `
 
 ## Actions
 
-### `shell "<command>"`
+### `shell`
 
-Runs the command string through the user's shell (`/bin/sh -c <command>` on POSIX). The command line accepts the same `{{...}}` placeholders as `prompt`; they are resolved immediately before invocation.
+Runs the command string through the user's shell (`/bin/sh -c <command>` on
+POSIX). The command line accepts the same `{{...}}` placeholders as `prompt`;
+they are resolved immediately before invocation. Substitutions are not
+shell-escaped automatically, so quote them according to the script's needs.
 
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
-| `command` | `string` (positional) | Required | — | Shell command. Resolved placeholders expand into properly quoted substitutions. |
+| shorthand command | `string` (positional) | Required in shorthand form | — | `shell "<command>"`; unchanged from earlier Iterfiles. |
+| `script` | `string` | Required in block form | — | Command used by `shell { ... }`. |
+
+Use the block form when the command's output should become Runner-scoped
+template data:
+
+```hcl
+runner {
+  # ...
+  prompt = """
+  Review {{var.context.value.repository}}.
+  First output line: {{var.context.lines.[0]}}
+  """
+
+  on runner_starting {
+    shell {
+      script = "./scripts/calculate-context"
+      capture context {
+        stream = stdout
+        mode   = replace
+        parse  = auto
+      }
+    }
+  }
+}
+```
+
+#### `capture <variable-name>`
+
+`capture context { ... }` captures one command stream and publishes it as
+`var.context`. A shell action may have multiple captures, provided their names
+are unique. Capture is available in Runner lifecycle hooks, including hooks on
+an inline Compose service; it is not available in top-level Compose hooks.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `stream` | `stdout \| stderr` | `stdout` | Stream to capture. A captured stream is consumed by iter; an uncaptured stream remains inherited. |
+| `mode` | `replace \| append` | `replace` | Replace the variable's raw text, or append this execution's bytes to its previous `text` and parse the complete result again. |
+| `parse` | `auto`, format, or format list | `auto` | Parser selection. Examples: `auto`, `csv`, `[json, yaml, text]`. Lists are attempted from left to right. |
+
+Every published variable has the same envelope:
+
+| Path | Value |
+| --- | --- |
+| `var.<name>.text` | Complete UTF-8 stream as text. |
+| `var.<name>.lines` | Text split into lines; available regardless of parser. Index with `.[N]`, for example `{{var.context.lines.[0]}}`. |
+| `var.<name>.format` | Parser that produced `value`: `text`, `lines`, `json`, `ndjson`, `yaml`, `toml`, `csv`, or `tsv`. |
+| `var.<name>.value` | Parsed JSON-shaped value. `csv` and `tsv` produce arrays of row arrays and do not infer headers. |
+
+All supported explicit formats are `text`, `lines`, `json`, `ndjson`, `yaml`,
+`toml`, `csv`, and `tsv`. `auto` deliberately uses the conservative order
+JSON → NDJSON → TOML → YAML → text. JSON and YAML scalars are not auto-selected,
+and CSV/TSV are never guessed; select them explicitly or include them in an
+ordered list. `text` and `lines` always parse successfully, so a later list
+entry is unreachable after either one.
+
+Captured bytes must be valid UTF-8. For an explicit format or ordered list,
+failure to find a matching parser leaves all variables from that shell action
+unchanged and records a handler error. Successful captures from the same action
+are published together.
+
+#### Visibility and timing
+
+`var.*` belongs to one running Runner and survives across its iterations. A
+capture becomes visible after its shell action completes, so actions and
+template renders later in lifecycle order can use it:
+
+- `runner_starting` capture is visible to the first Prompt.
+- `signal_received` capture is visible to that Signal's Prompt because this
+  event fires before Prompt rendering.
+- `agent_starting` and later captures cannot change the Prompt already rendered
+  for the current iteration; they are available to later hooks and subsequent
+  iterations.
+
+Variables are not persisted beyond the Runner process and do not cross between
+Compose services.
 
 **Available placeholder roots**
 
@@ -70,13 +157,17 @@ Runs the command string through the user's shell (`/bin/sh -c <command>` on POSI
 | `signal.*` | `{{signal.id}}` | Properties of the Signal being processed. Not available in runner-level completion events; a time condition can fire while idle. |
 | `metadata.*` | `{{metadata.task}}` | User-attached key/value pairs on the Signal. Same scope as `signal.*`. |
 | `iteration.*` | `{{iteration.count}}` | Runner iteration state — available in **every** event including `runner_starting` (initial state, `count == 0`, `previous_result == "none"`) and `runner_finished` (terminal state). See [`iterfile/prompt.md`](prompt.md#iterationfield-reference) for the field set. |
+| `var.*` | `{{var.context.value.foo}}` | Captures published earlier by the same Runner. Available in prompts and Runner shell actions, including completion hooks. |
 | `completion.*` | `{{completion.condition.name}}` | Only in `runner_completing` / `runner_completed`. Includes `condition.name`, `condition.kind`, condition-specific redacted fields, `requested_at`, and (only after durability) `completed_at`. |
 | `runner.*` | `{{runner.elapsed_seconds}}` | Only in completion events. Includes `started_at`, monotonic `elapsed_seconds`, and `last_signal_id`. |
-| `workspace.*` | `{{workspace.path}}` | Workspace paths (available from `workspace_setup_finished` onwards). |
-| `agent.*` | `{{agent.exit_code}}` | Agent result info (available from `agent_finished` onwards). |
-| `error.*` | `{{error.message}}` | Only defined inside `on runner_error`. |
 
-Placeholders that resolve to unset values expand to the empty string; iter does not throw.
+Runtime templates are strict. Referencing a missing capture or nested value is
+a render error; publish captures in an earlier hook and avoid references that
+may be absent on a given lifecycle path.
+
+From `workspace_setup_finished` through `workspace_teardown_finished`, the
+shell process already runs with the active workspace as its current directory;
+there is no separate `workspace.*` placeholder root.
 
 `iteration.previous_result` reflects the prior iteration's
 runner-level classification: `"none"` on the first turn (and at
@@ -116,7 +207,10 @@ runner {
 
 ### Multiple actions
 
-Actions are executed **in source order**. A non-zero exit aborts the handler and surfaces as a handler-level error; the runner then proceeds to `runner_error` (unless the failure itself came from `runner_error`).
+Actions are executed **in source order**. A non-zero shell exit is logged but
+does not stop later actions. Action infrastructure errors (for example an
+invalid UTF-8 capture) are counted and logged by the event dispatcher; the
+remaining actions still run.
 
 ```hcl
 on agent_finished {
@@ -170,11 +264,12 @@ on workspace_setup_finished {
 
 ```hcl
 on agent_finished {
-  shell "git -C {{workspace.path}} status --short"
+  # This hook runs with the active workspace as cwd.
+  shell "git status --short"
 }
 
 on runner_error {
-  shell "notify-team 'iter failed: {{error.message}}'"
+  shell "notify-team 'iter failed on iteration {{iteration.count}}'"
 }
 ```
 

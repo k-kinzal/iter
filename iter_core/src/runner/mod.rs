@@ -39,6 +39,7 @@ use crate::prompt::{Prompt, PromptSelector};
 use crate::queue::Queue;
 use crate::signal::{Signal, SignalId};
 use crate::time::{Clock, IdSource};
+use crate::variable::VariableStore;
 use crate::workspace::{ActiveWorkspace, Workspace};
 
 pub use builder::{BuilderError, RunnerBuilder};
@@ -88,6 +89,7 @@ pub struct Runner {
     pub(crate) observers: Vec<Arc<dyn DynRunnerObserver>>,
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) id_source: Arc<dyn IdSource>,
+    pub(crate) variables: VariableStore,
 }
 
 impl Runner {
@@ -127,6 +129,7 @@ impl Runner {
             observers,
             clock,
             id_source,
+            variables,
         } = self;
         let mut events = RunnerEmitter::new(emitter, observers);
         let runner_started_at = clock.now();
@@ -153,6 +156,7 @@ impl Runner {
             &cancel,
             clock.as_ref(),
             id_source.as_ref(),
+            &variables,
             &mut events,
             &mut iter_state,
             &mut iteration_count,
@@ -416,17 +420,20 @@ fn render_prompt(
     signal: &Signal,
     snap: &IterationContext,
     signal_id: SignalId,
+    variables: &VariableStore,
 ) -> Result<Prompt, IterationFailure> {
-    selector.render(signal, snap).map_err(|err| {
-        let message = err.to_string();
-        IterationFailure {
-            error_source: ErrorSource::RenderPrompt,
-            signal_id,
-            source: Box::new(err),
-            message,
-            exit: None,
-        }
-    })
+    selector
+        .render_with_variables(signal, snap, variables)
+        .map_err(|err| {
+            let message = err.to_string();
+            IterationFailure {
+                error_source: ErrorSource::RenderPrompt,
+                signal_id,
+                source: Box::new(err),
+                message,
+                exit: None,
+            }
+        })
 }
 
 /// Successful agent run record — carried out of `drive_workspace` so
@@ -747,6 +754,7 @@ async fn run_iteration(
     iter_state: &mut IterationState,
     iteration_count: u32,
     signal: Signal,
+    variables: &VariableStore,
 ) -> Result<(), IterationFailure> {
     // Wrap the dequeued signal in the shared, immutable handle exactly once,
     // before any lifecycle event is emitted. Every event for this bracket then
@@ -761,7 +769,13 @@ async fn run_iteration(
     let signal_id = signal.id();
 
     events.signal_received(&signal, now, &snap).await;
-    let prompt = match render_prompt(prompt_selector, signal.as_signal(), &snap, signal_id) {
+    let prompt = match render_prompt(
+        prompt_selector,
+        signal.as_signal(),
+        &snap,
+        signal_id,
+        variables,
+    ) {
         Ok(p) => p,
         Err(failure) => {
             events
@@ -803,6 +817,7 @@ async fn run_loop(
     cancel: &CancellationToken,
     clock: &dyn Clock,
     id_source: &dyn IdSource,
+    variables: &VariableStore,
     events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
     iteration_count: &mut u32,
@@ -925,6 +940,7 @@ async fn run_loop(
                             iter_state,
                             *iteration_count,
                             signal,
+                            variables,
                         )
                         .instrument(span.clone()),
                     );

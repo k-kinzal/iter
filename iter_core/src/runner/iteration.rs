@@ -9,10 +9,10 @@
 //! sees as `{{iteration.count}}`, `{{iteration.previous_result}}`, and so
 //! on.
 //!
-//! The `iteration.*` root deliberately exposes fixed fields only — there is
-//! no user-defined state in v1, no persistence, and no commands to mutate it
-//! from a hook. Anything you can see here, the runner already knew; we are
-//! just naming it.
+//! The `iteration.*` root deliberately exposes fixed fields only. Dynamic
+//! values published by lifecycle actions live under the separate `var.*`
+//! root; they do not change the runner-owned iteration counters described
+//! here.
 //!
 //! `count` is **1-indexed at render time**. The first iteration sees
 //! `iteration.count == 1`, so `iteration.count % 10 == 0` fires on

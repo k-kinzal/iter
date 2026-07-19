@@ -52,7 +52,16 @@ Bodies accept any string literal form documented in [`language.md`](../language.
 
 ## Placeholder resolution
 
-Placeholders such as `{{metadata.task}}` or `{{signal.id}}` are **not** resolved at parse time. They are left as literal tokens and expanded by the runner when the Signal is known.
+Placeholders such as `{{metadata.task}}`, `{{signal.id}}`, or
+`{{var.context.value.foo}}` are **not** resolved at parse time. They are left
+as literal tokens and expanded by the runner when the Signal and the current
+Runner-scoped variables are known.
+
+`var.<name>` values come from block-form shell captures in lifecycle hooks.
+`on runner_starting` can prepare values for the first Prompt, and
+`on signal_received` can prepare values for the current Signal's Prompt. See
+[`on.md` § `capture <variable-name>`](on.md#capture-variable-name) for the
+value envelope, parsers, and timing rules.
 
 See [`language.md` § Placeholders](../language.md) for the full set of placeholder roots.
 

@@ -57,7 +57,7 @@ ident_continue = _{ ASCII_ALPHANUMERIC | "_" }
 
 - ASCII letters, digits, underscores; must not start with a digit.
 - Unicode identifiers are not permitted.
-- Reserved keywords (`queue`, `workspace`, `agent`, `trigger`, `runner`, `service`, `prompt`, `on`, `when`, `shell`, `metadata`) take priority in their normal positions; they may still appear as identifiers in ident positions (for example, a field named `prompt` is parseable as a field, though avoided by convention).
+- Reserved keywords (`queue`, `workspace`, `agent`, `trigger`, `runner`, `service`, `prompt`, `on`, `when`, `shell`, `capture`, `metadata`) take priority in their normal positions; they may still appear as identifiers in ident positions (for example, a field named `prompt` is parseable as a field, though avoided by convention).
 
 ---
 
@@ -193,7 +193,10 @@ A block body contains any mix of:
 1. **Fields**: `<name> = <value>`. The name is an identifier or a string literal (strings allow keys that contain characters illegal in identifiers — e.g. Kafka header names like `"x-source"` or librdkafka keys like `"client.dns.lookup"`).
 2. **Short-form nested blocks**: `<name> { ... }`, equivalent to `<name> = { ... }`.
 3. **Nested routes**: `on "<pattern>" [when "<expr>"] { ... }` — only inside `trigger webhook` blocks.
-4. **Actions**: `shell "<command>"` — only inside `on` event handler blocks.
+4. **Actions**: `shell "<command>"` or
+   `shell { script = "<command>" ... }` — only inside `on` event handler
+   blocks. Block-form Runner shell actions may contain
+   `capture <name> { ... }`.
 
 Entries are separated by whitespace or newlines; no commas or semicolons are required between entries.
 
@@ -343,11 +346,12 @@ Common placeholders (exact availability depends on the context):
 
 | Placeholder | Available in |
 | --- | --- |
-| `{{signal.id}}` | Shell actions, DLQ templates. |
+| `{{signal.id}}` | Prompt bodies, per-Signal Runner shell actions, and Signal-aware webhook/trigger templates. |
 | `{{metadata.<key>}}` | `prompt` bodies, shell actions, webhook route metadata. |
-| `{{iteration.<field>}}` | `prompt` bodies, shell actions in `on agent_*` and `on runner_*` hooks. See [`iterfile/prompt.md`](iterfile/prompt.md#iterationfield-reference) for the field set. |
+| `{{iteration.<field>}}` | Prompt bodies and Runner lifecycle shell actions. See [`iterfile/prompt.md`](iterfile/prompt.md#iterationfield-reference) for the field set. |
+| `{{var.<name>.<field>}}` | Prompt bodies and Runner shell actions after a block-form shell capture has published the named value. |
 | `{{today}}` | `prompt` bodies, shell actions. Current local date as `YYYY-MM-DD`. |
-| `{{error.kind}}`, `{{error.message}}` | `on runner_error`, DLQ templates. |
+| `{{error.kind}}`, `{{error.message}}` | DLQ templates. |
 | `{{.<payload-path>}}` | Webhook route metadata values. |
 
 Per-block pages document which placeholders apply.

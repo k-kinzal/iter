@@ -90,7 +90,10 @@ Iterfile {
                             event: AgentFinished,
                             actions: [
                                 Shell(
-                                    "echo done",
+                                    ShellActionDef {
+                                        script: "echo done",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },

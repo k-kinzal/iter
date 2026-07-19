@@ -87,7 +87,10 @@ Iterfile {
                             event: RunnerCompleting,
                             actions: [
                                 Shell(
-                                    "echo {{completion.condition.name}}",
+                                    ShellActionDef {
+                                        script: "echo {{completion.condition.name}}",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },
@@ -98,7 +101,10 @@ Iterfile {
                             event: RunnerCompleted,
                             actions: [
                                 Shell(
-                                    "echo {{completion.completed_at}}",
+                                    ShellActionDef {
+                                        script: "echo {{completion.completed_at}}",
+                                        captures: [],
+                                    },
                                 ),
                             ],
                         },

@@ -1,13 +1,15 @@
 //! Runner and Compose `on <event> { ... }` lowering plus shell actions.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Analyzer, TemplatePosition, closest};
 use crate::ast::{
-    Action, ComposeEventName, ComposeHookDef, EventHandlerDef, EventName, Span, Spanned,
+    Action, ComposeEventName, ComposeHookDef, EventHandlerDef, EventName, ShellActionDef,
+    ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse, ShellCaptureStream,
+    Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{CstAction, CstBlock, CstIdent, CstValue};
+use crate::parser::{CstAction, CstActionBody, CstBlock, CstCapture, CstField, CstIdent, CstValue};
 
 impl Analyzer {
     pub(super) fn lower_event(
@@ -70,6 +72,12 @@ impl Analyzer {
                 ));
             }
         }
+        for capture in &body.captures {
+            self.errors.push(Diagnostic::error(
+                capture.span.clone(),
+                "`capture` is only valid inside a block-form `shell { ... }` action",
+            ));
+        }
         for condition in &body.conditions {
             self.errors.push(Diagnostic::error(
                 condition.span.clone(),
@@ -104,11 +112,279 @@ impl Analyzer {
     ) -> Vec<Action> {
         let mut out = Vec::new();
         for raw in &block.actions {
-            let CstAction { command, .. } = raw;
-            self.validate_template(command, &raw.span, position);
-            out.push(Action::Shell(command.clone()));
+            if let Some(action) = self.lower_shell_action(raw, position) {
+                out.push(Action::Shell(action));
+            }
         }
         out
+    }
+
+    fn lower_shell_action(
+        &mut self,
+        raw: &CstAction,
+        position: TemplatePosition,
+    ) -> Option<ShellActionDef> {
+        match &raw.body {
+            CstActionBody::Shorthand {
+                script,
+                script_span,
+            } => {
+                self.validate_template(script, script_span, position);
+                Some(ShellActionDef::simple(script.clone()))
+            }
+            CstActionBody::Block(body) => {
+                let mut fields = self.collect_shell_fields(&body.fields);
+                let script = self.take_required_string(
+                    &mut fields,
+                    "script",
+                    &raw.keyword_span,
+                    "shell action",
+                );
+                self.reject_unknown_fields(&mut fields, &["script"], "shell action");
+                let script = script?;
+                self.validate_template(&script, &raw.span, position);
+                self.reject_shell_action_nested_forms(body);
+
+                let mut seen = BTreeSet::new();
+                let mut captures = Vec::with_capacity(body.captures.len());
+                for capture in &body.captures {
+                    if !seen.insert(capture.name.name.clone()) {
+                        self.errors.push(Diagnostic::error(
+                            capture.name.span.clone(),
+                            format!(
+                                "duplicate capture name `{}` in shell action",
+                                capture.name.name
+                            ),
+                        ));
+                        continue;
+                    }
+                    captures.push(self.lower_shell_capture(capture));
+                }
+                if position == TemplatePosition::ComposeShellAction && !captures.is_empty() {
+                    for capture in &body.captures {
+                        self.errors.push(Diagnostic::error(
+                            capture.span.clone(),
+                            "shell capture is only available in Runner lifecycle hooks",
+                        ));
+                    }
+                    captures.clear();
+                }
+                Some(ShellActionDef { script, captures })
+            }
+        }
+    }
+
+    fn lower_shell_capture(&mut self, raw: &CstCapture) -> ShellCaptureDef {
+        let mut fields = self.collect_shell_fields(&raw.body.fields);
+        let stream = match take_optional_ident(&mut fields, "stream") {
+            Ok(Some(value)) if value == "stdout" => ShellCaptureStream::Stdout,
+            Ok(Some(value)) if value == "stderr" => ShellCaptureStream::Stderr,
+            Ok(Some(value)) => {
+                self.errors.push(
+                    Diagnostic::error(
+                        raw.span.clone(),
+                        format!("unknown capture stream `{value}`"),
+                    )
+                    .with_hint("valid streams: `stdout`, `stderr`"),
+                );
+                ShellCaptureStream::Stdout
+            }
+            Ok(None) => ShellCaptureStream::Stdout,
+            Err((span, message)) => {
+                self.errors.push(Diagnostic::error(span, message));
+                ShellCaptureStream::Stdout
+            }
+        };
+        let mode = match take_optional_ident(&mut fields, "mode") {
+            Ok(Some(value)) if value == "replace" => ShellCaptureMode::Replace,
+            Ok(Some(value)) if value == "append" => ShellCaptureMode::Append,
+            Ok(Some(value)) => {
+                self.errors.push(
+                    Diagnostic::error(raw.span.clone(), format!("unknown capture mode `{value}`"))
+                        .with_hint("valid modes: `replace`, `append`"),
+                );
+                ShellCaptureMode::Replace
+            }
+            Ok(None) => ShellCaptureMode::Replace,
+            Err((span, message)) => {
+                self.errors.push(Diagnostic::error(span, message));
+                ShellCaptureMode::Replace
+            }
+        };
+        let parse = fields
+            .remove("parse")
+            .map_or(ShellCaptureParse::Auto, |field| {
+                self.lower_capture_parse(field.value)
+            });
+        self.reject_unknown_fields(&mut fields, &["stream", "mode", "parse"], "shell capture");
+        self.reject_capture_nested_forms(&raw.body);
+        ShellCaptureDef {
+            name: raw.name.name.clone(),
+            stream,
+            mode,
+            parse,
+        }
+    }
+
+    fn collect_shell_fields(&mut self, fields: &[CstField]) -> BTreeMap<String, CstField> {
+        let mut map = BTreeMap::new();
+        for field in fields {
+            if map.contains_key(&field.name.name) {
+                self.errors.push(Diagnostic::error(
+                    field.name.span.clone(),
+                    format!("duplicate field `{}` in block", field.name.name),
+                ));
+                continue;
+            }
+            map.insert(field.name.name.clone(), field.clone());
+        }
+        map
+    }
+
+    fn lower_capture_parse(&mut self, value: CstValue) -> ShellCaptureParse {
+        match value {
+            CstValue::Ident(name, _) if name == "auto" => ShellCaptureParse::Auto,
+            CstValue::Ident(name, span) => {
+                let format = self.lower_capture_format(&name, span);
+                ShellCaptureParse::Ordered(format.into_iter().collect())
+            }
+            CstValue::List(values, span) => {
+                if values.is_empty() {
+                    self.errors.push(Diagnostic::error(
+                        span,
+                        "`parse` format list must not be empty",
+                    ));
+                    return ShellCaptureParse::Ordered(Vec::new());
+                }
+                let mut seen = BTreeSet::new();
+                let mut formats = Vec::with_capacity(values.len());
+                for value in values {
+                    match value {
+                        CstValue::Ident(name, item_span) if name == "auto" => {
+                            self.errors.push(
+                                Diagnostic::error(
+                                    item_span,
+                                    "`auto` cannot be mixed into an ordered parser list",
+                                )
+                                .with_hint("use `parse = auto`, or list concrete formats in order"),
+                            );
+                        }
+                        CstValue::Ident(name, item_span) => {
+                            if let Some(format) = self.lower_capture_format(&name, item_span)
+                                && seen.insert(format.as_str())
+                            {
+                                formats.push(format);
+                            }
+                        }
+                        other => self.errors.push(Diagnostic::error(
+                            other.span(),
+                            "`parse` list entries must be bare format names",
+                        )),
+                    }
+                }
+                ShellCaptureParse::Ordered(formats)
+            }
+            other => {
+                self.errors.push(
+                    Diagnostic::error(
+                        other.span(),
+                        "`parse` must be `auto`, a format name, or an ordered format list",
+                    )
+                    .with_hint("use `parse = auto`, `parse = csv`, or `parse = [json, yaml]`"),
+                );
+                ShellCaptureParse::Auto
+            }
+        }
+    }
+
+    fn lower_capture_format(&mut self, name: &str, span: Span) -> Option<ShellCaptureFormat> {
+        if let Some(format) = ShellCaptureFormat::parse(name) {
+            return Some(format);
+        }
+        let mut diagnostic =
+            Diagnostic::error(span, format!("unknown shell capture format `{name}`"));
+        if let Some(suggestion) = closest(name, ShellCaptureFormat::ALL) {
+            diagnostic = diagnostic.with_hint(format!("did you mean `{suggestion}`?"));
+        } else {
+            diagnostic = diagnostic.with_hint(format!(
+                "valid formats: {}",
+                ShellCaptureFormat::ALL.join(", ")
+            ));
+        }
+        self.errors.push(diagnostic);
+        None
+    }
+
+    fn reject_shell_action_nested_forms(&mut self, body: &CstBlock) {
+        for action in &body.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "nested shell actions are not valid inside `shell { ... }`",
+            ));
+        }
+        for route in &body.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "webhook routes are not valid inside `shell { ... }`",
+            ));
+        }
+        for condition in &body.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions are not valid inside `shell { ... }`",
+            ));
+        }
+        for arm in &body.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid inside `shell { ... }`",
+            ));
+        }
+        for handler in &body.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "event handlers are not valid inside `shell { ... }`",
+            ));
+        }
+    }
+
+    fn reject_capture_nested_forms(&mut self, body: &CstBlock) {
+        for action in &body.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "shell actions are not valid inside a `capture` block",
+            ));
+        }
+        for capture in &body.captures {
+            self.errors.push(Diagnostic::error(
+                capture.span.clone(),
+                "nested captures are not valid inside a `capture` block",
+            ));
+        }
+        for route in &body.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "webhook routes are not valid inside a `capture` block",
+            ));
+        }
+        for condition in &body.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions are not valid inside a `capture` block",
+            ));
+        }
+        for arm in &body.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid inside a `capture` block",
+            ));
+        }
+        for handler in &body.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "event handlers are not valid inside a `capture` block",
+            ));
+        }
     }
 
     pub(super) fn lower_compose_hook(
@@ -244,6 +520,12 @@ impl Analyzer {
     }
 
     fn reject_compose_hook_nested_forms(&mut self, body: &CstBlock) {
+        for capture in &body.captures {
+            self.errors.push(Diagnostic::error(
+                capture.span.clone(),
+                "`capture` is only valid inside a block-form `shell { ... }` action",
+            ));
+        }
         for route in &body.routes {
             self.errors.push(Diagnostic::error(
                 route.span.clone(),
@@ -271,11 +553,27 @@ impl Analyzer {
     }
 }
 
+fn take_optional_ident(
+    fields: &mut BTreeMap<String, CstField>,
+    name: &str,
+) -> Result<Option<String>, (Span, String)> {
+    let Some(field) = fields.remove(name) else {
+        return Ok(None);
+    };
+    match field.value {
+        CstValue::Ident(value, _) => Ok(Some(value)),
+        other => Err((other.span(), format!("`{name}` must be a bare identifier"))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::lower_and_check;
     use crate::diagnostic::Severity;
     use crate::parse_to_cst;
+    use crate::{
+        Action, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse, ShellCaptureStream,
+    };
 
     /// A minimal Iterfile head: every required section plus a runner that
     /// binds its definitions, left open (no closing brace) so a test can
@@ -429,5 +727,143 @@ runner {
                 );
             }
         }
+    }
+
+    #[test]
+    fn block_shell_capture_lowers_to_typed_definition() {
+        let src = iterfile(
+            r#"
+on runner_starting {
+  shell {
+    script = "printf '{\"foo\":1}'"
+    capture context {
+      stream = stderr
+      mode = append
+      parse = [json, yaml, csv]
+    }
+  }
+}
+"#,
+        );
+        let root = crate::parse(&src).expect("valid block shell");
+        let action = &root.runners[0].node.events[0].node.actions[0];
+        let Action::Shell(definition) = action;
+        assert_eq!(definition.script, "printf '{\"foo\":1}'");
+        assert_eq!(definition.captures.len(), 1);
+        let capture = &definition.captures[0];
+        assert_eq!(capture.name, "context");
+        assert_eq!(capture.stream, ShellCaptureStream::Stderr);
+        assert_eq!(capture.mode, ShellCaptureMode::Append);
+        assert_eq!(
+            capture.parse,
+            ShellCaptureParse::Ordered(vec![
+                ShellCaptureFormat::Json,
+                ShellCaptureFormat::Yaml,
+                ShellCaptureFormat::Csv,
+            ])
+        );
+    }
+
+    #[test]
+    fn capture_defaults_are_stdout_replace_auto() {
+        let src = iterfile(
+            r#"
+on runner_starting {
+  shell {
+    script = "printf x"
+    capture context {}
+  }
+}
+"#,
+        );
+        let root = crate::parse(&src).expect("valid default capture");
+        let Action::Shell(definition) = &root.runners[0].node.events[0].node.actions[0];
+        let capture = &definition.captures[0];
+        assert_eq!(capture.stream, ShellCaptureStream::Stdout);
+        assert_eq!(capture.mode, ShellCaptureMode::Replace);
+        assert_eq!(capture.parse, ShellCaptureParse::Auto);
+    }
+
+    #[test]
+    fn capture_rejects_unknown_format_and_duplicate_name() {
+        let src = iterfile(
+            r#"
+on runner_starting {
+  shell {
+    script = "printf x"
+    capture context { parse = jsoon }
+    capture context { parse = auto }
+  }
+}
+"#,
+        );
+        let diagnostics = analyze(&src);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("jsoon")),
+            "unknown format diagnostic missing: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("duplicate capture name")),
+            "duplicate-name diagnostic missing: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn capture_rejects_invalid_stream_mode_and_parser_lists() {
+        let src = iterfile(
+            r#"
+on runner_starting {
+  shell {
+    script = "printf x"
+    capture first {
+      stream = output
+      mode = merge
+      parse = []
+    }
+    capture second {
+      parse = [auto, json]
+    }
+  }
+}
+"#,
+        );
+        let diagnostics = analyze(&src);
+        for expected in [
+            "unknown capture stream",
+            "unknown capture mode",
+            "must not be empty",
+            "`auto` cannot be mixed",
+        ] {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message.contains(expected)),
+                "missing `{expected}` diagnostic: {diagnostics:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn block_shell_requires_script() {
+        let src = iterfile(
+            r#"
+on runner_starting {
+  shell {
+    capture context {}
+  }
+}
+"#,
+        );
+        let diagnostics = analyze(&src);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("requires `script`")),
+            "missing required-script diagnostic: {diagnostics:?}"
+        );
     }
 }

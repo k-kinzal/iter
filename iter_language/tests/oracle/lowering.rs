@@ -8,8 +8,8 @@
 //! each call site.
 
 use iter_language::{
-    CstAction, CstBlock, CstCmpOp, CstCondition, CstEventHandler, CstField, CstFile, CstGuard,
-    CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue, Span,
+    CstAction, CstActionBody, CstBlock, CstCapture, CstCmpOp, CstCondition, CstEventHandler,
+    CstField, CstFile, CstGuard, CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue, Span,
 };
 use pest::iterators::Pair;
 
@@ -69,6 +69,7 @@ fn lower_arg_section(pair: Pair<Rule>) -> CstSection {
             conditions: Vec::new(),
             routes: Vec::new(),
             actions: Vec::new(),
+            captures: Vec::new(),
             prompt_arms: Vec::new(),
             event_handlers: Vec::new(),
             span: name.span.start..span.end,
@@ -435,6 +436,7 @@ fn lower_block(pair: Pair<Rule>) -> CstBlock {
     let mut conditions = Vec::new();
     let mut routes = Vec::new();
     let mut actions = Vec::new();
+    let mut captures = Vec::new();
     let mut prompt_arms = Vec::new();
     let mut event_handlers = Vec::new();
     for entry in pair.into_inner() {
@@ -455,6 +457,7 @@ fn lower_block(pair: Pair<Rule>) -> CstBlock {
                         conditions.push(lower_nested_condition(inner));
                     }
                     Rule::nested_route => routes.push(lower_nested_route(inner)),
+                    Rule::nested_capture => captures.push(lower_nested_capture(inner)),
                     Rule::action => actions.push(lower_action(inner)),
                     Rule::field => fields.push(lower_field(inner)),
                     other => panic!("unexpected block_entry child: {other:?}"),
@@ -468,8 +471,29 @@ fn lower_block(pair: Pair<Rule>) -> CstBlock {
         conditions,
         routes,
         actions,
+        captures,
         prompt_arms,
         event_handlers,
+        span,
+    }
+}
+
+fn lower_nested_capture(pair: Pair<Rule>) -> CstCapture {
+    assert_eq!(pair.as_rule(), Rule::nested_capture);
+    let span = pair_span(&pair);
+    let mut name = None;
+    let mut body = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::kw_capture => {}
+            Rule::ident => name = Some(lower_ident(&child)),
+            Rule::block => body = Some(lower_block(child)),
+            other => panic!("unexpected nested_capture child: {other:?}"),
+        }
+    }
+    CstCapture {
+        name: name.expect("capture name"),
+        body: body.expect("capture body"),
         span,
     }
 }
@@ -601,11 +625,21 @@ fn lower_action(pair: Pair<Rule>) -> CstAction {
     let mut inner = pair.into_inner();
     let kw_pair = inner.next().expect("shell keyword");
     let keyword_span = pair_span(&kw_pair);
-    let cmd_pair = inner.next().expect("action command string");
-    let command = lower_string_raw(&cmd_pair);
+    let body_pair = inner.next().expect("action body");
+    let body = match body_pair.as_rule() {
+        Rule::string => {
+            let script_span = pair_span(&body_pair);
+            CstActionBody::Shorthand {
+                script: lower_string_raw(&body_pair),
+                script_span,
+            }
+        }
+        Rule::block => CstActionBody::Block(lower_block(body_pair)),
+        other => panic!("unexpected action body: {other:?}"),
+    };
     CstAction {
         keyword_span,
-        command,
+        body,
         span,
     }
 }

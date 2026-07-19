@@ -183,7 +183,7 @@ impl<'a> Parser<'a> {
                     if depth == 0
                         && matches!(
                             name.as_str(),
-                            "shell" | "on" | "metadata" | "iteration" | "queue" | "_"
+                            "shell" | "capture" | "on" | "metadata" | "iteration" | "queue" | "_"
                         ) =>
                 {
                     return;
