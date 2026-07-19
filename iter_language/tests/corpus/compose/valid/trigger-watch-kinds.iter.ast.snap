@@ -44,5 +44,6 @@ Compose {
             span: 44..212,
         },
     ],
+    hooks: [],
     composes: [],
 }

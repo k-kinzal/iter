@@ -919,6 +919,193 @@ fn write_compose_project(home_dir: &Path, name: &str) -> (PathBuf, String) {
     (project_dir, service)
 }
 
+#[test]
+fn compose_hooks_observe_clean_multi_service_completion() {
+    let home = TempDir::new().expect("home tempdir");
+    let project_dir = home.path().join("hook-completion");
+    std::fs::create_dir_all(&project_dir).expect("create project");
+    std::fs::write(
+        project_dir.join("Iterfile"),
+        r#"
+workspace local { base = "." }
+agent noop {}
+runner {
+  agent = noop
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "noop"
+  completion {
+    condition iterations as one_turn { max = 1 }
+  }
+}
+"#,
+    )
+    .expect("write Iterfile");
+    std::fs::write(
+        project_dir.join("compose.iter"),
+        r#"
+queue main memory {}
+service hook_a { build = "./Iterfile" }
+service hook_b { build = "./Iterfile" }
+
+on compose_starting { shell "echo compose_starting >> events.txt" }
+on services_started {
+  services = [hook_a, hook_b]
+  shell "echo services_started >> events.txt"
+}
+on compose_started { shell "echo compose_started >> events.txt" }
+on services_completed {
+  services = [hook_a, hook_b]
+  shell "echo services_completed:$ITER_COMPOSE_SERVICES >> events.txt"
+}
+on services_settled {
+  services = [hook_a, hook_b]
+  shell "echo services_settled >> events.txt"
+}
+on compose_completing { shell "echo compose_completing >> events.txt" }
+on compose_completed { shell "echo compose_completed >> events.txt" }
+"#,
+    )
+    .expect("write compose.iter");
+
+    let output = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up"])
+        .output()
+        .expect("run compose");
+    assert!(
+        output.status.success(),
+        "compose up exit={:?}; stderr=\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let events = std::fs::read_to_string(project_dir.join("events.txt")).expect("events marker");
+    let lines: Vec<&str> = events.lines().collect();
+    assert_eq!(lines.first(), Some(&"compose_starting"));
+    assert!(lines.contains(&"services_started"));
+    assert!(lines.contains(&"compose_started"));
+    assert!(lines.contains(&"services_completed:hook_a,hook_b"));
+    assert!(lines.contains(&"services_settled"));
+    assert!(lines.contains(&"compose_completing"));
+    assert_eq!(lines.last(), Some(&"compose_completed"));
+}
+
+#[test]
+fn compose_hooks_observe_service_and_compose_failure() {
+    let home = TempDir::new().expect("home tempdir");
+    let project_dir = home.path().join("hook-failure");
+    std::fs::create_dir_all(&project_dir).expect("create project");
+    std::fs::write(
+        project_dir.join("Iterfile"),
+        r#"
+workspace local { base = "." }
+agent generic { command = ["/iter-test/command-does-not-exist"] }
+runner {
+  agent = generic
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "fail"
+}
+"#,
+    )
+    .expect("write Iterfile");
+    std::fs::write(
+        project_dir.join("compose.iter"),
+        r#"
+queue main memory {}
+service failing { build = "./Iterfile" }
+
+on service_failed {
+  shell "echo service_failed:$ITER_COMPOSE_SERVICE >> events.txt"
+}
+on services_failed {
+  shell "echo services_failed:$ITER_COMPOSE_SERVICE >> events.txt"
+}
+on services_settled { shell "echo services_settled >> events.txt" }
+on compose_failing { shell "echo compose_failing >> events.txt" }
+on compose_failed { shell "echo compose_failed >> events.txt" }
+"#,
+    )
+    .expect("write compose.iter");
+
+    let output = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up"])
+        .output()
+        .expect("run compose");
+    assert!(
+        !output.status.success(),
+        "failing service must fail compose"
+    );
+
+    let events = std::fs::read_to_string(project_dir.join("events.txt")).expect("events marker");
+    let lines: Vec<&str> = events.lines().collect();
+    assert!(lines.contains(&"service_failed:failing"));
+    assert!(lines.contains(&"services_failed:failing"));
+    assert!(lines.contains(&"services_settled"));
+    assert!(lines.contains(&"compose_failing"));
+    assert_eq!(lines.last(), Some(&"compose_failed"));
+}
+
+#[test]
+fn compose_hooks_observe_external_project_stop() {
+    let home = TempDir::new().expect("home tempdir");
+    let project_dir = home.path().join("hook-stop");
+    std::fs::create_dir_all(&project_dir).expect("create project");
+    std::fs::write(project_dir.join("Iterfile"), TEST_ITERFILE).expect("write Iterfile");
+    std::fs::write(
+        project_dir.join("compose.iter"),
+        r#"
+queue main file { path = "./.iter/queue" }
+service waiting { build = "./Iterfile" }
+
+on compose_stopping { shell "echo compose_stopping >> events.txt" }
+on service_killed { shell "echo service_killed:$ITER_COMPOSE_SERVICE >> events.txt" }
+on services_settled { shell "echo services_settled >> events.txt" }
+on compose_stopped { shell "echo compose_stopped >> events.txt" }
+"#,
+    )
+    .expect("write compose.iter");
+
+    let up = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "up", "--detach"])
+        .output()
+        .expect("compose up");
+    assert!(
+        up.status.success(),
+        "compose up exit={:?}; stderr=\n{}",
+        up.status.code(),
+        String::from_utf8_lossy(&up.stderr)
+    );
+
+    let down = Command::new(iter_bin())
+        .current_dir(&project_dir)
+        .env("HOME", home.path())
+        .args(["compose", "down", "--quiet", "--timeout", "5"])
+        .output()
+        .expect("compose down");
+    assert!(
+        down.status.success(),
+        "compose down exit={:?}; stderr=\n{}",
+        down.status.code(),
+        String::from_utf8_lossy(&down.stderr)
+    );
+
+    let events = std::fs::read_to_string(project_dir.join("events.txt")).expect("events marker");
+    let lines: Vec<&str> = events.lines().collect();
+    assert_eq!(lines.first(), Some(&"compose_stopping"));
+    assert!(lines.contains(&"service_killed:waiting"));
+    assert!(lines.contains(&"services_settled"));
+    assert_eq!(lines.last(), Some(&"compose_stopped"));
+}
+
 /// Read every `meta.json` under `<home>/.iter/proc/` and return the
 /// parsed records. Used to look at labels without going through the
 /// `iter ps` formatter.

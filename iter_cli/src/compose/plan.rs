@@ -12,6 +12,7 @@ use iter_language::{
 
 use super::error::ComposeError;
 use super::flatten::{FlattenedPlan, flatten_composes};
+use super::hook::{ComposeHookPlan, build_hook_plans};
 use super::service_build::build_service;
 use super::trigger::{ComposeTrigger, build_trigger};
 use crate::queue::queue_from_def;
@@ -33,6 +34,7 @@ pub(crate) struct ComposePlan {
     pub(crate) queues: BTreeMap<String, Arc<dyn Queue>>,
     pub(crate) services: Vec<ComposeService>,
     pub(crate) triggers: Vec<ComposeTrigger>,
+    pub(crate) hooks: Vec<ComposeHookPlan>,
     pub(crate) telemetry: Option<TelemetryDef>,
     pub(crate) compose_path: PathBuf,
     pub(crate) sources: BTreeMap<String, PathBuf>,
@@ -50,6 +52,7 @@ impl std::fmt::Debug for ComposePlan {
                 "triggers",
                 &self.triggers.iter().map(|t| &t.name).collect::<Vec<_>>(),
             )
+            .field("hooks", &self.hooks.len())
             .field("telemetry", &self.telemetry.is_some())
             .field("compose_path", &self.compose_path)
             .field("sources", &self.sources.keys().collect::<Vec<_>>())
@@ -202,10 +205,21 @@ pub(crate) fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, 
         triggers.push(trigger);
     }
 
+    let service_names: Vec<String> = services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect();
+    let trigger_names: Vec<String> = triggers
+        .iter()
+        .map(|trigger| trigger.name.clone())
+        .collect();
+    let hooks = build_hook_plans(&flat.hooks, &service_names, &trigger_names)?;
+
     Ok(ComposePlan {
         queues,
         services,
         triggers,
+        hooks,
         telemetry: flat.telemetry.map(|t| t.node),
         compose_path: compose_path.to_path_buf(),
         sources,

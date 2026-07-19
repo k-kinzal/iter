@@ -92,14 +92,12 @@ impl Analyzer {
                         ),
                     );
                 }
-                CstSection::On { span, .. } => {
-                    self.errors.push(
-                        Diagnostic::error(
-                            span,
-                            "`on` event handlers are not valid at compose.iter top level",
-                        )
-                        .with_hint("event handlers belong inside a `service` block (inline form)."),
-                    );
+                CstSection::On {
+                    event, body, span, ..
+                } => {
+                    if let Some(hook) = self.lower_compose_hook(&event, &body, span) {
+                        root.hooks.push(hook);
+                    }
                 }
             }
         }
@@ -137,7 +135,7 @@ impl Analyzer {
                         parts.keyword_span,
                         format!("unknown compose.iter top-level keyword `{other}`"),
                     )
-                    .with_hint("expected one of: queue, service, trigger, compose, telemetry."),
+                    .with_hint("expected one of: queue, service, trigger, compose, telemetry, on."),
                 );
             }
         }

@@ -16,9 +16,11 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
+use super::hook::ManagedEvent;
 use super::trigger::{ComposeTrigger, TriggerRunError, enqueue_terminate, run_trigger_once};
 
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
@@ -165,10 +167,23 @@ fn make_result(
     }
 }
 
-fn transition(status: &mut TriggerStatus, state: TriggerLifecycleState, state_dir: &Path) {
+fn transition(
+    status: &mut TriggerStatus,
+    state: TriggerLifecycleState,
+    state_dir: &Path,
+    events: Option<&UnboundedSender<ManagedEvent>>,
+) {
     status.state = state;
     status.last_state_change = Utc::now();
     write_status(state_dir, status);
+    if let Some(events) = events {
+        drop(events.send(ManagedEvent::TriggerTransition {
+            name: status.name.clone(),
+            state,
+            restart_count: status.restart_count,
+            error: status.last_error.clone(),
+        }));
+    }
 }
 
 /// Supervise a trigger for the lifetime of the orchestrator.
@@ -183,6 +198,7 @@ pub(crate) async fn supervise_trigger(
     trigger: ComposeTrigger,
     cancel: CancellationToken,
     state_dir: PathBuf,
+    events: Option<UnboundedSender<ManagedEvent>>,
 ) -> TriggerSupervisorRun {
     let name = trigger.name.clone();
     let finite = trigger.is_finite();
@@ -205,7 +221,12 @@ pub(crate) async fn supervise_trigger(
 
     loop {
         info!(trigger = %name, restart_count = status.restart_count, "starting compose trigger");
-        transition(&mut status, TriggerLifecycleState::Running, &state_dir);
+        transition(
+            &mut status,
+            TriggerLifecycleState::Running,
+            &state_dir,
+            events.as_ref(),
+        );
 
         let result = run_trigger_once(&trigger, cancel.clone()).await;
 
@@ -213,22 +234,37 @@ pub(crate) async fn supervise_trigger(
             if let Err(ref e) = result {
                 status.last_error = Some(e.to_string());
             }
-            transition(&mut status, TriggerLifecycleState::Stopped, &state_dir);
+            transition(
+                &mut status,
+                TriggerLifecycleState::Stopped,
+                &state_dir,
+                events.as_ref(),
+            );
             return make_result(name, status, result);
         }
 
         match &result {
             Ok(()) if finite => {
                 info!(trigger = %name, "finite trigger completed normally");
-                transition(&mut status, TriggerLifecycleState::Completed, &state_dir);
                 if terminate_on_completion {
                     if let Err(e) = enqueue_terminate(&trigger).await {
                         warn!(trigger = %name, error = %e, "failed to enqueue terminate signal");
                         status.last_error = Some(e.to_string());
-                        write_status(&state_dir, &status);
+                        transition(
+                            &mut status,
+                            TriggerLifecycleState::Failed,
+                            &state_dir,
+                            events.as_ref(),
+                        );
                         return make_result(name, status, Err(e));
                     }
                 }
+                transition(
+                    &mut status,
+                    TriggerLifecycleState::Completed,
+                    &state_dir,
+                    events.as_ref(),
+                );
                 return make_result(name, status, Ok(()));
             }
             Ok(()) => {
@@ -239,7 +275,12 @@ pub(crate) async fn supervise_trigger(
             Err(e) if matches!(e, TriggerRunError::Build(_)) => {
                 warn!(trigger = %name, error = %e, "trigger build failed; will not restart");
                 status.last_error = Some(e.to_string());
-                transition(&mut status, TriggerLifecycleState::Failed, &state_dir);
+                transition(
+                    &mut status,
+                    TriggerLifecycleState::Failed,
+                    &state_dir,
+                    events.as_ref(),
+                );
                 return make_result(name, status, result);
             }
             Err(e) => {
@@ -252,14 +293,24 @@ pub(crate) async fn supervise_trigger(
         drop(result);
         status.restart_count += 1;
         let backoff = compute_backoff(status.restart_count);
-        transition(&mut status, TriggerLifecycleState::Restarting, &state_dir);
+        transition(
+            &mut status,
+            TriggerLifecycleState::Restarting,
+            &state_dir,
+            events.as_ref(),
+        );
         let backoff_ms = backoff.as_millis() as u64;
         warn!(trigger = %name, backoff_ms, restart_count = status.restart_count, "waiting before restart");
 
         tokio::select! {
             biased;
             () = cancel.cancelled() => {
-                transition(&mut status, TriggerLifecycleState::Stopped, &state_dir);
+                transition(
+                    &mut status,
+                    TriggerLifecycleState::Stopped,
+                    &state_dir,
+                    events.as_ref(),
+                );
                 return make_result(name, status, Ok(()));
             }
             () = tokio::time::sleep(backoff) => {}
@@ -399,7 +450,7 @@ mod tests {
         );
 
         let cancel = CancellationToken::new();
-        let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir.clone(), None).await;
 
         assert_eq!(supervised.status.state, TriggerLifecycleState::Completed);
         assert_eq!(supervised.status.restart_count, 0);
@@ -426,7 +477,7 @@ mod tests {
 
         let cancel = CancellationToken::new();
         let state_dir = dir.path().join("state");
-        let supervised = supervise_trigger(trigger, cancel, state_dir).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir, None).await;
 
         assert_eq!(supervised.status.state, TriggerLifecycleState::Completed);
         assert!(supervised.result.is_ok());
@@ -472,7 +523,7 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir.clone(), None).await;
 
         assert_eq!(supervised.status.state, TriggerLifecycleState::Stopped);
 
@@ -500,7 +551,7 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let supervised = supervise_trigger(trigger, cancel, state_dir.clone()).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir.clone(), None).await;
 
         assert_eq!(supervised.status.state, TriggerLifecycleState::Stopped);
         assert!(
@@ -542,7 +593,7 @@ mod tests {
             cancel_clone.cancel();
         });
 
-        let supervised = supervise_trigger(trigger, cancel, state_dir).await;
+        let supervised = supervise_trigger(trigger, cancel, state_dir, None).await;
 
         // Should be stopped (cancelled during backoff), not completed
         assert_eq!(supervised.status.state, TriggerLifecycleState::Stopped);

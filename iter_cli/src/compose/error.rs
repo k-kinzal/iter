@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use crate::process::{ProcessError, ProcessStatus, SpawnError};
 
+use super::hook::ComposeHookBuildError;
 use crate::arg::ArgError;
 use crate::queue::QueueBuildError;
 use crate::start::StartError;
@@ -194,6 +195,9 @@ pub(crate) enum ComposeError {
         /// The unsupported trigger kind.
         kind: String,
     },
+    /// A Compose Hook selector or shell template is invalid for this plan.
+    #[error(transparent)]
+    Hook(#[from] ComposeHookBuildError),
 }
 
 impl ComposeError {

@@ -250,7 +250,12 @@ At top level only the `prompt as <name> "..."` named-definition form is accepted
 on_section = { kw_on ~ ident ~ block }
 ```
 
-The event name is an identifier (not a string). Valid names are listed on [`iterfile/on.md`](iterfile/on.md). In an Iterfile, `on <event> { ... }` handlers live **inside the `runner` block** (as nested block entries); a top-level `on <event>` parses but is rejected during analysis. (Inside a `compose.iter` inline service the handler likewise sits within the service.)
+The event name is an identifier (not a string). In an Iterfile, Runner Hooks
+live inside the `runner` block; a top-level `on <event>` is rejected. In a
+`compose.iter`, top-level `on <compose-event>` declares a Compose Hook, while
+Runner Hooks in an inline service remain inside that service's `runner`.
+The two event sets are distinct; see [`iterfile/on.md`](iterfile/on.md) and
+[`compose/on.md`](compose/on.md).
 
 ---
 

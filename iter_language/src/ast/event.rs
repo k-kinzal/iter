@@ -1,12 +1,241 @@
-//! Event-handler AST: top-level `on <event> { ... }` declarations.
+//! Event-handler AST for Runner and Compose hooks.
 
-/// A top-level `on <event-name> { <actions> }` declaration.
+/// A Runner-scoped `on <event-name> { <actions> }` declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventHandlerDef {
     /// Lifecycle event the handler subscribes to.
     pub event: EventName,
     /// Actions to execute, in source order.
     pub actions: Vec<Action>,
+}
+
+/// A Compose-level `on <event-name> { <selectors> <actions> }` declaration.
+///
+/// Compose hooks belong to the orchestrator declaration, not to a Runner.
+/// Resource selectors are optional: `None` means every resource of the
+/// corresponding kind managed by this Compose run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposeHookDef {
+    /// Compose lifecycle event the hook subscribes to.
+    pub event: ComposeEventName,
+    /// Service filter or aggregate target set.
+    pub services: Option<Vec<String>>,
+    /// Trigger filter or aggregate target set.
+    pub triggers: Option<Vec<String>>,
+    /// Actions to execute, in source order.
+    pub actions: Vec<Action>,
+}
+
+/// Lifecycle and aggregate events observable by a Compose orchestrator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ComposeEventName {
+    /// Before the first managed resource is started.
+    ComposeStarting,
+    /// After every initial managed resource has reached its running state.
+    ComposeStarted,
+    /// After every managed task completed normally, before queues are closed.
+    ComposeCompleting,
+    /// After normal shutdown and queue close complete.
+    ComposeCompleted,
+    /// When the first fatal managed-resource failure is known, before policy.
+    ComposeFailing,
+    /// After failure handling, resource stop, and queue close complete.
+    ComposeFailed,
+    /// Before externally requested resource shutdown begins.
+    ComposeStopping,
+    /// After externally requested resource shutdown and queue close complete.
+    ComposeStopped,
+    /// Immediately before a service's iter process is started.
+    ServiceStarting,
+    /// After a service's iter process reaches `Running`.
+    ServiceStarted,
+    /// After a service's iter process stops normally.
+    ServiceCompleted,
+    /// After a service fails to start, run, monitor, or finalize.
+    ServiceFailed,
+    /// After a service is killed by an external stop or orchestrator cancellation.
+    ServiceKilled,
+    /// Immediately before a Trigger supervisor is started.
+    TriggerStarting,
+    /// After a Trigger reaches `Running`, including after restarts.
+    TriggerStarted,
+    /// After a Trigger supervisor enters restart backoff.
+    TriggerRestarting,
+    /// After a finite Trigger completes normally.
+    TriggerCompleted,
+    /// After a Trigger becomes permanently failed.
+    TriggerFailed,
+    /// After a Trigger is stopped by orchestrator shutdown.
+    TriggerStopped,
+    /// Once every selected service has reached `Running` at least once.
+    ServicesStarted,
+    /// Once every selected service has stopped normally.
+    ServicesCompleted,
+    /// Once the first selected service fails.
+    ServicesFailed,
+    /// Once every selected service is completed, failed, or killed.
+    ServicesSettled,
+    /// Once every selected Trigger has reached `Running` at least once.
+    TriggersStarted,
+    /// Once every selected finite Trigger has completed normally.
+    TriggersCompleted,
+    /// Once the first selected Trigger becomes permanently failed.
+    TriggersFailed,
+    /// Once every selected Trigger is completed, failed, or stopped.
+    TriggersSettled,
+}
+
+impl ComposeEventName {
+    /// Return the canonical source-form spelling for this event.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ComposeStarting => "compose_starting",
+            Self::ComposeStarted => "compose_started",
+            Self::ComposeCompleting => "compose_completing",
+            Self::ComposeCompleted => "compose_completed",
+            Self::ComposeFailing => "compose_failing",
+            Self::ComposeFailed => "compose_failed",
+            Self::ComposeStopping => "compose_stopping",
+            Self::ComposeStopped => "compose_stopped",
+            Self::ServiceStarting => "service_starting",
+            Self::ServiceStarted => "service_started",
+            Self::ServiceCompleted => "service_completed",
+            Self::ServiceFailed => "service_failed",
+            Self::ServiceKilled => "service_killed",
+            Self::TriggerStarting => "trigger_starting",
+            Self::TriggerStarted => "trigger_started",
+            Self::TriggerRestarting => "trigger_restarting",
+            Self::TriggerCompleted => "trigger_completed",
+            Self::TriggerFailed => "trigger_failed",
+            Self::TriggerStopped => "trigger_stopped",
+            Self::ServicesStarted => "services_started",
+            Self::ServicesCompleted => "services_completed",
+            Self::ServicesFailed => "services_failed",
+            Self::ServicesSettled => "services_settled",
+            Self::TriggersStarted => "triggers_started",
+            Self::TriggersCompleted => "triggers_completed",
+            Self::TriggersFailed => "triggers_failed",
+            Self::TriggersSettled => "triggers_settled",
+        }
+    }
+
+    /// Parse a canonical source-form spelling.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "compose_starting" => Self::ComposeStarting,
+            "compose_started" => Self::ComposeStarted,
+            "compose_completing" => Self::ComposeCompleting,
+            "compose_completed" => Self::ComposeCompleted,
+            "compose_failing" => Self::ComposeFailing,
+            "compose_failed" => Self::ComposeFailed,
+            "compose_stopping" => Self::ComposeStopping,
+            "compose_stopped" => Self::ComposeStopped,
+            "service_starting" => Self::ServiceStarting,
+            "service_started" => Self::ServiceStarted,
+            "service_completed" => Self::ServiceCompleted,
+            "service_failed" => Self::ServiceFailed,
+            "service_killed" => Self::ServiceKilled,
+            "trigger_starting" => Self::TriggerStarting,
+            "trigger_started" => Self::TriggerStarted,
+            "trigger_restarting" => Self::TriggerRestarting,
+            "trigger_completed" => Self::TriggerCompleted,
+            "trigger_failed" => Self::TriggerFailed,
+            "trigger_stopped" => Self::TriggerStopped,
+            "services_started" => Self::ServicesStarted,
+            "services_completed" => Self::ServicesCompleted,
+            "services_failed" => Self::ServicesFailed,
+            "services_settled" => Self::ServicesSettled,
+            "triggers_started" => Self::TriggersStarted,
+            "triggers_completed" => Self::TriggersCompleted,
+            "triggers_failed" => Self::TriggersFailed,
+            "triggers_settled" => Self::TriggersSettled,
+            _ => return None,
+        })
+    }
+
+    /// Whether this event is scoped to one or more services.
+    #[must_use]
+    pub fn uses_services(self) -> bool {
+        matches!(
+            self,
+            Self::ServiceStarting
+                | Self::ServiceStarted
+                | Self::ServiceCompleted
+                | Self::ServiceFailed
+                | Self::ServiceKilled
+                | Self::ServicesStarted
+                | Self::ServicesCompleted
+                | Self::ServicesFailed
+                | Self::ServicesSettled
+        )
+    }
+
+    /// Whether this event is scoped to one or more Triggers.
+    #[must_use]
+    pub fn uses_triggers(self) -> bool {
+        matches!(
+            self,
+            Self::TriggerStarting
+                | Self::TriggerStarted
+                | Self::TriggerRestarting
+                | Self::TriggerCompleted
+                | Self::TriggerFailed
+                | Self::TriggerStopped
+                | Self::TriggersStarted
+                | Self::TriggersCompleted
+                | Self::TriggersFailed
+                | Self::TriggersSettled
+        )
+    }
+
+    /// Whether this is a handler-local aggregate event.
+    #[must_use]
+    pub fn is_aggregate(self) -> bool {
+        matches!(
+            self,
+            Self::ServicesStarted
+                | Self::ServicesCompleted
+                | Self::ServicesFailed
+                | Self::ServicesSettled
+                | Self::TriggersStarted
+                | Self::TriggersCompleted
+                | Self::TriggersFailed
+                | Self::TriggersSettled
+        )
+    }
+
+    /// All known canonical Compose event names.
+    pub const ALL: &'static [&'static str] = &[
+        "compose_starting",
+        "compose_started",
+        "compose_completing",
+        "compose_completed",
+        "compose_failing",
+        "compose_failed",
+        "compose_stopping",
+        "compose_stopped",
+        "service_starting",
+        "service_started",
+        "service_completed",
+        "service_failed",
+        "service_killed",
+        "trigger_starting",
+        "trigger_started",
+        "trigger_restarting",
+        "trigger_completed",
+        "trigger_failed",
+        "trigger_stopped",
+        "services_started",
+        "services_completed",
+        "services_failed",
+        "services_settled",
+        "triggers_started",
+        "triggers_completed",
+        "triggers_failed",
+        "triggers_settled",
+    ];
 }
 
 /// Lifecycle events recognised by the language.
@@ -205,6 +434,14 @@ mod tests {
                 ),
                 "deprecated alias `{name}` leaked into EventName::ALL"
             );
+        }
+    }
+
+    #[test]
+    fn compose_event_names_round_trip() {
+        for name in ComposeEventName::ALL {
+            let parsed = ComposeEventName::parse(name).expect("canonical name parses");
+            assert_eq!(parsed.as_str(), *name);
         }
     }
 }

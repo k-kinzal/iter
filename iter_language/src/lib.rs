@@ -61,16 +61,16 @@ mod semantic;
 pub use ast::{
     Action, AgentDef, AgentMode, ApplyBackDef, ArgDef, CloneApplyBackMode, CmpOp,
     CompletionConditionDef, CompletionConditionErrorPolicy, CompletionDef, Compose,
-    ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef, DlqTargetDef, EventHandlerDef,
-    EventName, ExtractExpr, FilesSource, GitFastForward, GitLocator, InlineService, IterationField,
-    Iterfile, MetadataSource, NamedCompose, NamedDef, NamedPrompt, NamedQueue, NamedService,
-    NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptGuard,
-    PromptValue, QueueDef, QueueRef, RetryPolicyDef, RouterFallbackClass, RouterFallbackTriggers,
-    RouterStrategy, RunnerDef, SandboxNetworkDef, SandboxPolicyDef, SecretExpr, ServiceSource,
-    SignalAcquisition, SourceDef, SourceDerive, SourceDisposition, Span, Spanned, SqsConfig,
-    SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,
-    Subscription, TelemetryDef, TelemetryProtocol, TriggerDef, Value, WatchEventKind, WorkspaceDef,
-    WorkspaceSourceRef,
+    ComposeEventName, ComposeHookDef, ComposeServiceOverride, ComposeTriggerOverride, DlqPolicyDef,
+    DlqTargetDef, EventHandlerDef, EventName, ExtractExpr, FilesSource, GitFastForward, GitLocator,
+    InlineService, IterationField, Iterfile, MetadataSource, NamedCompose, NamedDef, NamedPrompt,
+    NamedQueue, NamedService, NamedTrigger, OnErrorKeyword, PriorityKeyword, PromptArm, PromptDef,
+    PromptExpr, PromptGuard, PromptValue, QueueDef, QueueRef, RetryPolicyDef, RouterFallbackClass,
+    RouterFallbackTriggers, RouterStrategy, RunnerDef, SandboxNetworkDef, SandboxPolicyDef,
+    SecretExpr, ServiceSource, SignalAcquisition, SourceDef, SourceDerive, SourceDisposition, Span,
+    Spanned, SqsConfig, SqsConsumer, SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity,
+    SqsProducer, Subscription, TelemetryDef, TelemetryProtocol, TriggerDef, Value, WatchEventKind,
+    WorkspaceDef, WorkspaceSourceRef,
 };
 pub use diagnostic::{Diagnostic, Severity};
 pub use parser::{
@@ -93,7 +93,7 @@ pub use parser::{
 /// component. Adding a new optional field, a new kind that is parsed but not
 /// required, or a new diagnostic message bumps the minor component. Bug
 /// fixes and documentation changes bump the patch component.
-pub const GRAMMAR_VERSION: &str = "4.3.0";
+pub const GRAMMAR_VERSION: &str = "4.4.0";
 
 /// Parse the given source text into a validated [`Iterfile`].
 ///
@@ -178,11 +178,12 @@ pub fn parse_to_cst(source: &str) -> (Option<CstFile>, Vec<Diagnostic>) {
 ///
 /// Shares the lexer + CST + per-kind builders with [`parse`], but interprets
 /// each top-level section under compose semantics: the first identifier is
-/// the section *name*, the optional second identifier is the kind. Four
-/// section keywords are recognised: `queue`, `service`, `trigger`, and
-/// `compose`. Any other section keyword (`prompt`, `runner`, top-level `on`)
-/// is rejected at the compose layer because those sections only make sense
-/// inside a service body.
+/// the section *name*, the optional second identifier is the kind. Named
+/// `queue`, `service`, `trigger`, and `compose` sections are recognised,
+/// together with singleton `telemetry` and top-level
+/// `on <compose-event> { ... }` hooks. Other section keywords (`prompt`,
+/// `runner`, and so on) are rejected at the compose layer because those
+/// sections only make sense inside a service body.
 ///
 /// # Errors
 ///

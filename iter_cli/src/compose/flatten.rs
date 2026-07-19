@@ -33,6 +33,10 @@ pub(super) fn flatten_composes(
         queues: root.queues.clone(),
         services: root.services.clone(),
         triggers: root.triggers.clone(),
+        // A nested compose declaration does not create another orchestrator.
+        // Hooks therefore stay scoped to the root Compose run and are not
+        // imported with child resource declarations.
+        hooks: root.hooks.clone(),
         composes: Vec::new(),
     };
     let mut sources: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -316,6 +320,7 @@ mod tests {
             r#"
                 queue child_q file { path = "./.iter/child_queue" }
                 trigger child_cron cron { schedule = "0 * * * *" target = child_q }
+                on compose_started { shell "echo child" }
             "#,
         );
 
@@ -324,6 +329,7 @@ mod tests {
             r#"
                 queue parent_q file { path = "./.iter/parent_queue" }
                 compose child { build = "./child/compose.iter" }
+                on compose_starting { shell "echo parent" }
             "#,
         );
 
@@ -360,6 +366,15 @@ mod tests {
 
         assert!(result.sources.contains_key("child_q"));
         assert!(result.sources.contains_key("child_cron"));
+        assert_eq!(
+            result.root.hooks.len(),
+            1,
+            "only the root orchestrator's hooks are active"
+        );
+        assert_eq!(
+            result.root.hooks[0].node.event,
+            iter_language::ComposeEventName::ComposeStarting
+        );
     }
 
     #[test]

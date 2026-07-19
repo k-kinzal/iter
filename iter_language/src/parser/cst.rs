@@ -58,7 +58,7 @@ pub enum CstSection {
         /// Full span of the section.
         span: Span,
     },
-    /// Top-level `on <ident> { ... }`.
+    /// Top-level `on <ident> { ... }` (Compose Hook syntax; rejected for Iterfiles).
     On {
         /// Source span of the `on` keyword.
         keyword_span: Span,

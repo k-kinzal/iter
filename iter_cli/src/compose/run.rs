@@ -9,13 +9,17 @@ use crate::process::{
     spawn_detached,
 };
 use iter_language::TelemetryDef;
+use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
+use super::hook::{ComposeHookRuntime, ManagedEvent, ServiceTerminalState};
 use super::plan::{ComposePlan, ComposeService};
-use super::service::{CompletedServices, CompletedTask, FailurePolicy, OrchestratorContext};
+use super::service::{
+    CompletedServices, CompletedTask, ComposeTermination, FailurePolicy, OrchestratorContext,
+};
 use super::supervisor;
 use crate::process_lifecycle::{
     self, ProcessTerminationReason, RunRecordMetadata, TerminationRecorder, derive_finalize_reason,
@@ -55,33 +59,58 @@ pub(crate) async fn run(
         queues,
         services,
         triggers,
+        hooks: hook_plans,
         telemetry,
         compose_path,
         sources: _,
     } = plan;
 
     let state_root = supervisor::trigger_state_root();
+    let service_names: Vec<String> = services
+        .iter()
+        .map(|service| service.name.clone())
+        .collect();
+    let trigger_names: Vec<String> = triggers
+        .iter()
+        .map(|trigger| trigger.name.clone())
+        .collect();
+    let mut hooks = ComposeHookRuntime::new(
+        hook_plans,
+        orchestrator.project.clone(),
+        compose_path.clone(),
+        service_names,
+        trigger_names,
+    );
+    hooks
+        .compose_event(iter_language::ComposeEventName::ComposeStarting, None)
+        .await;
 
     let mut set: JoinSet<CompletedTask> = JoinSet::new();
+    let managed_cancel = CancellationToken::new();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
 
     for service in services {
+        hooks.service_starting(&service.name).await;
         spawn_service_task(
             &mut set,
             service,
             &compose_path,
-            &cancel,
+            &managed_cancel,
             &metadata,
             parent_id,
             &orchestrator,
             telemetry.as_ref(),
+            event_tx.clone(),
         )
         .await;
     }
 
     for trig in triggers {
-        let trigger_cancel = cancel.clone();
+        hooks.trigger_starting(&trig.name).await;
+        let trigger_cancel = managed_cancel.clone();
         let project = orchestrator.project.clone();
         let trig_name = trig.name.clone();
+        let trigger_events = event_tx.clone();
         let state_dir = state_root
             .as_ref()
             .map(|root| supervisor::trigger_state_dir(root, &project, &trig.name));
@@ -92,7 +121,9 @@ pub(crate) async fn run(
                     .join(&project)
                     .join(&trig_name)
             });
-            let supervised = supervisor::supervise_trigger(trig, trigger_cancel, dir).await;
+            let supervised =
+                supervisor::supervise_trigger(trig, trigger_cancel, dir, Some(trigger_events))
+                    .await;
             CompletedTask::Trigger {
                 name: supervised.name,
                 result: supervised.result,
@@ -101,25 +132,102 @@ pub(crate) async fn run(
             }
         });
     }
+    drop(event_tx);
 
     let mut results = Vec::new();
-    while let Some(joined) = set.join_next().await {
-        let completed = match joined {
-            Ok(task) => task,
-            Err(join_err) => {
-                warn!(error = %join_err, "compose task panicked");
-                CompletedTask::Panic {
-                    error: join_err.to_string(),
+    let mut compose_started = false;
+    let mut external_stop = false;
+    let mut fatal_error: Option<String> = None;
+
+    while !set.is_empty() {
+        tokio::select! {
+            biased;
+            Some(event) = event_rx.recv() => {
+                apply_managed_event(&mut hooks, event).await;
+                if !compose_started && hooks.all_resources_started() {
+                    compose_started = true;
+                    hooks
+                        .compose_event(iter_language::ComposeEventName::ComposeStarted, None)
+                        .await;
                 }
             }
-        };
-        if completed.is_err() && policy == FailurePolicy::AbortAll {
-            cancel.cancel();
+            () = cancel.cancelled(), if !external_stop => {
+                external_stop = true;
+                hooks
+                    .compose_event(iter_language::ComposeEventName::ComposeStopping, None)
+                    .await;
+                managed_cancel.cancel();
+            }
+            joined = set.join_next() => {
+                let Some(joined) = joined else {
+                    break;
+                };
+                let completed = match joined {
+                    Ok(task) => task,
+                    Err(join_err) => {
+                        warn!(error = %join_err, "compose task panicked");
+                        CompletedTask::Panic {
+                            error: join_err.to_string(),
+                        }
+                    }
+                };
+
+                dispatch_task_terminal(&mut hooks, &completed).await;
+                if !external_stop && fatal_error.is_none() && completed.is_fatal() {
+                    let message = completed
+                        .fatal_message()
+                        .unwrap_or_else(|| format!("managed task `{}` did not complete normally", completed.name()));
+                    hooks
+                        .compose_event(
+                            iter_language::ComposeEventName::ComposeFailing,
+                            Some(message.clone()),
+                        )
+                        .await;
+                    fatal_error = Some(message);
+                    if policy == FailurePolicy::AbortAll {
+                        managed_cancel.cancel();
+                    }
+                }
+                results.push(completed);
+            }
         }
-        results.push(completed);
     }
 
+    while let Ok(event) = event_rx.try_recv() {
+        apply_managed_event(&mut hooks, event).await;
+        if !compose_started && hooks.all_resources_started() {
+            compose_started = true;
+            hooks
+                .compose_event(iter_language::ComposeEventName::ComposeStarted, None)
+                .await;
+        }
+    }
+
+    if !external_stop
+        && fatal_error.is_none()
+        && !results.iter().all(CompletedTask::completed_naturally)
+    {
+        let message =
+            "all managed tasks settled, but at least one did not complete normally".to_owned();
+        hooks
+            .compose_event(
+                iter_language::ComposeEventName::ComposeFailing,
+                Some(message.clone()),
+            )
+            .await;
+        fatal_error = Some(message);
+    }
+
+    if !external_stop && fatal_error.is_none() {
+        hooks
+            .compose_event(iter_language::ComposeEventName::ComposeCompleting, None)
+            .await;
+    }
+
+    // Stop the OS-signal listener tasks installed around the outer token now
+    // that no managed task can observe another external transition.
     cancel.cancel();
+    managed_cancel.cancel();
 
     for (name, queue) in &queues {
         if let Err(err) = queue.close().await {
@@ -127,7 +235,68 @@ pub(crate) async fn run(
         }
     }
 
-    CompletedServices { results }
+    let termination = if external_stop {
+        hooks
+            .compose_event(iter_language::ComposeEventName::ComposeStopped, None)
+            .await;
+        ComposeTermination::Stopped
+    } else if let Some(error) = fatal_error {
+        hooks
+            .compose_event(iter_language::ComposeEventName::ComposeFailed, Some(error))
+            .await;
+        ComposeTermination::Failed
+    } else {
+        hooks
+            .compose_event(iter_language::ComposeEventName::ComposeCompleted, None)
+            .await;
+        ComposeTermination::Completed
+    };
+
+    CompletedServices {
+        results,
+        termination,
+    }
+}
+
+async fn apply_managed_event(hooks: &mut ComposeHookRuntime, event: ManagedEvent) {
+    match event {
+        ManagedEvent::ServiceStarted { name } => hooks.service_started(&name).await,
+        ManagedEvent::TriggerTransition {
+            name,
+            state,
+            restart_count,
+            error,
+        } => {
+            hooks
+                .trigger_transition(&name, state, restart_count, error)
+                .await;
+        }
+    }
+}
+
+async fn dispatch_task_terminal(hooks: &mut ComposeHookRuntime, task: &CompletedTask) {
+    match task {
+        CompletedTask::Service {
+            name,
+            state,
+            result,
+        } => {
+            hooks
+                .service_terminal(name, *state, result.as_ref().err().map(ToString::to_string))
+                .await;
+        }
+        CompletedTask::ServiceSubprocess {
+            name,
+            state,
+            result,
+            ..
+        } => {
+            hooks
+                .service_terminal(name, *state, result.as_ref().err().map(ToString::to_string))
+                .await;
+        }
+        CompletedTask::Trigger { .. } | CompletedTask::Panic { .. } => {}
+    }
 }
 async fn spawn_service_task(
     set: &mut JoinSet<CompletedTask>,
@@ -138,6 +307,7 @@ async fn spawn_service_task(
     parent_id: Option<ProcessId>,
     orchestrator: &OrchestratorContext,
     telemetry: Option<&TelemetryDef>,
+    events: mpsc::UnboundedSender<ManagedEvent>,
 ) {
     match try_spawn_service_subprocess(
         &service,
@@ -156,11 +326,14 @@ async fn spawn_service_task(
                 name,
             } = spawned;
             let outer = cancel.clone();
+            let monitor_events = events.clone();
             set.spawn(async move {
-                let result = monitor_service_subprocess(handle, outer).await;
+                let (state, result) =
+                    monitor_service_subprocess(handle, outer, &name, monitor_events).await;
                 CompletedTask::ServiceSubprocess {
                     name,
                     process_id: Some(process_id),
+                    state,
                     result,
                 }
             });
@@ -175,10 +348,21 @@ async fn spawn_service_task(
             let service_metadata = metadata.clone();
             let name = service.name.clone();
             let labels = orchestrator.labels_for(&name);
+            let service_events = events.clone();
             set.spawn(async move {
-                let result =
-                    run_one_service(service, parent_cancel, service_metadata, labels).await;
-                CompletedTask::Service { name, result }
+                let (state, result) = run_one_service(
+                    service,
+                    parent_cancel,
+                    service_metadata,
+                    labels,
+                    service_events,
+                )
+                .await;
+                CompletedTask::Service {
+                    name,
+                    state,
+                    result,
+                }
             });
         }
         Err(ServiceSpawnDecision::Failed(name, err)) => {
@@ -191,6 +375,7 @@ async fn spawn_service_task(
                 CompletedTask::ServiceSubprocess {
                     name,
                     process_id: None,
+                    state: ServiceTerminalState::Failed,
                     result: Err(err),
                 }
             });
@@ -292,9 +477,12 @@ async fn try_spawn_service_subprocess(
 async fn monitor_service_subprocess(
     handle: ProcessHandle,
     parent_cancel: CancellationToken,
-) -> Result<(), ServiceSubprocessError> {
+    name: &str,
+    events: mpsc::UnboundedSender<ManagedEvent>,
+) -> (ServiceTerminalState, Result<(), ServiceSubprocessError>) {
     let poll = std::time::Duration::from_millis(150);
     let mut stop_sent = false;
+    let mut started_sent = false;
     loop {
         tokio::select! {
             biased;
@@ -309,20 +497,36 @@ async fn monitor_service_subprocess(
                 stop_sent = true;
             }
             () = tokio::time::sleep(poll) => {
-                let status = handle
-                    .refresh_status()
-                    .await
-                    .map_err(ServiceSubprocessError::Status)?;
+                let status = match handle.refresh_status().await {
+                    Ok(status) => status,
+                    Err(error) => {
+                        return (
+                            ServiceTerminalState::Failed,
+                            Err(ServiceSubprocessError::Status(error)),
+                        );
+                    }
+                };
+                if status == ProcessStatus::Running && !started_sent {
+                    drop(events.send(ManagedEvent::ServiceStarted {
+                        name: name.to_owned(),
+                    }));
+                    started_sent = true;
+                }
                 if status.is_terminal() {
+                    // `Stopped` is only reachable through `Running`; a very
+                    // short service may cross both states between polls.
+                    if status == ProcessStatus::Stopped && !started_sent {
+                        drop(events.send(ManagedEvent::ServiceStarted {
+                            name: name.to_owned(),
+                        }));
+                    }
                     return match status {
-                        ProcessStatus::Stopped => Ok(()),
-                        // Any external stop (targeted `compose down SERVICE`,
-                        // `iter stop <id>`, or direct SIGTERM) transitions the
-                        // record to `Killed` without the orchestrator requesting
-                        // it. Treat this as a controlled stop so the failure
-                        // policy does not cascade to sibling services.
-                        ProcessStatus::Killed if !stop_sent => Ok(()),
-                        other => Err(ServiceSubprocessError::NonZeroExit(other)),
+                        ProcessStatus::Stopped => (ServiceTerminalState::Completed, Ok(())),
+                        ProcessStatus::Killed => (ServiceTerminalState::Killed, Ok(())),
+                        other => (
+                            ServiceTerminalState::Failed,
+                            Err(ServiceSubprocessError::NonZeroExit(other)),
+                        ),
                     };
                 }
             }
@@ -335,36 +539,80 @@ async fn run_one_service(
     parent_cancel: CancellationToken,
     metadata: RunRecordMetadata,
     labels: BTreeMap<String, String>,
-) -> Result<(), ServiceRunError> {
-    let runtime = process_lifecycle::bootstrap_foreground(
+    events: mpsc::UnboundedSender<ManagedEvent>,
+) -> (ServiceTerminalState, Result<(), ServiceRunError>) {
+    let runtime = match process_lifecycle::bootstrap_foreground(
         &service.name,
         &service.iterfile_path,
         &metadata,
         Some(labels),
     )
-    .await?;
+    .await
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return (
+                ServiceTerminalState::Failed,
+                Err(ServiceRunError::Lifecycle(error)),
+            );
+        }
+    };
+    let process_is_running = runtime.is_some();
+    if process_is_running {
+        drop(events.send(ManagedEvent::ServiceStarted {
+            name: service.name.clone(),
+        }));
+    }
 
-    let run_result = run_one_service_inner(service, &parent_cancel, runtime.as_ref()).await;
+    let run_result = run_one_service_inner(
+        service,
+        &parent_cancel,
+        runtime.as_ref(),
+        &events,
+        process_is_running,
+    )
+    .await;
 
-    let finalize_err = if let Some((rt, termination)) = runtime {
+    let (mut terminal_state, finalize_err) = if let Some((rt, termination)) = runtime {
         let failure_msg = run_result.as_ref().err().map(ToString::to_string);
         let reason = derive_finalize_reason(failure_msg, &termination);
-        rt.finalize(terminal_status_for(&reason)).await.err()
+        let status = terminal_status_for(&reason);
+        let terminal_state = match status {
+            ProcessStatus::Stopped => ServiceTerminalState::Completed,
+            ProcessStatus::Killed => ServiceTerminalState::Killed,
+            ProcessStatus::Initializing | ProcessStatus::Running | ProcessStatus::Failed => {
+                ServiceTerminalState::Failed
+            }
+        };
+        (terminal_state, rt.finalize(status).await.err())
     } else {
-        None
+        let terminal_state = if parent_cancel.is_cancelled() {
+            ServiceTerminalState::Killed
+        } else if run_result.is_err() {
+            ServiceTerminalState::Failed
+        } else {
+            ServiceTerminalState::Completed
+        };
+        (terminal_state, None)
     };
 
-    match (run_result, finalize_err) {
+    let result = match (run_result, finalize_err) {
         (Ok(()), None) => Ok(()),
         (Err(runner_err), _) => Err(runner_err),
         (Ok(_), Some(finalize_err)) => Err(ServiceRunError::FinalizeStatus(finalize_err)),
+    };
+    if result.is_err() && !matches!(terminal_state, ServiceTerminalState::Killed) {
+        terminal_state = ServiceTerminalState::Failed;
     }
+    (terminal_state, result)
 }
 
 async fn run_one_service_inner(
     service: ComposeService,
     parent_cancel: &CancellationToken,
     runtime: Option<&(ProcessRuntime, TerminationRecorder)>,
+    events: &mpsc::UnboundedSender<ManagedEvent>,
+    started_sent: bool,
 ) -> Result<(), ServiceRunError> {
     let ComposeService {
         name,
@@ -377,6 +625,9 @@ async fn run_one_service_inner(
         builder = crate::start::wire_builder_runtime(builder, rt);
     }
     let runner = builder.build()?;
+    if !started_sent {
+        drop(events.send(ManagedEvent::ServiceStarted { name: name.clone() }));
+    }
 
     let run_token = if let Some((rt, termination)) = runtime {
         let termination = termination.clone();

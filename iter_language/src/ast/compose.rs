@@ -8,7 +8,7 @@
 //!
 //! # Top-level shape
 //!
-//! Five sections are recognised:
+//! Six section forms are recognised:
 //!
 //! - `queue <name> <kind> { ... }` — named queue declaration. The kind +
 //!   field grammar is identical to the Iterfile [`QueueDef`](super::QueueDef).
@@ -28,6 +28,8 @@
 //!   blocks can rebind or disable child declarations.
 //! - `telemetry { ... }` — optional project-wide OpenTelemetry export
 //!   settings for the composed topology.
+//! - `on <compose-event> { ... }` — orchestrator-level lifecycle and
+//!   resource-aggregate Shell hooks.
 //!
 //! `runner` only appears nested inside an inline service body — it is not a
 //! first-class compose section. The runner's prompt and `on <event>`
@@ -36,7 +38,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use super::{AgentDef, QueueDef, RunnerDef, Spanned, TelemetryDef, TriggerDef, WorkspaceDef};
+use super::{
+    AgentDef, ComposeHookDef, QueueDef, RunnerDef, Spanned, TelemetryDef, TriggerDef, WorkspaceDef,
+};
 
 /// Validated root of a `compose.iter` source file.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -49,6 +53,8 @@ pub struct Compose {
     pub services: Vec<Spanned<NamedService>>,
     /// Named trigger declarations in source order.
     pub triggers: Vec<Spanned<NamedTrigger>>,
+    /// Orchestrator-level lifecycle hooks in source order.
+    pub hooks: Vec<Spanned<ComposeHookDef>>,
     /// Nested compose references in source order.
     pub composes: Vec<Spanned<NamedCompose>>,
 }

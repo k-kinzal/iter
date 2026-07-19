@@ -1,9 +1,13 @@
-//! `on <event> { ... }` top-level handler lowering plus shell-action collection.
+//! Runner and Compose `on <event> { ... }` lowering plus shell actions.
+
+use std::collections::BTreeSet;
 
 use super::{Analyzer, TemplatePosition, closest};
-use crate::ast::{Action, EventHandlerDef, EventName, Span, Spanned};
+use crate::ast::{
+    Action, ComposeEventName, ComposeHookDef, EventHandlerDef, EventName, Span, Spanned,
+};
 use crate::diagnostic::Diagnostic;
-use crate::parser::{CstAction, CstBlock, CstIdent};
+use crate::parser::{CstAction, CstBlock, CstIdent, CstValue};
 
 impl Analyzer {
     pub(super) fn lower_event(
@@ -105,6 +109,165 @@ impl Analyzer {
             out.push(Action::Shell(command.clone()));
         }
         out
+    }
+
+    pub(super) fn lower_compose_hook(
+        &mut self,
+        event: &CstIdent,
+        body: &CstBlock,
+        span: Span,
+    ) -> Option<Spanned<ComposeHookDef>> {
+        let Some(event_name) = ComposeEventName::parse(&event.name) else {
+            let suggestion = closest(&event.name, ComposeEventName::ALL);
+            let mut diagnostic = Diagnostic::error(
+                event.span.clone(),
+                format!("unknown Compose event name `{}`", event.name),
+            );
+            if let Some(suggestion) = suggestion {
+                diagnostic = diagnostic.with_hint(format!("did you mean `{suggestion}`?"));
+            }
+            self.errors.push(diagnostic);
+            return None;
+        };
+
+        let mut services = None;
+        let mut triggers = None;
+        for field in &body.fields {
+            match field.name.name.as_str() {
+                "services" => {
+                    if services.is_some() {
+                        self.errors.push(Diagnostic::error(
+                            field.span.clone(),
+                            "duplicate `services` selector",
+                        ));
+                    } else {
+                        services = self.lower_compose_hook_selector(&field.value, "services");
+                    }
+                }
+                "triggers" => {
+                    if triggers.is_some() {
+                        self.errors.push(Diagnostic::error(
+                            field.span.clone(),
+                            "duplicate `triggers` selector",
+                        ));
+                    } else {
+                        triggers = self.lower_compose_hook_selector(&field.value, "triggers");
+                    }
+                }
+                other => self.errors.push(Diagnostic::error(
+                    field.span.clone(),
+                    format!("field `{other}` is not allowed inside a Compose hook"),
+                )),
+            }
+        }
+
+        if services.is_some() && !event_name.uses_services() {
+            self.errors.push(
+                Diagnostic::error(
+                    span.clone(),
+                    format!("`services` is not valid for `{}`", event_name.as_str()),
+                )
+                .with_hint("remove the selector or use a service-scoped Compose event"),
+            );
+        }
+        if triggers.is_some() && !event_name.uses_triggers() {
+            self.errors.push(
+                Diagnostic::error(
+                    span.clone(),
+                    format!("`triggers` is not valid for `{}`", event_name.as_str()),
+                )
+                .with_hint("remove the selector or use a trigger-scoped Compose event"),
+            );
+        }
+
+        let actions = self.lower_actions(body, TemplatePosition::ComposeShellAction);
+        self.reject_compose_hook_nested_forms(body);
+
+        Some(Spanned::new(
+            ComposeHookDef {
+                event: event_name,
+                services,
+                triggers,
+                actions,
+            },
+            span,
+        ))
+    }
+
+    fn lower_compose_hook_selector(
+        &mut self,
+        value: &CstValue,
+        selector: &str,
+    ) -> Option<Vec<String>> {
+        let CstValue::List(values, span) = value else {
+            self.errors.push(
+                Diagnostic::error(
+                    value.span(),
+                    format!("`{selector}` must be a list of bare resource names"),
+                )
+                .with_hint(format!("write `{selector} = [name_a, name_b]`")),
+            );
+            return None;
+        };
+        if values.is_empty() {
+            self.errors.push(Diagnostic::error(
+                span.clone(),
+                format!("`{selector}` must not be empty"),
+            ));
+            return None;
+        }
+
+        let mut seen = BTreeSet::new();
+        let mut names = Vec::with_capacity(values.len());
+        for value in values {
+            match value {
+                CstValue::Ident(name, value_span) => {
+                    if seen.insert(name.clone()) {
+                        names.push(name.clone());
+                    } else {
+                        self.errors.push(Diagnostic::error(
+                            value_span.clone(),
+                            format!("duplicate resource name `{name}` in `{selector}`"),
+                        ));
+                    }
+                }
+                other => self.errors.push(
+                    Diagnostic::error(
+                        other.span(),
+                        format!("`{selector}` entries must be bare resource names"),
+                    )
+                    .with_hint(format!("write `{selector} = [name_a, name_b]`")),
+                ),
+            }
+        }
+        Some(names)
+    }
+
+    fn reject_compose_hook_nested_forms(&mut self, body: &CstBlock) {
+        for route in &body.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "nested webhook routes are not valid inside a Compose hook",
+            ));
+        }
+        for condition in &body.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions are not valid inside a Compose hook",
+            ));
+        }
+        for arm in &body.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid inside a Compose hook",
+            ));
+        }
+        for handler in &body.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "nested event handlers are not valid inside a Compose hook",
+            ));
+        }
     }
 }
 

@@ -3,14 +3,13 @@
 //! Covers the compose.iter top-level grammar (named queue/service/trigger),
 //! queue reference resolution (single-queue inference, named lookup,
 //! ambiguous and dangling references), the `service { build = ... }` vs
-//! inline split, and the rejection paths that distinguish compose from
-//! Iterfile syntax (`prompt`/`runner`/top-level `on` are not allowed at
-//! compose root).
+//! inline split, Compose Hooks, and the rejection paths that distinguish
+//! compose from Iterfile syntax.
 
 use iter_language::{
-    Compose, ComposeTriggerOverride, EventName, NamedCompose, NamedQueue, NamedService,
-    NamedTrigger, PromptExpr, PromptValue, QueueDef, QueueRef, ServiceSource, TelemetryProtocol,
-    TriggerDef, WatchEventKind, parse_compose,
+    Compose, ComposeEventName, ComposeTriggerOverride, EventName, NamedCompose, NamedQueue,
+    NamedService, NamedTrigger, PromptExpr, PromptValue, QueueDef, QueueRef, ServiceSource,
+    TelemetryProtocol, TriggerDef, WatchEventKind, parse_compose,
 };
 
 fn parse(src: &str) -> Compose {
@@ -376,6 +375,79 @@ fn trigger_loop_kind_rejected() {
         errs.iter()
             .any(|m| m.contains("`loop` is no longer a trigger kind")),
         "got: {errs:#?}"
+    );
+}
+
+#[test]
+fn compose_hook_lowers_selectors_and_shell_actions() {
+    let root = parse(
+        r#"
+            on services_completed {
+                services = [explorer_a, explorer_b]
+                shell "scripts/evaluate.sh {{compose.project}} {{services.names}}"
+                shell "echo {{event.name}}"
+            }
+        "#,
+    );
+    assert_eq!(root.hooks.len(), 1);
+    let hook = &root.hooks[0].node;
+    assert_eq!(hook.event, ComposeEventName::ServicesCompleted);
+    assert_eq!(
+        hook.services.as_deref(),
+        Some(["explorer_a".to_owned(), "explorer_b".to_owned()].as_slice())
+    );
+    assert!(hook.triggers.is_none());
+    assert_eq!(hook.actions.len(), 2);
+}
+
+#[test]
+fn every_compose_hook_event_parses() {
+    let source = ComposeEventName::ALL
+        .iter()
+        .map(|event| format!("on {event} {{ shell \"true\" }}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let root = parse(&source);
+    assert_eq!(root.hooks.len(), ComposeEventName::ALL.len());
+}
+
+#[test]
+fn compose_hook_rejects_wrong_selector_kind() {
+    let errors = parse_err(
+        r#"
+            on compose_started {
+                services = [worker]
+                shell "true"
+            }
+        "#,
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|message| message.contains("`services` is not valid for `compose_started`")),
+        "got: {errors:#?}"
+    );
+}
+
+#[test]
+fn compose_hook_rejects_empty_and_non_identifier_selectors() {
+    let errors = parse_err(
+        r#"
+            on services_settled { services = [] shell "true" }
+            on triggers_settled { triggers = ["nightly"] shell "true" }
+        "#,
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|message| message.contains("`services` must not be empty")),
+        "got: {errors:#?}"
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|message| message.contains("`triggers` entries must be bare resource names")),
+        "got: {errors:#?}"
     );
 }
 

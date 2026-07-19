@@ -10,8 +10,10 @@ one or more shared queues — the docker-compose-equivalent in iter. It is
 loaded by `iter compose up [-f compose.iter]`.
 
 `compose.iter` is **not** a superset of an Iterfile. It has no top-level
-`workspace` / `agent` / `runner` / `prompt` / `on` blocks. Those always live
+`workspace` / `agent` / `runner` / `prompt` blocks. Runner Hooks always live
 inside an inline `service` body, or inside the Iterfile a service references.
+Compose has a distinct top-level `on <compose-event>` surface for
+orchestrator-visible resource lifecycle and aggregate hooks.
 
 For the inline-service body syntax, load the **iter-iterfile** skill — the
 block grammar is identical.
@@ -23,6 +25,7 @@ block grammar is identical.
 | `queue <name> <kind>` | 1–N | ✔ |
 | `service <name>` | 1–N | ✔ |
 | `trigger <name> <kind>` | 0–N | optional |
+| `on <compose-event>` | 0–N | optional |
 
 A compose file with zero queues or zero services fails validation.
 
@@ -166,6 +169,30 @@ Shared trigger arguments (apply to every kind):
 
 Per-kind fields, examples, and the regex / JSON-array semantics for
 `command` live in [`reference/triggers.md`](reference/triggers.md).
+
+## Compose Hooks
+
+Compose Hooks run best-effort Shell actions from the root Compose file's
+directory. Service and Trigger events can select resources; omitted selectors
+mean all managed declarations of that kind.
+
+```hcl
+on services_completed {
+  services = [explorer_a, explorer_b, explorer_c, explorer_d]
+  shell "scripts/evaluate.sh {{services.names}}"
+}
+
+on service_failed {
+  services = [explorer_a, explorer_b, explorer_c, explorer_d]
+  shell "scripts/report-failure.sh {{service.name}}"
+}
+```
+
+The full event set is documented in `docs/config/compose/on.md`: Compose run
+events, per-service and per-Trigger events, and the
+`services_*` / `triggers_*` aggregate rendezvous events. These hooks observe
+iter-process and Trigger-supervisor state only; they do not observe Runner
+iterations or completion conditions.
 
 ```hcl
 queue bulk file { path = "./.iter/queue-bulk" }

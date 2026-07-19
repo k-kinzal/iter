@@ -13,9 +13,13 @@ A `compose.iter` file orchestrates **multiple iter services and triggers** aroun
 | `queue <name> <kind>` | 1–N | Required | [`compose/queue.md`](compose/queue.md) |
 | `service <name>` | 1–N | Required | [`compose/service.md`](compose/service.md) |
 | `trigger <name> <kind>` | 0–N | Optional | [`compose/trigger.md`](compose/trigger.md) |
+| `on <compose-event>` | 0–N | Optional | [`compose/on.md`](compose/on.md) |
 | `telemetry` | 0–1 | Optional | This page |
 
-Unlike `Iterfile`, `compose.iter` has **no top-level** `workspace`, `agent`, `runner`, `prompt`, or `on` blocks. Those always live inside an inline `service` body (or inside the Iterfile a service references).
+Unlike `Iterfile`, `compose.iter` has no top-level `workspace`, `agent`,
+`runner`, or `prompt` blocks. Runner Hooks remain inside a service's
+`runner`. Compose has its own top-level `on <compose-event> { ... }` hooks;
+they observe only orchestrator-managed Compose, service, and Trigger state.
 
 ## Telemetry
 
@@ -211,6 +215,16 @@ trigger github_alerts webhook {
     }
   }
 }
+
+on service_failed {
+  services = [api_handler, chores]
+  shell "notify-team 'compose service failed: {{service.name}}'"
+}
+
+on services_settled {
+  services = [api_handler, chores]
+  shell "scripts/archive-run.sh {{services.names}}"
+}
 ```
 
 ## Execution Model
@@ -311,3 +325,4 @@ The orchestrator's stdout/stderr is discarded under `-d` (it has no registry rec
 - [`compose/queue.md`](compose/queue.md) — named queue declarations.
 - [`compose/service.md`](compose/service.md) — `build` vs. inline services.
 - [`compose/trigger.md`](compose/trigger.md) — trigger declarations.
+- [`compose/on.md`](compose/on.md) — Compose lifecycle and aggregate Shell hooks.

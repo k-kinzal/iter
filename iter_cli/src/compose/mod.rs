@@ -13,6 +13,7 @@
 
 mod error;
 mod flatten;
+mod hook;
 mod plan;
 mod run;
 mod service;
@@ -25,6 +26,7 @@ use std::path::Path;
 use iter_language::{Compose, parse_compose};
 
 pub(crate) use error::{ComposeError, TargetedSpawnError};
+pub(crate) use hook::{ManagedEvent, ServiceTerminalState};
 pub(crate) use plan::{ComposePlan, build, build_single_service};
 pub(crate) use run::{run, spawn_targeted_service};
 pub(crate) use service::{

@@ -72,27 +72,40 @@ impl ShellAction {
             compiled,
         })
     }
+}
 
-    async fn run_shell(&self, rendered: &str, cwd: Option<&Path>) -> Result<(), BoxError> {
-        let mut command = Command::new("sh");
-        command.arg("-c").arg(rendered).stdin(Stdio::null());
-        if let Some(dir) = cwd {
-            command.current_dir(dir);
-        }
-        let status = command
-            .status()
-            .await
-            .map_err(|e| -> BoxError { Box::new(e) })?;
-        if !status.success() {
-            warn!(
-                command = %rendered,
-                cwd = ?cwd,
-                exit = ?status.code(),
-                "shell action exited non-zero"
-            );
-        }
-        Ok(())
+/// Execute one already-rendered hook command.
+///
+/// Runner and Compose hooks intentionally share this process contract:
+/// `sh -c`, null stdin, inherited stdout/stderr, optional cwd, and
+/// best-effort handling of non-zero exit statuses.
+pub(crate) async fn run_shell_command(
+    rendered: &str,
+    cwd: Option<&Path>,
+    env: &[(String, String)],
+) -> Result<(), BoxError> {
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(rendered)
+        .stdin(Stdio::null())
+        .envs(env.iter().cloned());
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
     }
+    let status = command
+        .status()
+        .await
+        .map_err(|error| -> BoxError { Box::new(error) })?;
+    if !status.success() {
+        warn!(
+            command = %rendered,
+            cwd = ?cwd,
+            exit = ?status.code(),
+            "shell action exited non-zero"
+        );
+    }
+    Ok(())
 }
 
 impl EventAction for ShellAction {
@@ -125,7 +138,7 @@ impl EventAction for ShellAction {
                 return Ok(());
             }
         };
-        self.run_shell(&rendered, cwd.as_deref()).await?;
+        run_shell_command(&rendered, cwd.as_deref(), &[]).await?;
         Ok(())
     }
 }

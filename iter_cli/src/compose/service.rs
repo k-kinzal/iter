@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use crate::process::{ProcessId, ProcessIdentity};
 
 use super::error::{ServiceRunError, ServiceSubprocessError};
+use super::hook::ServiceTerminalState;
 use super::supervisor::TriggerLifecycleState;
 use super::trigger::TriggerRunError;
 
@@ -26,6 +27,8 @@ pub(crate) enum CompletedTask {
     Service {
         /// Service name from the compose file.
         name: String,
+        /// Terminal iter-process classification observed by Compose.
+        state: ServiceTerminalState,
         /// `Ok(())` if the runner completed cleanly, `Err(_)` if it
         /// failed to bootstrap, build, run, or finalize.
         result: Result<(), ServiceRunError>,
@@ -40,6 +43,8 @@ pub(crate) enum CompletedTask {
         /// Allocated process id of the child registry record. `None`
         /// when the spawn never succeeded.
         process_id: Option<ProcessId>,
+        /// Terminal iter-process classification observed by Compose.
+        state: ServiceTerminalState,
         /// `Ok(())` if the child exited cleanly, `Err(_)` otherwise.
         result: Result<(), ServiceSubprocessError>,
     },
@@ -70,14 +75,72 @@ pub(crate) enum CompletedTask {
 }
 
 impl CompletedTask {
-    /// `true` when this task completed with an error.
+    /// `true` when this task did not complete naturally.
     #[must_use]
     pub(crate) fn is_err(&self) -> bool {
+        self.is_fatal()
+    }
+
+    /// `true` when the task prevents natural Compose completion.
+    #[must_use]
+    pub(crate) fn is_fatal(&self) -> bool {
         match self {
-            Self::Service { result, .. } => result.is_err(),
-            Self::ServiceSubprocess { result, .. } => result.is_err(),
-            Self::Trigger { result, .. } => result.is_err(),
+            Self::Service { state, .. } | Self::ServiceSubprocess { state, .. } => {
+                matches!(state, ServiceTerminalState::Failed)
+            }
+            Self::Trigger {
+                final_state,
+                result,
+                ..
+            } => result.is_err() || !matches!(final_state, TriggerLifecycleState::Completed),
             Self::Panic { .. } => true,
+        }
+    }
+
+    /// `true` when this managed task reached its normal terminal state.
+    #[must_use]
+    pub(crate) fn completed_naturally(&self) -> bool {
+        match self {
+            Self::Service { state, result, .. } => {
+                matches!(state, ServiceTerminalState::Completed) && result.is_ok()
+            }
+            Self::ServiceSubprocess { state, result, .. } => {
+                matches!(state, ServiceTerminalState::Completed) && result.is_ok()
+            }
+            Self::Trigger {
+                final_state,
+                result,
+                ..
+            } => matches!(final_state, TriggerLifecycleState::Completed) && result.is_ok(),
+            Self::Panic { .. } => false,
+        }
+    }
+
+    /// Human-readable detail for the first fatal Compose transition.
+    #[must_use]
+    pub(crate) fn fatal_message(&self) -> Option<String> {
+        match self {
+            Self::Service { name, result, .. } => match result {
+                Err(error) => Some(format!("service `{name}` failed: {error}")),
+                Ok(()) => None,
+            },
+            Self::ServiceSubprocess { name, result, .. } => match result {
+                Err(error) => Some(format!("service `{name}` failed: {error}")),
+                Ok(()) => None,
+            },
+            Self::Trigger {
+                name,
+                result,
+                final_state,
+                ..
+            } => match result {
+                Err(error) => Some(format!("Trigger `{name}` failed: {error}")),
+                Ok(()) if !matches!(final_state, TriggerLifecycleState::Completed) => {
+                    Some(format!("Trigger `{name}` stopped in state {final_state}"))
+                }
+                Ok(()) => None,
+            },
+            Self::Panic { error } => Some(format!("managed task panicked: {error}")),
         }
     }
 
@@ -93,18 +156,32 @@ impl CompletedTask {
     }
 }
 
+/// Terminal classification of one Compose orchestrator run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) enum ComposeTermination {
+    /// Every managed task completed normally.
+    #[default]
+    Completed,
+    /// At least one managed task did not complete normally.
+    Failed,
+    /// The operator externally stopped the Compose run.
+    Stopped,
+}
+
 /// Completed service and trigger tasks returned by [`super::run`].
 #[derive(Debug, Default)]
 pub(crate) struct CompletedServices {
     /// One entry per spawned service task, in completion order.
     pub(crate) results: Vec<CompletedTask>,
+    /// Mutually exclusive Compose terminal classification.
+    pub(crate) termination: ComposeTermination,
 }
 
 impl CompletedServices {
     /// `true` when at least one result carries an error.
     #[must_use]
     pub(crate) fn has_errors(&self) -> bool {
-        self.results.iter().any(CompletedTask::is_err)
+        self.termination == ComposeTermination::Failed
     }
 }
 

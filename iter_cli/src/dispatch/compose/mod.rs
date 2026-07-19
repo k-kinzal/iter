@@ -328,7 +328,8 @@ pub(crate) fn compose_error_exit_code(e: &ComposeError) -> i32 {
         | ComposeError::UnknownChildQueue { .. }
         | ComposeError::UnknownChildService { .. }
         | ComposeError::UnknownChildTrigger { .. }
-        | ComposeError::UnsupportedTriggerKind { .. } => exit_codes::CONFIG,
+        | ComposeError::UnsupportedTriggerKind { .. }
+        | ComposeError::Hook(_) => exit_codes::CONFIG,
         ComposeError::Queue(_) | ComposeError::QueueBuild { .. } => exit_codes::RUNTIME,
         ComposeError::UnresolvedAnonymousQueueRef | ComposeError::UnresolvedServiceQueue(_) => {
             exit_codes::INTERNAL
