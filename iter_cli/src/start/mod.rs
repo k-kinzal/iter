@@ -226,8 +226,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use iter_language::{
-        Action, AgentDef, AgentMode, EventHandlerDef, EventName, PromptDef, PromptExpr,
-        PromptValue, RunnerDef, SignalAcquisition, Spanned, WorkspaceDef,
+        AgentDef, AgentMode, EventHandlerDef, EventName, PromptDef, PromptExpr, PromptValue,
+        RunnerAction, RunnerDef, SignalAcquisition, Spanned, WorkspaceDef,
     };
 
     fn minimal_workspace() -> WorkspaceDef {
@@ -321,7 +321,7 @@ mod tests {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
-                actions: vec![Action::Shell(iter_language::ShellActionDef::simple(
+                actions: vec![RunnerAction::Shell(iter_language::ShellActionDef::simple(
                     "echo start",
                 ))],
             },
@@ -345,7 +345,7 @@ mod tests {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
-                actions: vec![Action::Shell(iter_language::ShellActionDef::simple(
+                actions: vec![RunnerAction::Shell(iter_language::ShellActionDef::simple(
                     "echo {{",
                 ))],
             },

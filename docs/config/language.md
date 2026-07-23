@@ -184,7 +184,7 @@ block       = { "{" ~ block_entry* ~ "}" }
 block_entry = { nested_route | action | field }
 
 field      = { field_name ~ field_rhs }
-field_name = ${ !(kw_on | kw_shell) ~ (ident | string) }
+field_name = ${ !(kw_on | kw_shell | kw_condition | kw_capture) ~ (ident | string) }
 field_rhs  = { block | ("=" ~ value) }
 ```
 
@@ -193,10 +193,11 @@ A block body contains any mix of:
 1. **Fields**: `<name> = <value>`. The name is an identifier or a string literal (strings allow keys that contain characters illegal in identifiers — e.g. Kafka header names like `"x-source"` or librdkafka keys like `"client.dns.lookup"`).
 2. **Short-form nested blocks**: `<name> { ... }`, equivalent to `<name> = { ... }`.
 3. **Nested routes**: `on "<pattern>" [when "<expr>"] { ... }` — only inside `trigger webhook` blocks.
-4. **Actions**: `shell "<command>"` or
-   `shell { script = "<command>" ... }` — only inside `on` event handler
-   blocks. Block-form Runner shell actions may contain
-   `capture <name> { ... }`.
+4. **Actions**: `shell "<command>"`,
+   `shell { script = "<command>" ... }`, or `enqueue { ... }` — only inside
+   `on` event handler blocks. Block-form Runner shell actions may contain
+   `capture <name> { ... }`. `enqueue` is valid only in top-level Compose
+   Hooks.
 
 Entries are separated by whitespace or newlines; no commas or semicolons are required between entries.
 
@@ -259,6 +260,10 @@ live inside the `runner` block; a top-level `on <event>` is rejected. In a
 Runner Hooks in an inline service remain inside that service's `runner`.
 The two event sets are distinct; see [`iterfile/on.md`](iterfile/on.md) and
 [`compose/on.md`](compose/on.md).
+
+Both kinds of Hook share the `on <event> { ... }` outer form but have distinct
+contextual bodies. Runner Hooks accept Runner actions (`shell`); Compose Hooks
+accept Compose actions (`shell` and `enqueue`).
 
 ---
 
@@ -350,7 +355,7 @@ Common placeholders (exact availability depends on the context):
 | `{{metadata.<key>}}` | `prompt` bodies, shell actions, webhook route metadata. |
 | `{{iteration.<field>}}` | Prompt bodies and Runner lifecycle shell actions. See [`iterfile/prompt.md`](iterfile/prompt.md#iterationfield-reference) for the field set. |
 | `{{var.<name>.<field>}}` | Prompt bodies and Runner shell actions after a block-form shell capture has published the named value. |
-| `{{today}}` | `prompt` bodies, shell actions. Current local date as `YYYY-MM-DD`. |
+| `{{today}}` | `prompt` bodies, shell actions, and Compose Hook enqueue metadata. Current local date as `YYYY-MM-DD`. |
 | `{{error.kind}}`, `{{error.message}}` | DLQ templates. |
 | `{{.<payload-path>}}` | Webhook route metadata values. |
 

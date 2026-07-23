@@ -3,16 +3,22 @@
 //! These hooks observe only state owned by the Compose orchestrator: the
 //! Compose run itself, managed iter processes, and managed Trigger
 //! supervisors. They never inspect Runner lifecycle or iteration state.
+//! Actions may run a Shell command or publish a Signal to a queue already
+//! constructed for the flattened Compose plan.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::Local;
-use iter_core::{Template, TemplateError};
-use iter_language::{Action, ComposeEventName, ComposeHookDef, Spanned};
+use iter_core::{
+    Metadata, MetadataError, MetadataKey, MetadataValue, Priority, Queue, Signal, Template,
+    TemplateError,
+};
+use iter_language::{ComposeAction, ComposeEventName, ComposeHookDef, PriorityKeyword, Spanned};
 use serde::Serialize;
 use thiserror::Error;
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::supervisor::TriggerLifecycleState;
 use crate::shell_action::run_shell_command;
@@ -86,8 +92,43 @@ pub(crate) enum ComposeHookBuildError {
         /// Missing Trigger name.
         name: String,
     },
-    /// A shell command could not be compiled as a strict template.
-    #[error("invalid shell template in Compose hook `{event}`: {source}")]
+    /// An action references a queue absent from the flattened plan.
+    #[error("Compose hook `{event}` enqueue action references unknown queue `{name}")]
+    UnknownQueue {
+        /// Event spelling.
+        event: &'static str,
+        /// Missing queue name.
+        name: String,
+    },
+    /// An enqueue action omitted its target but no queue is declared.
+    #[error("Compose hook `{event}` enqueue action has no target and the plan declares no queues")]
+    NoQueue {
+        /// Event spelling.
+        event: &'static str,
+    },
+    /// An enqueue action omitted its target in a multi-queue plan.
+    #[error(
+        "Compose hook `{event}` enqueue action omits `target`, but the plan declares multiple queues: {names}"
+    )]
+    AmbiguousQueue {
+        /// Event spelling.
+        event: &'static str,
+        /// Comma-separated candidate queue names.
+        names: String,
+    },
+    /// An enqueue metadata key is not valid for a Signal.
+    #[error("invalid metadata key `{key}` in Compose hook `{event}` enqueue action: {source}")]
+    MetadataKey {
+        /// Event spelling.
+        event: &'static str,
+        /// Invalid key.
+        key: String,
+        /// Key validation failure.
+        #[source]
+        source: MetadataError,
+    },
+    /// An action value could not be compiled as a strict template.
+    #[error("invalid action template in Compose hook `{event}`: {source}")]
     Template {
         /// Event spelling.
         event: &'static str,
@@ -104,11 +145,31 @@ struct ComposeShellAction {
 }
 
 #[derive(Debug, Clone)]
+struct ComposeMetadataTemplate {
+    key: MetadataKey,
+    source: String,
+    template: Template,
+}
+
+#[derive(Debug, Clone)]
+struct ComposeEnqueueAction {
+    target: String,
+    metadata: Vec<ComposeMetadataTemplate>,
+    priority: Priority,
+}
+
+#[derive(Debug, Clone)]
+enum ComposeActionPlan {
+    Shell(Box<ComposeShellAction>),
+    Enqueue(ComposeEnqueueAction),
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct ComposeHookPlan {
     event: ComposeEventName,
     services: Vec<String>,
     triggers: Vec<String>,
-    actions: Vec<ComposeShellAction>,
+    actions: Vec<ComposeActionPlan>,
 }
 
 /// Resolve selectors against the flattened resource set and compile actions.
@@ -116,6 +177,7 @@ pub(crate) fn build_hook_plans(
     declarations: &[Spanned<ComposeHookDef>],
     service_names: &[String],
     trigger_names: &[String],
+    queue_names: &[String],
 ) -> Result<Vec<ComposeHookPlan>, ComposeHookBuildError> {
     let known_services: BTreeSet<&str> = service_names.iter().map(String::as_str).collect();
     let known_triggers: BTreeSet<&str> = trigger_names.iter().map(String::as_str).collect();
@@ -161,7 +223,7 @@ pub(crate) fn build_hook_plans(
         let mut actions = Vec::with_capacity(hook.actions.len());
         for action in &hook.actions {
             match action {
-                Action::Shell(definition) => {
+                ComposeAction::Shell(definition) => {
                     let source = &definition.script;
                     let template = Template::compile(source.clone()).map_err(|source| {
                         ComposeHookBuildError::Template {
@@ -169,10 +231,44 @@ pub(crate) fn build_hook_plans(
                             source,
                         }
                     })?;
-                    actions.push(ComposeShellAction {
+                    actions.push(ComposeActionPlan::Shell(Box::new(ComposeShellAction {
                         source: source.clone(),
                         template,
-                    });
+                    })));
+                }
+                ComposeAction::Enqueue(definition) => {
+                    let target = resolve_enqueue_target(
+                        definition.target.as_deref(),
+                        queue_names,
+                        hook.event,
+                    )?;
+                    let mut metadata = Vec::with_capacity(definition.metadata.len());
+                    for (key_source, value_source) in &definition.metadata {
+                        let key = MetadataKey::new(key_source.clone()).map_err(|source| {
+                            ComposeHookBuildError::MetadataKey {
+                                event: hook.event.as_str(),
+                                key: key_source.clone(),
+                                source,
+                            }
+                        })?;
+                        let template =
+                            Template::compile(value_source.clone()).map_err(|source| {
+                                ComposeHookBuildError::Template {
+                                    event: hook.event.as_str(),
+                                    source,
+                                }
+                            })?;
+                        metadata.push(ComposeMetadataTemplate {
+                            key,
+                            source: value_source.clone(),
+                            template,
+                        });
+                    }
+                    actions.push(ComposeActionPlan::Enqueue(ComposeEnqueueAction {
+                        target,
+                        metadata,
+                        priority: map_priority(definition.priority),
+                    }));
                 }
             }
         }
@@ -184,6 +280,42 @@ pub(crate) fn build_hook_plans(
         });
     }
     Ok(plans)
+}
+
+fn resolve_enqueue_target(
+    requested: Option<&str>,
+    queue_names: &[String],
+    event: ComposeEventName,
+) -> Result<String, ComposeHookBuildError> {
+    if let Some(name) = requested {
+        return queue_names
+            .iter()
+            .any(|known| known == name)
+            .then(|| name.to_owned())
+            .ok_or_else(|| ComposeHookBuildError::UnknownQueue {
+                event: event.as_str(),
+                name: name.to_owned(),
+            });
+    }
+    match queue_names {
+        [name] => Ok(name.clone()),
+        [] => Err(ComposeHookBuildError::NoQueue {
+            event: event.as_str(),
+        }),
+        names => Err(ComposeHookBuildError::AmbiguousQueue {
+            event: event.as_str(),
+            names: names.join(", "),
+        }),
+    }
+}
+
+fn map_priority(priority: Option<PriorityKeyword>) -> Priority {
+    match priority.unwrap_or(PriorityKeyword::Normal) {
+        PriorityKeyword::Low => Priority::LOW,
+        PriorityKeyword::Normal => Priority::NORMAL,
+        PriorityKeyword::High => Priority::HIGH,
+        PriorityKeyword::Critical => Priority::CRITICAL,
+    }
 }
 
 #[derive(Debug)]
@@ -200,9 +332,9 @@ enum ServiceState {
 }
 
 /// Stateful dispatcher owned by one Compose orchestrator run.
-#[derive(Debug)]
 pub(crate) struct ComposeHookRuntime {
     hooks: Vec<HookState>,
+    queues: BTreeMap<String, Arc<dyn Queue>>,
     project: String,
     compose_file: PathBuf,
     cwd: PathBuf,
@@ -217,6 +349,7 @@ impl ComposeHookRuntime {
     #[must_use]
     pub(crate) fn new(
         plans: Vec<ComposeHookPlan>,
+        queues: BTreeMap<String, Arc<dyn Queue>>,
         project: String,
         compose_file: PathBuf,
         service_names: Vec<String>,
@@ -232,6 +365,7 @@ impl ComposeHookRuntime {
                 .into_iter()
                 .map(|plan| HookState { plan, fired: false })
                 .collect(),
+            queues,
             project,
             compose_file,
             cwd,
@@ -525,28 +659,93 @@ impl ComposeHookRuntime {
         let hook = &self.hooks[index].plan;
         let env = context.environment();
         for (action_index, action) in hook.actions.iter().enumerate() {
-            let rendered = match action.template.render(context) {
+            match action {
+                ComposeActionPlan::Shell(action) => {
+                    let rendered = match action.template.render(context) {
+                        Ok(rendered) => rendered,
+                        Err(error) => {
+                            warn!(
+                                event = hook.event.as_str(),
+                                action_index,
+                                command = %action.source,
+                                error = %error,
+                                "Compose Hook template render failed",
+                            );
+                            continue;
+                        }
+                    };
+                    if let Err(error) = run_shell_command(&rendered, Some(&self.cwd), &env).await {
+                        warn!(
+                            event = hook.event.as_str(),
+                            action_index,
+                            command = %rendered,
+                            error = %error,
+                            "Compose Hook shell action failed to start",
+                        );
+                    }
+                }
+                ComposeActionPlan::Enqueue(action) => {
+                    self.run_enqueue_action(hook.event, action_index, action, context)
+                        .await;
+                }
+            }
+        }
+    }
+
+    async fn run_enqueue_action(
+        &self,
+        event: ComposeEventName,
+        action_index: usize,
+        action: &ComposeEnqueueAction,
+        context: &HookContext,
+    ) {
+        let mut metadata = Metadata::new();
+        for field in &action.metadata {
+            let rendered = match field.template.render(context) {
                 Ok(rendered) => rendered,
                 Err(error) => {
                     warn!(
-                        event = hook.event.as_str(),
+                        event = event.as_str(),
                         action_index,
-                        command = %action.source,
+                        queue = %action.target,
+                        metadata_key = %field.key,
+                        template = %field.source,
                         error = %error,
-                        "Compose Hook template render failed",
+                        "Compose Hook enqueue metadata template render failed",
                     );
-                    continue;
+                    return;
                 }
             };
-            if let Err(error) = run_shell_command(&rendered, Some(&self.cwd), &env).await {
-                warn!(
-                    event = hook.event.as_str(),
-                    action_index,
-                    command = %rendered,
-                    error = %error,
-                    "Compose Hook shell action failed to start",
-                );
-            }
+            metadata.insert(field.key.clone(), MetadataValue::String(rendered));
+        }
+        let signal = Signal::new(metadata);
+        let signal_id = signal.id();
+        let Some(queue) = self.queues.get(&action.target) else {
+            warn!(
+                event = event.as_str(),
+                action_index,
+                queue = %action.target,
+                "Compose Hook enqueue target disappeared after plan construction",
+            );
+            return;
+        };
+        match queue.enqueue(signal, action.priority).await {
+            Ok(()) => info!(
+                event = event.as_str(),
+                action_index,
+                queue = %action.target,
+                signal_id = %signal_id,
+                priority = action.priority.keyword(),
+                "Compose Hook enqueued Signal",
+            ),
+            Err(error) => warn!(
+                event = event.as_str(),
+                action_index,
+                queue = %action.target,
+                signal_id = %signal_id,
+                error = %error,
+                "Compose Hook enqueue action failed",
+            ),
         }
     }
 
@@ -723,7 +922,7 @@ mod tests {
                 event,
                 services: services.map(|names| names.into_iter().map(str::to_owned).collect()),
                 triggers: triggers.map(|names| names.into_iter().map(str::to_owned).collect()),
-                actions: vec![Action::Shell(iter_language::ShellActionDef::simple(
+                actions: vec![ComposeAction::Shell(iter_language::ShellActionDef::simple(
                     command,
                 ))],
             },
@@ -739,10 +938,18 @@ mod tests {
     ) -> ComposeHookRuntime {
         let service_names: Vec<String> = services.iter().map(|name| (*name).to_owned()).collect();
         let trigger_names: Vec<String> = triggers.iter().map(|name| (*name).to_owned()).collect();
-        let plans = build_hook_plans(&declarations, &service_names, &trigger_names)
+        let queues: BTreeMap<String, Arc<dyn Queue>> = [(
+            "main".to_owned(),
+            Arc::new(iter_core::queue::InMemoryQueue::new()) as Arc<dyn Queue>,
+        )]
+        .into_iter()
+        .collect();
+        let queue_names: Vec<String> = queues.keys().cloned().collect();
+        let plans = build_hook_plans(&declarations, &service_names, &trigger_names, &queue_names)
             .expect("build hook plans");
         ComposeHookRuntime::new(
             plans,
+            queues,
             "demo".to_owned(),
             directory.join("compose.iter"),
             service_names,
@@ -812,12 +1019,123 @@ mod tests {
             None,
             "true",
         )];
-        let error = build_hook_plans(&declarations, &["known".to_owned()], &[])
+        let error = build_hook_plans(&declarations, &["known".to_owned()], &[], &[])
             .expect_err("unknown selector must fail");
         assert!(matches!(
             error,
             ComposeHookBuildError::UnknownService { name, .. } if name == "missing"
         ));
+    }
+
+    #[test]
+    fn hook_plan_resolves_single_queue_and_rejects_ambiguous_or_unknown_targets() {
+        let make = |target: Option<&str>| {
+            Spanned::new(
+                ComposeHookDef {
+                    event: ComposeEventName::ComposeStarting,
+                    services: None,
+                    triggers: None,
+                    actions: vec![ComposeAction::Enqueue(iter_language::EnqueueActionDef {
+                        target: target.map(str::to_owned),
+                        metadata: Vec::new(),
+                        priority: None,
+                    })],
+                },
+                0..0,
+            )
+        };
+
+        let plans = build_hook_plans(&[make(None)], &[], &[], &["main".to_owned()])
+            .expect("single queue auto-resolves");
+        let ComposeActionPlan::Enqueue(action) = &plans[0].actions[0] else {
+            panic!("expected enqueue plan");
+        };
+        assert_eq!(action.target, "main");
+
+        let ambiguous =
+            build_hook_plans(&[make(None)], &[], &[], &["a".to_owned(), "b".to_owned()])
+                .expect_err("multiple queues require target");
+        assert!(matches!(
+            ambiguous,
+            ComposeHookBuildError::AmbiguousQueue { .. }
+        ));
+
+        let unknown = build_hook_plans(&[make(Some("missing"))], &[], &[], &["main".to_owned()])
+            .expect_err("unknown queue must fail");
+        assert!(matches!(
+            unknown,
+            ComposeHookBuildError::UnknownQueue { name, .. } if name == "missing"
+        ));
+    }
+
+    #[tokio::test]
+    async fn enqueue_action_renders_metadata_and_uses_priority() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let queue = Arc::new(iter_core::queue::InMemoryQueue::new());
+        let queues: BTreeMap<String, Arc<dyn Queue>> =
+            [("reports".to_owned(), Arc::clone(&queue) as Arc<dyn Queue>)]
+                .into_iter()
+                .collect();
+        let declaration = Spanned::new(
+            ComposeHookDef {
+                event: ComposeEventName::ComposeStarting,
+                services: None,
+                triggers: None,
+                actions: vec![
+                    ComposeAction::Enqueue(iter_language::EnqueueActionDef {
+                        target: Some("reports".to_owned()),
+                        metadata: vec![("label".to_owned(), "low".to_owned())],
+                        priority: Some(PriorityKeyword::Low),
+                    }),
+                    ComposeAction::Enqueue(iter_language::EnqueueActionDef {
+                        target: Some("reports".to_owned()),
+                        metadata: vec![
+                            ("label".to_owned(), "{{event.name}}".to_owned()),
+                            ("project".to_owned(), "{{compose.project}}".to_owned()),
+                        ],
+                        priority: Some(PriorityKeyword::Critical),
+                    }),
+                ],
+            },
+            0..0,
+        );
+        let plans = build_hook_plans(&[declaration], &[], &[], &["reports".to_owned()])
+            .expect("build enqueue plan");
+        let mut hooks = ComposeHookRuntime::new(
+            plans,
+            queues,
+            "demo".to_owned(),
+            directory.path().join("compose.iter"),
+            Vec::new(),
+            Vec::new(),
+        );
+
+        hooks
+            .compose_event(ComposeEventName::ComposeStarting, None)
+            .await;
+
+        let first = queue
+            .dequeue(tokio_util::sync::CancellationToken::new())
+            .await
+            .expect("dequeue")
+            .expect("critical signal");
+        assert_eq!(
+            first.metadata().get_str("label"),
+            Some(&MetadataValue::String("compose_starting".to_owned()))
+        );
+        assert_eq!(
+            first.metadata().get_str("project"),
+            Some(&MetadataValue::String("demo".to_owned()))
+        );
+        let second = queue
+            .dequeue(tokio_util::sync::CancellationToken::new())
+            .await
+            .expect("dequeue")
+            .expect("low signal");
+        assert_eq!(
+            second.metadata().get_str("label"),
+            Some(&MetadataValue::String("low".to_owned()))
+        );
     }
 
     #[test]
@@ -828,8 +1146,13 @@ mod tests {
             None,
             "true",
         )];
-        let plans =
-            build_hook_plans(&declarations, &["worker".to_owned()], &[]).expect("build plans");
+        let plans = build_hook_plans(
+            &declarations,
+            &["worker".to_owned()],
+            &[],
+            &["main".to_owned()],
+        )
+        .expect("build plans");
         assert!(plans[0].triggers.is_empty());
     }
 

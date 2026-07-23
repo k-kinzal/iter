@@ -6,7 +6,7 @@
 //! core-level action registrations.
 
 use iter_core::{EventName, RunnerBuilder, TemplateError};
-use iter_language::{Action, EventHandlerDef, Iterfile, Spanned};
+use iter_language::{EventHandlerDef, Iterfile, RunnerAction, Spanned};
 
 use crate::shell_action::ShellAction;
 
@@ -70,12 +70,9 @@ pub(crate) fn register_event_actions_from_events(
         let EventHandlerDef { event, actions } = node;
         let core_name = to_core_event_name(*event);
         for action in actions {
-            match action {
-                Action::Shell(definition) => {
-                    let handler = ShellAction::from_def(definition, variables.clone())?;
-                    builder = builder.on(core_name, handler);
-                }
-            }
+            let RunnerAction::Shell(definition) = action;
+            let handler = ShellAction::from_def(definition, variables.clone())?;
+            builder = builder.on(core_name, handler);
         }
     }
     Ok(builder)
@@ -84,13 +81,13 @@ pub(crate) fn register_event_actions_from_events(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iter_language::{Action, EventHandlerDef, ShellActionDef, Spanned};
+    use iter_language::{EventHandlerDef, RunnerAction, ShellActionDef, Spanned};
 
     fn handler_decl(event: iter_language::EventName, cmd: &str) -> Spanned<EventHandlerDef> {
         Spanned::new(
             EventHandlerDef {
                 event,
-                actions: vec![Action::Shell(ShellActionDef::simple(cmd))],
+                actions: vec![RunnerAction::Shell(ShellActionDef::simple(cmd))],
             },
             0..0,
         )

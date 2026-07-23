@@ -332,6 +332,22 @@ impl Parser<'_> {
                             self.recover_inside_block();
                         }
                     }
+                    "enqueue" => {
+                        // `enqueue` is also a required field of the shell
+                        // queue backend. Only the non-assignment form is a
+                        // lifecycle-hook action.
+                        if matches!(self.peek_at(1), Some(Token::Equals)) {
+                            if let Some(field) = self.parse_field() {
+                                fields.push(field);
+                            } else {
+                                self.recover_inside_block();
+                            }
+                        } else if let Some(action) = self.parse_action() {
+                            actions.push(action);
+                        } else {
+                            self.recover_inside_block();
+                        }
+                    }
                     _ => {
                         if let Some(field) = self.parse_field() {
                             fields.push(field);

@@ -230,18 +230,18 @@ pub struct CstRoute {
     pub span: Span,
 }
 
-/// A `shell "<command>"` or `shell { ... }` action.
+/// A lifecycle-hook action.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CstAction {
-    /// Source span of the `shell` keyword.
+    /// Source span of the action keyword (`shell` or `enqueue`).
     pub keyword_span: Span,
-    /// Shorthand or expanded action body.
+    /// Concrete action body.
     pub body: CstActionBody,
     /// Full span of the action statement.
     pub span: Span,
 }
 
-/// Concrete body forms accepted after the `shell` keyword.
+/// Concrete lifecycle-hook action forms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CstActionBody {
     /// Backward-compatible `shell "<script>"` form.
@@ -253,6 +253,8 @@ pub enum CstActionBody {
     },
     /// Expanded `shell { script = "..."; capture ... }` form.
     Block(CstBlock),
+    /// `enqueue { target = <queue-name> metadata ... priority = ... }`.
+    Enqueue(CstBlock),
 }
 
 /// Boolean guard expression as captured by the parser.

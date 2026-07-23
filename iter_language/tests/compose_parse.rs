@@ -7,9 +7,9 @@
 //! compose from Iterfile syntax.
 
 use iter_language::{
-    Compose, ComposeEventName, ComposeTriggerOverride, EventName, NamedCompose, NamedQueue,
-    NamedService, NamedTrigger, PromptExpr, PromptValue, QueueDef, QueueRef, ServiceSource,
-    TelemetryProtocol, TriggerDef, WatchEventKind, parse_compose,
+    Compose, ComposeAction, ComposeEventName, ComposeTriggerOverride, EventName, NamedCompose,
+    NamedQueue, NamedService, NamedTrigger, PriorityKeyword, PromptExpr, PromptValue, QueueDef,
+    QueueRef, ServiceSource, TelemetryProtocol, TriggerDef, WatchEventKind, parse_compose,
 };
 
 fn parse(src: &str) -> Compose {
@@ -398,6 +398,61 @@ fn compose_hook_lowers_selectors_and_shell_actions() {
     );
     assert!(hook.triggers.is_none());
     assert_eq!(hook.actions.len(), 2);
+}
+
+#[test]
+fn compose_hook_lowers_enqueue_action() {
+    let root = parse(
+        r#"
+            queue reports memory {}
+            on service_completed {
+                enqueue {
+                    target = reports
+                    priority = high
+                    metadata {
+                        source = "{{event.name}}"
+                        service = "{{service.name}}"
+                    }
+                }
+            }
+        "#,
+    );
+    let action = &root.hooks[0].node.actions[0];
+    let ComposeAction::Enqueue(action) = action else {
+        panic!("expected enqueue action, got {action:?}");
+    };
+    assert_eq!(action.target.as_deref(), Some("reports"));
+    assert_eq!(action.priority, Some(PriorityKeyword::High));
+    assert_eq!(
+        action.metadata,
+        [
+            ("source".to_owned(), "{{event.name}}".to_owned()),
+            ("service".to_owned(), "{{service.name}}".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn runner_hook_rejects_compose_only_enqueue_action() {
+    let errors = iter_language::parse(
+        r#"
+            workspace local { base = "." }
+            agent claude { mode = print command = "claude" }
+            runner {
+                continue_on_error = false
+                behavior = loop
+                prompt = "x"
+                on runner_finished { enqueue { metadata { source = "runner" } } }
+            }
+        "#,
+    )
+    .expect_err("Runner enqueue must remain outside the current feature boundary");
+    assert!(
+        errors
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("only valid in Compose Hooks")),
+        "got: {errors:#?}"
+    );
 }
 
 #[test]

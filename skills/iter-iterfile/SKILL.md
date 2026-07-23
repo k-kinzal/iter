@@ -163,7 +163,8 @@ per `iter run`; the rest fire once per iteration.
 
 Each `on <event>` block carries one or more `shell` actions. The shorthand is
 `shell "<command>"`. Use `shell { script = "..." ... }` when command output
-must be captured into the Runner-scoped `var.*` template root.
+must be captured into the Runner-scoped `var.*` template root. `enqueue` is a
+Compose Hook action and is not available in Runner Hooks.
 
 ```hcl
 workspace local { base = "." }

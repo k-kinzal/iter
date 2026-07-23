@@ -1,6 +1,6 @@
 # Compose Hooks
 
-Compose Hooks run Shell actions at lifecycle points visible to the Compose
+Compose Hooks run actions at lifecycle points visible to the Compose
 orchestrator. They are separate from Runner Hooks: Compose never observes a
 Runner's completion condition, iteration count, Signal, Workspace, or Agent
 lifecycle.
@@ -15,10 +15,24 @@ on service_failed {
   services = [explorer_a, explorer_b, explorer_c, explorer_d]
   shell "scripts/report-failure.sh {{service.name}}"
 }
+
+on service_completed {
+  services = [explorer_a]
+
+  enqueue {
+    target   = reports
+    priority = high
+
+    metadata {
+      source  = "{{service.name}}"
+      outcome = "{{service.status}}"
+    }
+  }
+}
 ```
 
-Handlers and their `shell` actions execute in source order. Multiple handlers
-for the same event are allowed.
+Handlers and their `shell` / `enqueue` actions execute in source order.
+Multiple handlers for the same event are allowed.
 
 ## Selectors
 
@@ -155,3 +169,44 @@ The same context is exported for ordinary Shell scripts:
 
 Variables that are not meaningful for the current event are set to an empty
 string so inherited parent values cannot leak into a hook.
+
+## Enqueue contract
+
+`enqueue` publishes one new Signal directly to a queue in the flattened
+Compose plan. It does not invoke `iter enqueue`, reparse another declaration,
+or write a Signal id to stdout.
+
+```hcl
+enqueue {
+  target   = reports
+  priority = critical
+
+  metadata {
+    event   = "{{event.name}}"
+    project = "{{compose.project}}"
+  }
+}
+```
+
+| Field | Required | Default |
+| --- | :---: | --- |
+| `target` | With multiple queues | The only queue when the flattened plan contains exactly one |
+| `priority` | No | `normal` (`low`, `normal`, `high`, or `critical`) |
+| `metadata { ... }` | No | Empty metadata |
+
+`target` is a bare queue name, using the same resolution rule as a Trigger.
+It may name a queue imported from a nested Compose declaration because root
+hooks resolve after the topology is flattened. An unknown target, an omitted
+target with zero queues, or an omitted target with multiple queues is a plan
+error.
+
+Metadata values accept the same Compose Hook template roots listed above. If
+a metadata template cannot render or the queue rejects the Signal, the action
+is logged and skipped without changing Compose state. This is the same
+best-effort policy as `shell`.
+
+The terminal events `compose_completed`, `compose_failed`, and
+`compose_stopped` fire after queues have closed. Enqueue from those events
+therefore fails on close-aware backends. Use their pre-close counterparts
+(`compose_completing`, `compose_failing`, or `compose_stopping`) when the
+Signal must be published during shutdown.

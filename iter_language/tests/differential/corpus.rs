@@ -119,3 +119,33 @@ on runner_starting {
     canonicalize(&mut oracle);
     assert_eq!(handwritten, oracle);
 }
+
+#[test]
+fn enqueue_action_syntax_agreement() {
+    let source = r#"
+on service_completed {
+  enqueue {
+    target = reports
+    priority = high
+    metadata {
+      service = "{{service.name}}"
+    }
+  }
+}
+"#;
+    let (handwritten, diagnostics) = parse_to_cst(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == iter_language::Severity::Error),
+        "hand-written diagnostics: {diagnostics:?}"
+    );
+    let (oracle, oracle_ok) = oracle_parse(source);
+    assert!(oracle_ok, "oracle rejected enqueue action");
+
+    let mut handwritten = handwritten.expect("hand-written CST");
+    let mut oracle = oracle.expect("oracle CST");
+    canonicalize(&mut handwritten);
+    canonicalize(&mut oracle);
+    assert_eq!(handwritten, oracle);
+}

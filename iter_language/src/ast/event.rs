@@ -6,7 +6,7 @@ pub struct EventHandlerDef {
     /// Lifecycle event the handler subscribes to.
     pub event: EventName,
     /// Actions to execute, in source order.
-    pub actions: Vec<Action>,
+    pub actions: Vec<RunnerAction>,
 }
 
 /// A Compose-level `on <event-name> { <selectors> <actions> }` declaration.
@@ -23,7 +23,7 @@ pub struct ComposeHookDef {
     /// Trigger filter or aggregate target set.
     pub triggers: Option<Vec<String>>,
     /// Actions to execute, in source order.
-    pub actions: Vec<Action>,
+    pub actions: Vec<ComposeAction>,
 }
 
 /// Lifecycle and aggregate events observable by a Compose orchestrator.
@@ -374,6 +374,21 @@ pub struct ShellActionDef {
     pub captures: Vec<ShellCaptureDef>,
 }
 
+/// A Signal publication requested by a lifecycle hook.
+///
+/// Compose Hooks resolve `target` against the flattened Compose queue set.
+/// `None` selects the only declared queue and is rejected when resolution is
+/// ambiguous. Runner Hooks do not accept this action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnqueueActionDef {
+    /// Named destination queue, or implicit single-queue resolution.
+    pub target: Option<String>,
+    /// Metadata template fields rendered when the Hook fires.
+    pub metadata: Vec<(String, String)>,
+    /// Signal priority. `None` means `normal`.
+    pub priority: Option<super::PriorityKeyword>,
+}
+
 impl ShellActionDef {
     /// Build the backward-compatible `shell "<script>"` form.
     #[must_use]
@@ -484,11 +499,20 @@ impl ShellCaptureFormat {
     ];
 }
 
-/// Action to perform when a lifecycle event fires.
+/// Action supported by a Runner lifecycle hook.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
+pub enum RunnerAction {
     /// `shell "<script>"` or block-form `shell { ... }` action.
     Shell(ShellActionDef),
+}
+
+/// Action supported by a Compose lifecycle hook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComposeAction {
+    /// `shell "<script>"` or block-form `shell { ... }` action.
+    Shell(ShellActionDef),
+    /// `enqueue { target = <queue> ... }` Signal publication.
+    Enqueue(EnqueueActionDef),
 }
 
 #[cfg(test)]

@@ -97,7 +97,7 @@ fn canon_block(b: &mut CstBlock) {
         a.span = 0..0;
         match &mut a.body {
             CstActionBody::Shorthand { script_span, .. } => *script_span = 0..0,
-            CstActionBody::Block(block) => canon_block(block),
+            CstActionBody::Block(block) | CstActionBody::Enqueue(block) => canon_block(block),
         }
     }
     for capture in &mut b.captures {

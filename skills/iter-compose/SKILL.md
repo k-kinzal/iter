@@ -172,9 +172,10 @@ Per-kind fields, examples, and the regex / JSON-array semantics for
 
 ## Compose Hooks
 
-Compose Hooks run best-effort Shell actions from the root Compose file's
-directory. Service and Trigger events can select resources; omitted selectors
-mean all managed declarations of that kind.
+Compose Hooks run best-effort actions. Shell actions run from the root Compose
+file's directory; enqueue actions publish one Signal directly to a queue in
+the flattened plan. Service and Trigger events can select resources; omitted
+selectors mean all managed declarations of that kind.
 
 ```hcl
 on services_completed {
@@ -186,7 +187,25 @@ on service_failed {
   services = [explorer_a, explorer_b, explorer_c, explorer_d]
   shell "scripts/report-failure.sh {{service.name}}"
 }
+
+on service_completed {
+  services = [explorer_a]
+
+  enqueue {
+    target   = reports
+    priority = high
+
+    metadata {
+      source = "{{service.name}}"
+    }
+  }
+}
 ```
+
+`enqueue.target` follows the Trigger binding rule: it may be omitted for a
+single flattened queue and is required when several queues exist. Metadata
+values use Compose Hook templates. Enqueue is best effort, like `shell`; use a
+pre-close Compose event when publishing during shutdown.
 
 The full event set is documented in `docs/config/compose/on.md`: Compose run
 events, per-service and per-Trigger events, and the

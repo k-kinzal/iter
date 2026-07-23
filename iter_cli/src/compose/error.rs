@@ -195,7 +195,7 @@ pub(crate) enum ComposeError {
         /// The unsupported trigger kind.
         kind: String,
     },
-    /// A Compose Hook selector or shell template is invalid for this plan.
+    /// A Compose Hook selector, queue target, or action template is invalid.
     #[error(transparent)]
     Hook(#[from] ComposeHookBuildError),
 }

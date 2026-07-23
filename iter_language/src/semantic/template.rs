@@ -29,8 +29,8 @@ pub(crate) enum TemplatePosition {
     ShellAction,
     /// Shell actions on runner completion lifecycle events.
     CompletionShellAction,
-    /// Shell actions on Compose lifecycle and aggregate hooks.
-    ComposeShellAction,
+    /// Template-bearing actions on Compose lifecycle and aggregate hooks.
+    ComposeHookAction,
     /// A webhook subscription's `when` guard and per-subscription metadata.
     WebhookSubscription,
     /// A trigger's base `metadata { ... }` (stamped before any event, so no
@@ -53,7 +53,7 @@ impl TemplatePosition {
             TemplatePosition::CompletionShellAction => {
                 &["completion", "runner", "iteration", "var"]
             }
-            TemplatePosition::ComposeShellAction => &[
+            TemplatePosition::ComposeHookAction => &[
                 "event", "compose", "service", "trigger", "services", "triggers", "error",
             ],
             TemplatePosition::WebhookSubscription => &["signal", "metadata", "iteration", "event"],
@@ -264,14 +264,14 @@ mod tests {
     }
 
     #[test]
-    fn compose_shell_action_has_orchestrator_resource_roots() {
+    fn compose_hook_action_has_orchestrator_resource_roots() {
         assert!(accepts(
             "{{event.name}} {{compose.project}} {{service.name}} {{services.names}}",
-            TemplatePosition::ComposeShellAction
+            TemplatePosition::ComposeHookAction
         ));
         assert!(!accepts(
             "{{iteration.count}}",
-            TemplatePosition::ComposeShellAction
+            TemplatePosition::ComposeHookAction
         ));
     }
 

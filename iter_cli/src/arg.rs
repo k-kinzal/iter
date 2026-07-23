@@ -499,11 +499,8 @@ fn render_event(
     values: &BTreeMap<String, String>,
 ) -> Result<(), ArgError> {
     for action in &mut event.actions {
-        match action {
-            iter_language::Action::Shell(definition) => {
-                render_str(&mut definition.script, values)?;
-            }
-        }
+        let iter_language::RunnerAction::Shell(definition) = action;
+        render_str(&mut definition.script, values)?;
     }
     Ok(())
 }
@@ -643,11 +640,9 @@ runner {
 "#;
         let mut root = parse(source).expect("parse");
         resolve_args(&mut root, &BTreeMap::new()).expect("resolve");
-        match &root.runners.first().unwrap().node.events[0].node.actions[0] {
-            iter_language::Action::Shell(definition) => {
-                assert_eq!(definition.script, "mkdir -p /tmp/work");
-            }
-        }
+        let iter_language::RunnerAction::Shell(definition) =
+            &root.runners.first().unwrap().node.events[0].node.actions[0];
+        assert_eq!(definition.script, "mkdir -p /tmp/work");
     }
 
     #[test]

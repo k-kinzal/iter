@@ -623,19 +623,26 @@ fn lower_action(pair: Pair<Rule>) -> CstAction {
     assert_eq!(pair.as_rule(), Rule::action);
     let span = pair_span(&pair);
     let mut inner = pair.into_inner();
-    let kw_pair = inner.next().expect("shell keyword");
+    let kw_pair = inner.next().expect("action keyword");
     let keyword_span = pair_span(&kw_pair);
     let body_pair = inner.next().expect("action body");
-    let body = match body_pair.as_rule() {
-        Rule::string => {
-            let script_span = pair_span(&body_pair);
-            CstActionBody::Shorthand {
-                script: lower_string_raw(&body_pair),
-                script_span,
+    let body = match kw_pair.as_rule() {
+        Rule::kw_shell => match body_pair.as_rule() {
+            Rule::string => {
+                let script_span = pair_span(&body_pair);
+                CstActionBody::Shorthand {
+                    script: lower_string_raw(&body_pair),
+                    script_span,
+                }
             }
-        }
-        Rule::block => CstActionBody::Block(lower_block(body_pair)),
-        other => panic!("unexpected action body: {other:?}"),
+            Rule::block => CstActionBody::Block(lower_block(body_pair)),
+            other => panic!("unexpected shell action body: {other:?}"),
+        },
+        Rule::kw_enqueue => match body_pair.as_rule() {
+            Rule::block => CstActionBody::Enqueue(lower_block(body_pair)),
+            other => panic!("unexpected enqueue action body: {other:?}"),
+        },
+        other => panic!("unexpected action keyword: {other:?}"),
     };
     CstAction {
         keyword_span,

@@ -2,7 +2,8 @@
 
 Declares a lifecycle event handler. Zero or more per `Iterfile`. Also usable inside a `compose.iter` inline service.
 
-AST: `EventHandlerDef`, `EventName`, and `Action` in `iter_language/src/ast/event.rs`.
+AST: `EventHandlerDef`, `EventName`, and `RunnerAction` in
+`iter_language/src/ast/event.rs`.
 
 ## Syntax
 
@@ -22,7 +23,8 @@ on <event-name> {
 }
 ```
 
-Each handler attaches one or more **actions** (currently only `shell`) to a named lifecycle event.
+Each handler attaches one or more **actions** (`shell`) to a named lifecycle
+event. `enqueue` is a Compose Hook action and is not valid in a Runner Hook.
 
 ## Events
 

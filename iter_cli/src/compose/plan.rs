@@ -213,7 +213,8 @@ pub(crate) fn build(root: &Compose, compose_path: &Path) -> Result<ComposePlan, 
         .iter()
         .map(|trigger| trigger.name.clone())
         .collect();
-    let hooks = build_hook_plans(&flat.hooks, &service_names, &trigger_names)?;
+    let queue_names: Vec<String> = queues.keys().cloned().collect();
+    let hooks = build_hook_plans(&flat.hooks, &service_names, &trigger_names, &queue_names)?;
 
     Ok(ComposePlan {
         queues,

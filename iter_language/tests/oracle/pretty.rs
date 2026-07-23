@@ -162,10 +162,19 @@ fn pp_route(out: &mut String, r: &CstRoute, depth: usize) {
 
 fn pp_action(out: &mut String, a: &CstAction, depth: usize) {
     indent(out, depth);
-    out.push_str("shell ");
     match &a.body {
-        CstActionBody::Shorthand { script, .. } => pp_string(out, script),
-        CstActionBody::Block(block) => pp_block(out, block, depth),
+        CstActionBody::Shorthand { script, .. } => {
+            out.push_str("shell ");
+            pp_string(out, script);
+        }
+        CstActionBody::Block(block) => {
+            out.push_str("shell ");
+            pp_block(out, block, depth);
+        }
+        CstActionBody::Enqueue(block) => {
+            out.push_str("enqueue ");
+            pp_block(out, block, depth);
+        }
     }
     out.push('\n');
 }

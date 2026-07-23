@@ -29,7 +29,7 @@
 //! - `telemetry { ... }` — optional project-wide OpenTelemetry export
 //!   settings for the composed topology.
 //! - `on <compose-event> { ... }` — orchestrator-level lifecycle and
-//!   resource-aggregate Shell hooks.
+//!   resource-aggregate hooks with Shell and Signal-enqueue actions.
 //!
 //! `runner` only appears nested inside an inline service body — it is not a
 //! first-class compose section. The runner's prompt and `on <event>`

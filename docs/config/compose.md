@@ -19,7 +19,8 @@ A `compose.iter` file orchestrates **multiple iter services and triggers** aroun
 Unlike `Iterfile`, `compose.iter` has no top-level `workspace`, `agent`,
 `runner`, or `prompt` blocks. Runner Hooks remain inside a service's
 `runner`. Compose has its own top-level `on <compose-event> { ... }` hooks;
-they observe only orchestrator-managed Compose, service, and Trigger state.
+they observe only orchestrator-managed Compose, service, and Trigger state
+and can run Shell actions or publish Signals to declared queues.
 
 ## Telemetry
 
@@ -325,4 +326,4 @@ The orchestrator's stdout/stderr is discarded under `-d` (it has no registry rec
 - [`compose/queue.md`](compose/queue.md) — named queue declarations.
 - [`compose/service.md`](compose/service.md) — `build` vs. inline services.
 - [`compose/trigger.md`](compose/trigger.md) — trigger declarations.
-- [`compose/on.md`](compose/on.md) — Compose lifecycle and aggregate Shell hooks.
+- [`compose/on.md`](compose/on.md) — Compose lifecycle and aggregate hooks.

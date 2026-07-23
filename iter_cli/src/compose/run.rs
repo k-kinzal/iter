@@ -76,6 +76,7 @@ pub(crate) async fn run(
         .collect();
     let mut hooks = ComposeHookRuntime::new(
         hook_plans,
+        queues.clone(),
         orchestrator.project.clone(),
         compose_path.clone(),
         service_names,

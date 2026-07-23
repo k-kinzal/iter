@@ -1,12 +1,12 @@
-//! Runner and Compose `on <event> { ... }` lowering plus shell actions.
+//! Runner and Compose `on <event> { ... }` lowering plus Hook actions.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Analyzer, TemplatePosition, closest};
 use crate::ast::{
-    Action, ComposeEventName, ComposeHookDef, EventHandlerDef, EventName, ShellActionDef,
-    ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse, ShellCaptureStream,
-    Span, Spanned,
+    ComposeAction, ComposeEventName, ComposeHookDef, EnqueueActionDef, EventHandlerDef, EventName,
+    RunnerAction, ShellActionDef, ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode,
+    ShellCaptureParse, ShellCaptureStream, Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{CstAction, CstActionBody, CstBlock, CstCapture, CstField, CstIdent, CstValue};
@@ -109,11 +109,24 @@ impl Analyzer {
         &mut self,
         block: &CstBlock,
         position: TemplatePosition,
-    ) -> Vec<Action> {
+    ) -> Vec<RunnerAction> {
         let mut out = Vec::new();
         for raw in &block.actions {
-            if let Some(action) = self.lower_shell_action(raw, position) {
-                out.push(Action::Shell(action));
+            match &raw.body {
+                CstActionBody::Enqueue(_) => self.errors.push(
+                    Diagnostic::error(
+                        raw.span.clone(),
+                        "`enqueue` actions are only valid in Compose Hooks",
+                    )
+                    .with_hint(
+                        "publish from a top-level `on <compose-event>` block, or use a Runner Hook `shell` action",
+                    ),
+                ),
+                CstActionBody::Shorthand { .. } | CstActionBody::Block(_) => {
+                    if let Some(action) = self.lower_shell_action(raw, position) {
+                        out.push(RunnerAction::Shell(action));
+                    }
+                }
             }
         }
         out
@@ -133,7 +146,7 @@ impl Analyzer {
                 Some(ShellActionDef::simple(script.clone()))
             }
             CstActionBody::Block(body) => {
-                let mut fields = self.collect_shell_fields(&body.fields);
+                let mut fields = self.collect_action_fields(&body.fields);
                 let script = self.take_required_string(
                     &mut fields,
                     "script",
@@ -160,7 +173,7 @@ impl Analyzer {
                     }
                     captures.push(self.lower_shell_capture(capture));
                 }
-                if position == TemplatePosition::ComposeShellAction && !captures.is_empty() {
+                if position == TemplatePosition::ComposeHookAction && !captures.is_empty() {
                     for capture in &body.captures {
                         self.errors.push(Diagnostic::error(
                             capture.span.clone(),
@@ -171,11 +184,61 @@ impl Analyzer {
                 }
                 Some(ShellActionDef { script, captures })
             }
+            CstActionBody::Enqueue(_) => None,
+        }
+    }
+
+    fn lower_compose_actions(&mut self, block: &CstBlock) -> Vec<ComposeAction> {
+        let mut out = Vec::with_capacity(block.actions.len());
+        for raw in &block.actions {
+            match &raw.body {
+                CstActionBody::Enqueue(body) => {
+                    out.push(ComposeAction::Enqueue(self.lower_enqueue_action(body)));
+                }
+                CstActionBody::Shorthand { .. } | CstActionBody::Block(_) => {
+                    if let Some(action) =
+                        self.lower_shell_action(raw, TemplatePosition::ComposeHookAction)
+                    {
+                        out.push(ComposeAction::Shell(action));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn lower_enqueue_action(&mut self, body: &CstBlock) -> EnqueueActionDef {
+        let mut fields = self.collect_action_fields(&body.fields);
+        let target = match take_optional_ident(&mut fields, "target") {
+            Ok(target) => target,
+            Err((span, message)) => {
+                self.errors.push(Diagnostic::error(span, message));
+                None
+            }
+        };
+        let metadata = self
+            .take_optional_metadata_block(
+                &mut fields,
+                "metadata",
+                TemplatePosition::ComposeHookAction,
+            )
+            .unwrap_or_default();
+        let priority = self.take_optional_priority(&mut fields, "priority");
+        self.reject_unknown_fields(
+            &mut fields,
+            &["target", "metadata", "priority"],
+            "enqueue action",
+        );
+        self.reject_enqueue_action_nested_forms(body);
+        EnqueueActionDef {
+            target,
+            metadata,
+            priority,
         }
     }
 
     fn lower_shell_capture(&mut self, raw: &CstCapture) -> ShellCaptureDef {
-        let mut fields = self.collect_shell_fields(&raw.body.fields);
+        let mut fields = self.collect_action_fields(&raw.body.fields);
         let stream = match take_optional_ident(&mut fields, "stream") {
             Ok(Some(value)) if value == "stdout" => ShellCaptureStream::Stdout,
             Ok(Some(value)) if value == "stderr" => ShellCaptureStream::Stderr,
@@ -226,7 +289,7 @@ impl Analyzer {
         }
     }
 
-    fn collect_shell_fields(&mut self, fields: &[CstField]) -> BTreeMap<String, CstField> {
+    fn collect_action_fields(&mut self, fields: &[CstField]) -> BTreeMap<String, CstField> {
         let mut map = BTreeMap::new();
         for field in fields {
             if map.contains_key(&field.name.name) {
@@ -387,6 +450,45 @@ impl Analyzer {
         }
     }
 
+    fn reject_enqueue_action_nested_forms(&mut self, body: &CstBlock) {
+        for action in &body.actions {
+            self.errors.push(Diagnostic::error(
+                action.span.clone(),
+                "nested actions are not valid inside `enqueue { ... }`",
+            ));
+        }
+        for capture in &body.captures {
+            self.errors.push(Diagnostic::error(
+                capture.span.clone(),
+                "captures are not valid inside `enqueue { ... }`",
+            ));
+        }
+        for route in &body.routes {
+            self.errors.push(Diagnostic::error(
+                route.span.clone(),
+                "webhook routes are not valid inside `enqueue { ... }`",
+            ));
+        }
+        for condition in &body.conditions {
+            self.errors.push(Diagnostic::error(
+                condition.span.clone(),
+                "completion conditions are not valid inside `enqueue { ... }`",
+            ));
+        }
+        for arm in &body.prompt_arms {
+            self.errors.push(Diagnostic::error(
+                arm.span.clone(),
+                "prompt match arms are not valid inside `enqueue { ... }`",
+            ));
+        }
+        for handler in &body.event_handlers {
+            self.errors.push(Diagnostic::error(
+                handler.span.clone(),
+                "event handlers are not valid inside `enqueue { ... }`",
+            ));
+        }
+    }
+
     pub(super) fn lower_compose_hook(
         &mut self,
         event: &CstIdent,
@@ -456,7 +558,7 @@ impl Analyzer {
             );
         }
 
-        let actions = self.lower_actions(body, TemplatePosition::ComposeShellAction);
+        let actions = self.lower_compose_actions(body);
         self.reject_compose_hook_nested_forms(body);
 
         Some(Spanned::new(
@@ -572,7 +674,7 @@ mod tests {
     use crate::diagnostic::Severity;
     use crate::parse_to_cst;
     use crate::{
-        Action, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse, ShellCaptureStream,
+        RunnerAction, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse, ShellCaptureStream,
     };
 
     /// A minimal Iterfile head: every required section plus a runner that
@@ -747,7 +849,7 @@ on runner_starting {
         );
         let root = crate::parse(&src).expect("valid block shell");
         let action = &root.runners[0].node.events[0].node.actions[0];
-        let Action::Shell(definition) = action;
+        let RunnerAction::Shell(definition) = action;
         assert_eq!(definition.script, "printf '{\"foo\":1}'");
         assert_eq!(definition.captures.len(), 1);
         let capture = &definition.captures[0];
@@ -777,7 +879,7 @@ on runner_starting {
 "#,
         );
         let root = crate::parse(&src).expect("valid default capture");
-        let Action::Shell(definition) = &root.runners[0].node.events[0].node.actions[0];
+        let RunnerAction::Shell(definition) = &root.runners[0].node.events[0].node.actions[0];
         let capture = &definition.captures[0];
         assert_eq!(capture.stream, ShellCaptureStream::Stdout);
         assert_eq!(capture.mode, ShellCaptureMode::Replace);
@@ -850,13 +952,13 @@ on runner_starting {
     #[test]
     fn block_shell_requires_script() {
         let src = iterfile(
-            r#"
+            r"
 on runner_starting {
   shell {
     capture context {}
   }
 }
-"#,
+",
         );
         let diagnostics = analyze(&src);
         assert!(

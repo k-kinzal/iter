@@ -184,15 +184,16 @@ route_when   = { kw_when ~ string }
 // `capture <name> { ... }` inside a block-form shell action.
 nested_capture = { kw_capture ~ ident ~ block }
 
-// `shell "<command>"` or `shell { ... }` event-handler action.
-action = { kw_shell ~ (string | block) }
+// Lifecycle-hook actions. `enqueue` is semantically restricted to Compose
+// Hooks; the parser keeps block syntax context-free.
+action = { (kw_shell ~ (string | block)) | (kw_enqueue ~ block) }
 
 // `<ident> = <value>` OR `<ident> { ... }`  (shorthand nested block).
 //
-// `field_name` excludes the contextual block-entry keywords `on` and
-// `shell`: writing `on = "x"` or `shell = "x"` is NOT a field — it is a
-// malformed route/action, matching the hand-written parser which dispatches
-// on the literal spelling of those words before reaching the field path.
+// `field_name` excludes contextual block-entry keywords which cannot also be
+// fields. `enqueue` deliberately remains available here because the shell
+// queue backend has a required `enqueue = "..."` command field; action
+// parsing wins only for the `enqueue { ... }` form.
 field      = { field_name ~ field_rhs }
 // `field_name` is a compound-atomic (`$`) rule: no whitespace is allowed
 // between its parts, but the inner `ident` or `string` pair is preserved
@@ -251,6 +252,7 @@ kw_prompt    = @{ "prompt"    ~ !ident_continue }
 kw_on        = @{ "on"        ~ !ident_continue }
 kw_when      = @{ "when"      ~ !ident_continue }
 kw_shell     = @{ "shell"     ~ !ident_continue }
+kw_enqueue   = @{ "enqueue"   ~ !ident_continue }
 kw_capture   = @{ "capture"   ~ !ident_continue }
 kw_metadata  = @{ "metadata"  ~ !ident_continue }
 kw_iteration = @{ "iteration" ~ !ident_continue }

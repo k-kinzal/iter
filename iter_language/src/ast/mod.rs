@@ -50,8 +50,9 @@ pub use compose::{
     NamedQueue, NamedService, NamedTrigger, QueueRef, ServiceSource,
 };
 pub use event::{
-    Action, ComposeEventName, ComposeHookDef, EventHandlerDef, EventName, ShellActionDef,
-    ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode, ShellCaptureParse, ShellCaptureStream,
+    ComposeAction, ComposeEventName, ComposeHookDef, EnqueueActionDef, EventHandlerDef, EventName,
+    RunnerAction, ShellActionDef, ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode,
+    ShellCaptureParse, ShellCaptureStream,
 };
 pub use prompt::{
     CmpOp, IterationField, NamedPrompt, PriorityKeyword, PromptArm, PromptDef, PromptExpr,

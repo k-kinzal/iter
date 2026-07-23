@@ -77,29 +77,49 @@ impl Parser<'_> {
 
     pub(super) fn parse_action(&mut self) -> Option<CstAction> {
         let kw_span = self.peek_span();
-        self.bump(); // `shell`
-        let body = match self.peek() {
-            Some(Token::String(_)) => {
-                let (script, script_span) = self.expect_string()?;
-                CstActionBody::Shorthand {
-                    script,
-                    script_span,
+        let keyword = match &self.bump()?.token {
+            Token::Ident(keyword) => keyword.as_str(),
+            _ => return None,
+        };
+        let body = match keyword {
+            "shell" => match self.peek() {
+                Some(Token::String(_)) => {
+                    let (script, script_span) = self.expect_string()?;
+                    CstActionBody::Shorthand {
+                        script,
+                        script_span,
+                    }
                 }
+                Some(Token::LBrace) => CstActionBody::Block(self.parse_block()),
+                other => {
+                    let span = self.peek_span();
+                    let got = other.map_or_else(|| "end of file".to_string(), Token::describe);
+                    self.errors.push(Diagnostic::error(
+                        span,
+                        format!("expected a string literal or `{{` after `shell`, found {got}"),
+                    ));
+                    return None;
+                }
+            },
+            "enqueue" if matches!(self.peek(), Some(Token::LBrace)) => {
+                CstActionBody::Enqueue(self.parse_block())
             }
-            Some(Token::LBrace) => CstActionBody::Block(self.parse_block()),
-            other => {
+            "enqueue" => {
                 let span = self.peek_span();
-                let got = other.map_or_else(|| "end of file".to_string(), Token::describe);
+                let got = self
+                    .peek()
+                    .map_or_else(|| "end of file".to_string(), Token::describe);
                 self.errors.push(Diagnostic::error(
                     span,
-                    format!("expected a string literal or `{{` after `shell`, found {got}"),
+                    format!("expected `{{` after `enqueue`, found {got}"),
                 ));
                 return None;
             }
+            _ => return None,
         };
         let end = match &body {
             CstActionBody::Shorthand { script_span, .. } => script_span.end,
-            CstActionBody::Block(block) => block.span.end,
+            CstActionBody::Block(block) | CstActionBody::Enqueue(block) => block.span.end,
         };
         Some(CstAction {
             keyword_span: kw_span.clone(),
