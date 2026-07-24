@@ -19,6 +19,18 @@ pub enum SandboxWorkspaceError {
     /// Any other I/O error encountered while cloning or reconciling.
     #[error("sandbox workspace I/O error: {0}")]
     Io(#[from] std::io::Error),
+    /// A project deny rule covers the Runner-owned temporary directory.
+    #[error(
+        "sandbox policy denies runner temporary directory {} via {}",
+        path.display(),
+        denied_by.display()
+    )]
+    RunnerTemporaryDirectoryDenied {
+        /// Runner-owned temporary directory required by agent commands.
+        path: PathBuf,
+        /// Configured deny path that contains it.
+        denied_by: PathBuf,
+    },
     /// No sandbox backend is available for this platform.
     #[error("no sandbox backend for this platform")]
     UnsupportedPlatform,

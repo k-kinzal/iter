@@ -277,8 +277,10 @@ impl Parser<'_> {
                             self.recover_inside_block();
                         }
                     }
-                    // Guard expression start followed by `.` — prompt match arm.
-                    "metadata" | "iteration" if matches!(self.peek_at(1), Some(Token::Dot)) => {
+                    // Any identifier-led common expression. Assignment and
+                    // block keywords remain fields/actions; expression
+                    // punctuation disambiguates a match arm.
+                    _ if is_prompt_arm_continuation(self.peek_at(1)) => {
                         if let Some(arm) = self.parse_prompt_match_guard_arm() {
                             prompt_arms.push(arm);
                         } else {
@@ -356,10 +358,27 @@ impl Parser<'_> {
                         }
                     }
                 },
-                // String-keyed field (e.g. header maps `"x-source" = "..."`).
+                // A string literal may lead a comparison arm; `=` keeps the
+                // existing string-keyed field form (e.g. header maps).
+                Some(Token::String(_)) if is_prompt_arm_continuation(self.peek_at(1)) => {
+                    if let Some(arm) = self.parse_prompt_match_guard_arm() {
+                        prompt_arms.push(arm);
+                    } else {
+                        self.recover_inside_block();
+                    }
+                }
                 Some(Token::String(_)) => {
                     if let Some(field) = self.parse_field() {
                         fields.push(field);
+                    } else {
+                        self.recover_inside_block();
+                    }
+                }
+                Some(
+                    Token::Integer(_) | Token::LParen | Token::True | Token::False | Token::Null,
+                ) => {
+                    if let Some(arm) = self.parse_prompt_match_guard_arm() {
+                        prompt_arms.push(arm);
                     } else {
                         self.recover_inside_block();
                     }
@@ -415,4 +434,24 @@ impl Parser<'_> {
             span: start..end,
         })
     }
+}
+
+fn is_prompt_arm_continuation(token: Option<&Token>) -> bool {
+    matches!(
+        token,
+        Some(
+            Token::Dot
+                | Token::LBracket
+                | Token::EqEq
+                | Token::BangEq
+                | Token::Lt
+                | Token::LtEq
+                | Token::Gt
+                | Token::GtEq
+                | Token::Percent
+                | Token::AmpAmp
+                | Token::PipePipe
+                | Token::FatArrow
+        )
+    )
 }

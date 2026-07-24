@@ -28,6 +28,7 @@ Iterfile {
                     args: [],
                     system_prompt: None,
                     session_id_file: None,
+                    output_schema: None,
                     env: {},
                 },
             },
@@ -59,21 +60,50 @@ Iterfile {
                 prompt: Match {
                     arms: [
                         PromptArm {
-                            guard: IterationResultEq {
-                                value: "errored",
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "previous_result",
+                                        ),
+                                    ],
+                                },
+                                op: Eq,
+                                rhs: Literal(
+                                    String(
+                                        "errored",
+                                    ),
+                                ),
                             },
                             value: Ref(
                                 "recovery",
                             ),
                         },
                         PromptArm {
-                            guard: IterationCmp {
-                                field: Count,
-                                modulus: Some(
-                                    25,
-                                ),
+                            guard: Binary {
+                                lhs: Binary {
+                                    lhs: Path {
+                                        root: "iteration",
+                                        segments: [
+                                            Field(
+                                                "count",
+                                            ),
+                                        ],
+                                    },
+                                    op: Mod,
+                                    rhs: Literal(
+                                        Integer(
+                                            25,
+                                        ),
+                                    ),
+                                },
                                 op: Eq,
-                                rhs: 0,
+                                rhs: Literal(
+                                    Integer(
+                                        0,
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "review changes",
@@ -88,6 +118,7 @@ Iterfile {
                     Spanned {
                         node: EventHandlerDef {
                             event: AgentFinished,
+                            condition: None,
                             actions: [
                                 Shell(
                                     ShellActionDef {

@@ -11,6 +11,8 @@ description = "Parser, AST, and semantic analyzer for the iter workflow definiti
 [dependencies]
 ariadne.workspace = true
 chrono.workspace = true
+jsonschema.workspace = true
+serde_json.workspace = true
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]

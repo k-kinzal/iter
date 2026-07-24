@@ -206,6 +206,7 @@ impl AgentDriver for GeminiDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Piped,
+                    temporary_files: Vec::new(),
                 })
             }
             AgentMode::Interactive => {
@@ -219,6 +220,7 @@ impl AgentDriver for GeminiDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Inherit,
+                    temporary_files: Vec::new(),
                 })
             }
         }
@@ -310,6 +312,7 @@ impl AgentDriver for GeminiDriver {
 
                 Ok(AgentRun {
                     session_id: record.session_id(),
+                    output: record.response().map(crate::agent::AgentOutput::Text),
                 })
             }
         }
@@ -455,6 +458,10 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(0), body, ""))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("conv-9"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("ok".into()))
+        );
     }
 
     #[test]

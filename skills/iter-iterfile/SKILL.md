@@ -1,6 +1,6 @@
 ---
 name: iter-iterfile
-description: "Author or modify an Iterfile (single-service HCL config for iter run). Blocks: workspace, agent, runner, prompt, queue, on-event. Workspace kinds, agent CLI kinds, wait/loop behaviors, prompt guards."
+description: "Author or modify an Iterfile (single-service HCL config for iter run). Blocks: workspace, agent, runner, prompt, queue, on-event. Workspace kinds, agent CLI kinds, wait/loop behaviors, conditional expressions."
 ---
 
 # iter-iterfile
@@ -111,12 +111,11 @@ runner {
 }
 ```
 
-## Prompt guards
+## Prompt expressions
 
 The runner's prompt is a `prompt { ... }` match block whose arms carry a
-guard — a boolean expression over the Signal's metadata and the runner's
-iteration state. The first arm whose guard is true wins; `_` is the
-required default.
+boolean expression. The first arm whose expression is true wins; `_` is
+the required default.
 
 ```hcl
 workspace local { base = "." }
@@ -136,13 +135,14 @@ runner {
 }
 ```
 
-Available `iteration.*` fields: `count` (1-indexed), `previous_exit_code`,
-`previous_result` (`"none" | "success" | "errored"`),
-`consecutive_failures`, `consecutive_successes`. Operators: `==`, `!=`,
-`<`, `<=`, `>`, `>=`, optional `% N`. `&&` and `||` group with
-parentheses.
+Prompt expressions can use `signal.*`, `metadata.*`, `iteration.*`, and
+`var.*`. Available `iteration.*` fields include `count` (1-indexed),
+`previous_exit_code`, `previous_result`
+(`"none" | "success" | "errored"`), `consecutive_failures`, and
+`consecutive_successes`. Operators: `==`, `!=`, `<`, `<=`, `>`, `>=`, `%`,
+`&&`, and `||`, with parentheses for grouping.
 
-The match selects exactly one body per iteration: guarded arms are
+The match selects exactly one body per iteration: conditional arms are
 evaluated top to bottom and the first true arm wins; if none match, the
 `_` default arm is used. To combine instructions, write them into a single
 arm body rather than expecting multiple arms to fire.
@@ -161,8 +161,9 @@ per `iter run`; the rest fire once per iteration.
    failure)
 7. `runner_finished`
 
-Each `on <event>` block carries one or more `shell` actions. The shorthand is
-`shell "<command>"`. Use `shell { script = "..." ... }` when command output
+Each `on <event> [when <expression>]` block carries one or more `shell`
+actions. The shorthand is `shell "<command>"`. Use
+`shell { script = "..." ... }` when command output
 must be captured into the Runner-scoped `var.*` template root. `enqueue` is a
 Compose Hook action and is not available in Runner Hooks.
 
@@ -190,6 +191,10 @@ runner {
 
   on agent_finished {
     shell "git status --short"
+  }
+
+  on agent_finished when agent.output.decision == "fix" {
+    shell "./scripts/apply-review-fixes"
   }
 
   on signal_received {
@@ -220,8 +225,19 @@ Runner Prompt and shell templates accept `signal.*`, `metadata.*`,
 instead add `completion.*` and `runner.*` and have no current Signal. See
 `docs/config/iterfile/on.md` for the full placeholder and timing contract.
 
+Successful `agent_finished` Hooks additionally expose `agent.session_id` and
+`agent.output`. Structured fields such as `agent.output.decision` are
+available when `claude`, `codex`, or `grok` uses inline `output_schema`;
+otherwise capturable Agents expose final-response text at `agent.output`.
+`output_schema` accepts a JSON document string or a direct JSON-shaped value,
+never a user file path. For Claude/Codex it requires `mode = print`.
+Codex's CLI-required Schema file is placed in the Runner's private temporary
+directory, never in the Workspace; sandboxed runs permit that directory.
+
 Multiple `on <event>` blocks for the same event are allowed — each is a
 separate handler, all run in source order.
+One handler evaluates its `when` expression once before running its actions.
+Evaluation failures are recorded as handler errors.
 
 ## Validate Before Running
 
@@ -229,7 +245,7 @@ separate handler, all run in source order.
 iter validate ./Iterfile
 ```
 
-Catches required-field omissions, unknown kinds, illegal guard expressions,
+Catches required-field omissions, unknown kinds, illegal expressions,
 and the `wait`-without-`queue` semantic error before any agent is spawned.
 
 ## Pointers
@@ -240,7 +256,7 @@ and the `wait`-without-`queue` semantic error before any agent is spawned.
 - Agent kinds (per-CLI invocation shape): `docs/config/iterfile/agent.md`.
 - Runner semantics (wait/loop/timeout, iteration state):
   `docs/config/iterfile/runner.md`.
-- Prompt guards + placeholders: `docs/config/iterfile/prompt.md`.
+- Prompt expressions + placeholders: `docs/config/iterfile/prompt.md`.
 - Queue backends: `docs/config/iterfile/queue.md`,
   `docs/config/queue-backend/`.
 - Lifecycle events + `shell` actions: `docs/config/iterfile/on.md`.

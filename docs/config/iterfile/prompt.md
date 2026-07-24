@@ -2,7 +2,9 @@
 
 Declares the prompt text sent to the agent each iteration. The prompt lives **inside the `runner` block** as a `prompt` field (or `prompt { ... }` match block); it is no longer a top-level section. Reusable prompt bodies are declared at top level with `prompt as <name>` and referenced by bareword. Also usable inside a `compose.iter` inline service.
 
-AST: `PromptExpr`, `PromptValue`, `PromptArm`, `NamedPrompt`, and `PromptGuard` in `iter_language/src/ast/prompt.rs`.
+AST: `PromptExpr`, `PromptValue`, `PromptArm`, and `NamedPrompt` in
+`iter_language/src/ast/prompt.rs`; conditional branches use the common `Expr`
+AST from `iter_language/src/ast/expression.rs`.
 
 ## Syntax
 
@@ -15,11 +17,11 @@ runner {
   # Single prompt — inline string or a bareword reference to a `prompt as <name>` definition.
   prompt = "<body>"
 
-  # OR a match block — first true guard wins; `_` is the required default arm.
+  # OR a match block — first true expression wins; `_` is the required default arm.
   prompt {
-    <guard> => "<body>"
-    <guard> => <named-prompt>
-    _       => "<body>"
+    <expression> => "<body>"
+    <expression> => <named-prompt>
+    _            => "<body>"
   }
 }
 ```
@@ -47,7 +49,7 @@ Bodies accept any string literal form documented in [`language.md`](../language.
 | Name | Type | Required | Default | Description |
 | --- | --- | :---: | --- | --- |
 | `prompt` value | `string` or named-prompt reference | Required (for `iter run`) | — | Prompt text, or a bareword referencing a top-level `prompt as <name>`. May contain `{{...}}` placeholders that are resolved at dispatch time. |
-| match arm guard | guard expression | — | — | Boolean predicate; the arm's value is selected for the iteration when it is the first guard (top to bottom) to evaluate true against the current Signal's metadata and iteration state. |
+| match arm condition | expression | — | — | Boolean expression; the arm's value is selected when it is the first condition (top to bottom) to evaluate true against the current Prompt context. |
 | `_` default arm | `string` or reference | Required in a match block | — | Selected when no guarded arm matches. |
 
 ## Placeholder resolution
@@ -65,27 +67,32 @@ value envelope, parsers, and timing rules.
 
 See [`language.md` § Placeholders](../language.md) for the full set of placeholder roots.
 
-## Match-arm guards
+## Match-arm expressions
 
-A guard is a boolean expression over the Signal's metadata and the
-runner's iteration state. It forms the left-hand side of a
-`prompt { <guard> => ... }` match arm. Grammar:
+A condition is a common expression evaluated against the current Prompt
+context. It forms the left-hand side of a
+`prompt { <expression> => ... }` match arm. Grammar:
 
 ```
-guard      ::= term ( ( "&&" | "||" ) term )*
-term       ::= "metadata"  "." <key>   ( "==" | "!=" ) <string>
-             | "iteration" "." <field> ( "%" <int> )? <cmp> <int>
-             | "iteration" "." "previous_result"     ( "==" | "!=" ) <result>
-             | "(" guard ")"
-cmp        ::= "==" | "!=" | "<" | "<=" | ">" | ">="
-result    ::= "\"none\"" | "\"success\"" | "\"errored\""
+expression ::= and ( "||" and )*
+and        ::= compare ( "&&" compare )*
+compare    ::= modulus ( ( "==" | "!=" | "<" | "<=" | ">" | ">=" ) modulus )?
+modulus    ::= primary ( "%" primary )*
+primary    ::= path | string | integer | boolean | null | "(" expression ")"
+path       ::= root ( "." field | "[" integer "]" )*
 ```
 
-`&&` and `||` associate left-to-right; use parentheses to group.
-Metadata predicates only support equality/inequality against a string
-literal. Iteration predicates compare numeric fields against an integer
-(optionally reduced `% N` first), with `previous_result` as a special
-string-valued field that only takes `==` / `!=`.
+`&&` binds more tightly than `||`; use parentheses to group explicitly.
+Ordering compares two JSON numbers or two strings. `%` requires integers.
+Equality accepts any two compatible values. A missing path does not match,
+including with `!=`. A null value compared with a non-null value likewise
+does not match; use `== null` to test null explicitly. Conditions must
+evaluate to booleans. `metadata.*` values are strings.
+
+Prompt expressions can use `signal.*`, `metadata.*`, `iteration.*`, and
+`var.*`. The expression AST itself does not hard-code these names: each
+surface declares which context roots are available. For example,
+`agent.*` is added by `agent_finished` Hooks, not by Prompt selection.
 
 ### `iteration.<field>` reference
 
@@ -96,9 +103,13 @@ string-valued field that only takes `==` / `!=`.
 | `consecutive_failures` | integer | Runner stage failure streak. Increments when a runner stage fails: workspace setup error, prompt render error, agent process spawn / I/O error, iteration timeout, or workspace teardown error. Resets to 0 on the next successful iteration. Agent-internal behaviour (e.g. the agent producing unhelpful output) does not affect this counter. |
 | `consecutive_successes` | integer | Runner stage success streak. Increments when the full iteration pipeline (setup → agent → teardown) completes without a stage error. Resets to 0 on the next stage failure. |
 | `previous_result` | `"none" \| "success" \| "errored"` | Runner-level result of the prior turn. `"success"` when the full iteration pipeline completed without a stage error. `"errored"` when a runner stage failed (same conditions as `consecutive_failures`). `"none"` only on the first iteration. |
+| `started_at` | RFC 3339 string | Wall-clock time at which the current iteration began. |
+| `runner_started_at` | RFC 3339 string | Wall-clock time at which the Runner entered its loop. |
+| `previous_signal_id` | UUID string or absent | Signal identifier from the prior iteration. |
 
-`% 0` is rejected at parse time. `previous_result` is the only field
-that accepts a string RHS, and it does not support `%`.
+`% 0` and statically known operand-type mismatches are rejected during
+declaration analysis. `previous_result` accepts only the three values shown
+above. Dynamic values are checked when the expression runs.
 
 ### Examples
 
@@ -114,7 +125,7 @@ runner {
 ```
 
 ```hcl
-# Guards as match arms — first true arm wins, `_` is the default.
+# Conditional expressions as match arms — first true arm wins, `_` is the default.
 runner {
   agent     = claude
   workspace = local
@@ -126,7 +137,7 @@ runner {
     Perform a security audit. Focus on authentication, input validation,
     and secret handling.
     """
-    # Compound guard
+    # Compound expression
     metadata.env == "prod" && metadata.task != "skip" => "Run production-safe checks only."
     # Periodic direction change: fires on count == 50, 100, 150, ...
     iteration.count % 50 == 0 => "The current codebase has problems. Identify the issues and fix them."
@@ -138,7 +149,7 @@ runner {
 ## Evaluation order and selection
 
 - A `prompt = ...` field selects exactly one body unconditionally.
-- A `prompt { ... }` match block selects exactly one arm: guarded arms are evaluated **top to bottom** and the **first** one whose guard is true wins; if none match, the `_` default arm is used. Unlike the removed top-level form, arms are not concatenated — a single body is sent per iteration.
+- A `prompt { ... }` match block selects exactly one arm: conditional arms are evaluated **top to bottom** and the **first** one whose expression is true wins; if none match, the `_` default arm is used. Unlike the removed top-level form, arms are not concatenated — a single body is sent per iteration.
 - The `_` default is required in a match block, so a match always selects a body. A runner with no `prompt` at all produces an **empty prompt**; the agent is still invoked, but with nothing to read.
 
 ```hcl

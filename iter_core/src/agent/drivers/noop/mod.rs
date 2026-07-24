@@ -47,6 +47,7 @@ impl AgentDriver for NoopDriver {
             process,
             stdin: None,
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 

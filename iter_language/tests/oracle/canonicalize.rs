@@ -10,7 +10,8 @@
 //! compare shape explicitly and leave span equivalence as a non-goal.
 
 use iter_language::{
-    CstActionBody, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstSection, CstValue,
+    CstActionBody, CstBinaryOp, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstPathSegment,
+    CstSection, CstValue,
 };
 
 pub(crate) fn canonicalize(file: &mut CstFile) {
@@ -105,6 +106,21 @@ fn canon_block(b: &mut CstBlock) {
         canon_ident(&mut capture.name);
         canon_block(&mut capture.body);
     }
+    for arm in &mut b.prompt_arms {
+        arm.span = 0..0;
+        if let Some(guard) = &mut arm.guard {
+            canon_guard(guard);
+        }
+        canon_value(&mut arm.value);
+    }
+    for handler in &mut b.event_handlers {
+        handler.span = 0..0;
+        canon_ident(&mut handler.event);
+        if let Some(condition) = &mut handler.condition {
+            canon_guard(condition);
+        }
+        canon_block(&mut handler.body);
+    }
 }
 
 fn canon_field(f: &mut CstField) {
@@ -153,45 +169,34 @@ fn canon_guard(g: &mut CstGuard) {
 
 fn zero_guard_spans(g: &mut CstGuard) {
     match g {
-        CstGuard::MetadataEq { span, .. } | CstGuard::MetadataNeq { span, .. } => {
+        CstGuard::Literal { span, .. } => {
             *span = 0..0;
         }
-        CstGuard::IterationCmp {
-            field_span,
-            modulus_span,
-            op_span,
-            rhs_span,
+        CstGuard::Path {
+            root,
+            segments,
             span,
-            ..
         } => {
-            *field_span = 0..0;
-            if let Some(m) = modulus_span {
-                *m = 0..0;
+            canon_ident(root);
+            for segment in segments {
+                match segment {
+                    CstPathSegment::Field(field) => canon_ident(field),
+                    CstPathSegment::Index(_, span) => *span = 0..0,
+                }
             }
-            *op_span = 0..0;
-            *rhs_span = 0..0;
             *span = 0..0;
         }
-        CstGuard::IterationResultEq {
-            field_span,
-            value_span,
-            span,
-            ..
-        }
-        | CstGuard::IterationResultNeq {
-            field_span,
-            value_span,
+        CstGuard::Binary {
+            lhs,
+            op_span,
+            rhs,
             span,
             ..
         } => {
-            *field_span = 0..0;
-            *value_span = 0..0;
+            zero_guard_spans(lhs);
+            *op_span = 0..0;
+            zero_guard_spans(rhs);
             *span = 0..0;
-        }
-        CstGuard::And(l, r, s) | CstGuard::Or(l, r, s) => {
-            *s = 0..0;
-            zero_guard_spans(l);
-            zero_guard_spans(r);
         }
     }
 }
@@ -207,21 +212,20 @@ fn reassociate_left(g: CstGuard) -> CstGuard {
         return fold_left(flat_and, GuardOp::And);
     }
     match g {
-        CstGuard::And(l, r, s) => CstGuard::And(
-            Box::new(reassociate_left(*l)),
-            Box::new(reassociate_left(*r)),
-            s,
-        ),
-        CstGuard::Or(l, r, s) => CstGuard::Or(
-            Box::new(reassociate_left(*l)),
-            Box::new(reassociate_left(*r)),
-            s,
-        ),
-        leaf @ (CstGuard::MetadataEq { .. }
-        | CstGuard::MetadataNeq { .. }
-        | CstGuard::IterationCmp { .. }
-        | CstGuard::IterationResultEq { .. }
-        | CstGuard::IterationResultNeq { .. }) => leaf,
+        CstGuard::Binary {
+            lhs,
+            op,
+            op_span,
+            rhs,
+            span,
+        } => CstGuard::Binary {
+            lhs: Box::new(reassociate_left(*lhs)),
+            op,
+            op_span,
+            rhs: Box::new(reassociate_left(*rhs)),
+            span,
+        },
+        leaf @ (CstGuard::Literal { .. } | CstGuard::Path { .. }) => leaf,
     }
 }
 
@@ -239,9 +243,26 @@ fn flatten(g: &CstGuard, op: GuardOp) -> Vec<CstGuard> {
 
 fn flatten_into(g: &CstGuard, op: GuardOp, out: &mut Vec<CstGuard>) {
     match (op, g) {
-        (GuardOp::Or, CstGuard::Or(l, r, _)) | (GuardOp::And, CstGuard::And(l, r, _)) => {
-            flatten_into(l, op, out);
-            flatten_into(r, op, out);
+        (
+            GuardOp::Or,
+            CstGuard::Binary {
+                lhs,
+                op: CstBinaryOp::Or,
+                rhs,
+                ..
+            },
+        )
+        | (
+            GuardOp::And,
+            CstGuard::Binary {
+                lhs,
+                op: CstBinaryOp::And,
+                rhs,
+                ..
+            },
+        ) => {
+            flatten_into(lhs, op, out);
+            flatten_into(rhs, op, out);
         }
         _ => out.push(g.clone()),
     }
@@ -253,11 +274,17 @@ fn fold_left(items: Vec<CstGuard>, op: GuardOp) -> CstGuard {
     let mut acc = reassociate_left(first);
     for next in iter {
         let right = reassociate_left(next);
-        let node = match op {
-            GuardOp::And => CstGuard::And(Box::new(acc), Box::new(right), 0..0),
-            GuardOp::Or => CstGuard::Or(Box::new(acc), Box::new(right), 0..0),
+        let binary_op = match op {
+            GuardOp::And => CstBinaryOp::And,
+            GuardOp::Or => CstBinaryOp::Or,
         };
-        acc = node;
+        acc = CstGuard::Binary {
+            lhs: Box::new(acc),
+            op: binary_op,
+            op_span: 0..0,
+            rhs: Box::new(right),
+            span: 0..0,
+        };
     }
     acc
 }

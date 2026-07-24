@@ -19,6 +19,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Local, Utc};
 use serde::Serialize;
 
+use crate::AgentRun;
 use crate::runner::completion::{CompletionConditionInfo, CompletionEvent};
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
@@ -83,6 +84,8 @@ pub struct IterationRenderContext<'a> {
     signal: SignalContext<'a>,
     iteration: &'a IterationContext,
     var: VariableSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<&'a AgentRun>,
 }
 
 impl<'a> IterationRenderContext<'a> {
@@ -93,6 +96,7 @@ impl<'a> IterationRenderContext<'a> {
             signal: SignalContext::from_signal(signal),
             iteration,
             var: VariableSnapshot::default(),
+            agent: None,
         }
     }
 
@@ -107,6 +111,24 @@ impl<'a> IterationRenderContext<'a> {
             signal: SignalContext::from_signal(signal),
             iteration,
             var,
+            agent: None,
+        }
+    }
+
+    /// Build the render view for `agent_finished`, including the successful
+    /// [`AgentRun`] under `agent.*`.
+    #[must_use]
+    pub fn with_agent_and_variables(
+        signal: &'a Signal,
+        iteration: &'a IterationContext,
+        var: VariableSnapshot,
+        agent: &'a AgentRun,
+    ) -> Self {
+        Self {
+            signal: SignalContext::from_signal(signal),
+            iteration,
+            var,
+            agent: Some(agent),
         }
     }
 

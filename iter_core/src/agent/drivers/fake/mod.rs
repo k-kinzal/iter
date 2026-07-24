@@ -141,6 +141,7 @@ impl AgentDriver for FakeDriver {
             process,
             stdin: None,
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -149,7 +150,8 @@ impl AgentDriver for FakeDriver {
         // exit is an (empty) run; a non-zero code becomes `Failed`, a signal
         // becomes `TerminatedBySignal`.
         match RawOutput::from(output).exit.into_failure() {
-            None => Ok(AgentRun::empty()),
+            None => Ok(AgentRun::empty()
+                .with_text_output(String::from_utf8_lossy(&output.stdout).into_owned())),
             Some(err) => Err(err),
         }
     }
@@ -272,7 +274,11 @@ mod tests {
         };
         let prompt = Prompt::from("ignored");
         let (result, sink) = drive_capturing(driver, tmp.path(), &prompt).await;
-        result.expect("run ok");
+        let run = result.expect("run ok");
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("hello\nworld\n".into()))
+        );
         assert_eq!(sink.stdout().await, "hello\nworld\n");
         assert_eq!(sink.stderr().await, "warn\n");
     }

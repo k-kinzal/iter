@@ -32,6 +32,10 @@ pub enum BuilderError {
     /// `behavior = loop` (which synthesises signals) or supply a queue.
     #[error("invalid configuration: {0}")]
     InvalidConfig(&'static str),
+
+    /// The Runner's private temporary directory could not be created.
+    #[error("failed to create runner temporary directory: {0}")]
+    TemporaryDirectory(#[source] std::io::Error),
 }
 
 /// Fluent builder for [`Runner`].
@@ -265,7 +269,7 @@ impl RunnerBuilder {
     /// was not supplied, and [`BuilderError::InvalidConfig`] for an
     /// internally inconsistent configuration.
     pub fn build(self) -> Result<Runner, BuilderError> {
-        let workspace = self
+        let mut workspace = self
             .workspace
             .ok_or(BuilderError::MissingField("workspace"))?;
         let mut agent = self.agent.ok_or(BuilderError::MissingField("agent"))?;
@@ -283,6 +287,12 @@ impl RunnerBuilder {
             agent = agent.with_stdio_sink(sink);
         }
 
+        let temporary_directory = tempfile::Builder::new()
+            .prefix("iter-runner-")
+            .tempdir()
+            .map_err(BuilderError::TemporaryDirectory)?;
+        workspace.set_runner_temporary_directory(temporary_directory.path());
+
         Ok(Runner {
             queue: self.queue,
             workspace,
@@ -295,6 +305,7 @@ impl RunnerBuilder {
             clock: self.clock,
             id_source: self.id_source,
             variables: self.variables,
+            temporary_directory,
         })
     }
 }

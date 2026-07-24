@@ -203,7 +203,7 @@ fn classify_headless(raw: &RawOutput<'_>) -> Result<AgentRun, AgentError> {
 
     // 4/5/6. Fall back to the exit disposition.
     match raw.exit {
-        RawExit::Code(0) => Ok(AgentRun::empty()),
+        RawExit::Code(0) => Ok(AgentRun::empty().with_text_output(stdout.into_owned())),
         RawExit::Code(code @ (2 | 126 | 127)) => Err(AntigravityError::Launch(code).into()),
         RawExit::Code(code) => Err(AntigravityError::Failed {
             exit_code: Some(code),
@@ -271,6 +271,7 @@ impl AgentDriver for AntigravityDriver {
             process,
             stdin: None,
             io,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -447,6 +448,10 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(0), "final answer\n", ""))
             .expect("clean exit is a run");
         assert_eq!(run.session_id, None);
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("final answer\n".into()))
+        );
     }
 
     #[test]

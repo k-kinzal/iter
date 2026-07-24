@@ -50,7 +50,7 @@ pub enum CstSection {
         /// Optional `as <name>` for named prompt definitions.
         name: Option<CstIdent>,
         /// Optional `when` guard (old syntax).
-        guard: Option<CstGuard>,
+        guard: Option<CstExpr>,
         /// Literal body of the prompt (triple-string contents are dedented).
         body: String,
         /// Source span of the body literal.
@@ -196,6 +196,8 @@ impl CstValue {
 pub struct CstEventHandler {
     /// Event name identifier.
     pub event: CstIdent,
+    /// Optional `when <expr>` condition.
+    pub condition: Option<CstExpr>,
     /// Body block containing actions.
     pub body: CstBlock,
     /// Full span of the event handler.
@@ -207,7 +209,7 @@ pub struct CstEventHandler {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CstPromptMatchArm {
     /// Guard expression (or `None` for the `_` wildcard default arm).
-    pub guard: Option<CstGuard>,
+    pub guard: Option<CstExpr>,
     /// Value — either a string literal or a bareword identifier reference.
     pub value: CstValue,
     /// Full span of the arm.
@@ -257,123 +259,96 @@ pub enum CstActionBody {
     Enqueue(CstBlock),
 }
 
-/// Boolean guard expression as captured by the parser.
+/// Common expression as captured by the parser.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CstGuard {
-    /// `metadata.<key> == "<value>"`.
-    MetadataEq {
-        /// Metadata key being compared.
-        key: String,
-        /// Literal value compared against.
-        value: String,
-        /// Span covering the comparison.
+pub enum CstExpr {
+    /// Scalar literal in the common expression grammar.
+    Literal {
+        /// Literal value.
+        value: CstExprLiteral,
+        /// Source span.
         span: Span,
     },
-    /// `metadata.<key> != "<value>"`.
-    MetadataNeq {
-        /// Metadata key being compared.
-        key: String,
-        /// Literal value compared against.
-        value: String,
-        /// Span covering the comparison.
+    /// Rooted path in the common expression grammar.
+    Path {
+        /// Root identifier.
+        root: CstIdent,
+        /// Traversal segments.
+        segments: Vec<CstPathSegment>,
+        /// Source span.
         span: Span,
     },
-    /// `iteration.<field> [% N] <op> <integer>` numeric comparison. The
-    /// optional modulus is captured as part of the same predicate so the
-    /// semantic layer can validate `% 0` and `previous_result %` in one
-    /// place.
-    IterationCmp {
-        /// Field name as it appeared in source (validated by the
-        /// semantic layer).
-        field: String,
-        /// Source span of the field name (used to anchor "unknown
-        /// field" diagnostics).
-        field_span: Span,
-        /// Optional `% N` modulus applied to the LHS before comparison.
-        modulus: Option<i64>,
-        /// Span of the modulus literal when present.
-        modulus_span: Option<Span>,
-        /// Comparison operator as captured by the parser.
-        op: CstCmpOp,
-        /// Span of the comparison operator.
+    /// Binary operation in the common expression grammar.
+    Binary {
+        /// Left operand.
+        lhs: Box<CstExpr>,
+        /// Operator.
+        op: CstBinaryOp,
+        /// Operator source span.
         op_span: Span,
-        /// Right-hand-side integer literal.
-        rhs: i64,
-        /// Span of the RHS literal.
-        rhs_span: Span,
-        /// Span covering the whole comparison.
+        /// Right operand.
+        rhs: Box<CstExpr>,
+        /// Full source span.
         span: Span,
     },
-    /// `iteration.<field> == "<value>"`. The parser captures the LHS
-    /// field name verbatim — only `previous_result` is meaningful here,
-    /// but enforcing that is a *semantic* concern so the differential
-    /// pest oracle (which only sees the syntactic shape) and the
-    /// hand-written parser agree on accept/reject. The semantic layer
-    /// rejects any other field with a "string RHS only valid for
-    /// `previous_result`" diagnostic, then validates the value against
-    /// the closed `"none" | "success" | "errored"` set.
-    IterationResultEq {
-        /// LHS field name as written (e.g. `"previous_result"`,
-        /// `"count"`).
-        field: String,
-        /// Span of the LHS field identifier.
-        field_span: Span,
-        /// Literal value compared against.
-        value: String,
-        /// Span of the RHS string literal.
-        value_span: Span,
-        /// Span covering the whole comparison.
-        span: Span,
-    },
-    /// `iteration.<field> != "<value>"`. Same field-validation contract
-    /// as [`Self::IterationResultEq`].
-    IterationResultNeq {
-        /// LHS field name as written.
-        field: String,
-        /// Span of the LHS field identifier.
-        field_span: Span,
-        /// Literal value compared against.
-        value: String,
-        /// Span of the RHS string literal.
-        value_span: Span,
-        /// Span covering the whole comparison.
-        span: Span,
-    },
-    /// Logical conjunction.
-    And(Box<CstGuard>, Box<CstGuard>, Span),
-    /// Logical disjunction.
-    Or(Box<CstGuard>, Box<CstGuard>, Span),
 }
 
-/// Comparison operator captured for `iteration.*` numeric predicates.
+/// Backwards-compatible name for [`CstExpr`].
+pub type CstGuard = CstExpr;
+
+/// Scalar literal in a [`CstExpr`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CstExprLiteral {
+    /// String literal.
+    String(String),
+    /// Integer literal.
+    Integer(i64),
+    /// Boolean literal.
+    Bool(bool),
+    /// Null literal.
+    Null,
+}
+
+/// One traversal segment in a [`CstExpr::Path`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CstPathSegment {
+    /// Object field.
+    Field(CstIdent),
+    /// Array index plus source span.
+    Index(usize, Span),
+}
+
+/// Binary expression operator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CstCmpOp {
-    /// `==`
+pub enum CstBinaryOp {
+    /// Boolean OR.
+    Or,
+    /// Boolean AND.
+    And,
+    /// Equality.
     Eq,
-    /// `!=`
+    /// Inequality.
     Neq,
-    /// `<`
+    /// Less-than.
     Lt,
-    /// `<=`
+    /// Less-than-or-equal.
     Le,
-    /// `>`
+    /// Greater-than.
     Gt,
-    /// `>=`
+    /// Greater-than-or-equal.
     Ge,
+    /// Integer remainder.
+    Mod,
 }
 
-impl CstGuard {
-    /// Return the source span associated with this guard.
+impl CstExpr {
+    /// Return the source span associated with this expression.
     #[must_use]
     pub fn span(&self) -> Span {
         match self {
-            CstGuard::MetadataEq { span, .. }
-            | CstGuard::MetadataNeq { span, .. }
-            | CstGuard::IterationCmp { span, .. }
-            | CstGuard::IterationResultEq { span, .. }
-            | CstGuard::IterationResultNeq { span, .. }
-            | CstGuard::And(_, _, span)
-            | CstGuard::Or(_, _, span) => span.clone(),
+            CstExpr::Literal { span, .. }
+            | CstExpr::Path { span, .. }
+            | CstExpr::Binary { span, .. } => span.clone(),
         }
     }
 }

@@ -30,6 +30,7 @@ fn build_sandbox_policy(
     workspace_path: &Path,
     policy: &SandboxPolicy,
     profile: &SandboxProfile,
+    runner_temporary_directory: Option<&Path>,
 ) -> sandbox::Policy {
     let mut sandbox_policy = sandbox::Policy::new().current_dir(workspace_path);
 
@@ -68,6 +69,12 @@ fn build_sandbox_policy(
         .chain(profile.file_writes.iter())
     {
         sandbox_policy = sandbox_policy.allow_write(path.as_path());
+    }
+    if let Some(path) = runner_temporary_directory {
+        // Runner-owned command artifacts live outside the workspace and must
+        // be available to the sandboxed CLI. `allow_write` also grants read
+        // access on both supported backends.
+        sandbox_policy = sandbox_policy.allow_write(path);
     }
     for path in &policy.extra_deny_paths {
         sandbox_policy = sandbox_policy.deny_path(path.as_path());
@@ -132,6 +139,14 @@ fn command_available(command: &str) -> bool {
     })
 }
 
+fn denied_runner_temporary_directory(path: &Path, denied_paths: &[PathBuf]) -> Option<PathBuf> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    denied_paths.iter().find_map(|denied| {
+        let canonical = denied.canonicalize().unwrap_or_else(|_| denied.clone());
+        path.starts_with(&canonical).then(|| denied.clone())
+    })
+}
+
 /// Workspace that clones the base directory into a tmpdir and confines
 /// every spawned child command with a kernel-level sandbox.
 ///
@@ -184,6 +199,7 @@ pub struct SandboxWorkspace {
     settings: CloneSettings,
     policy: SandboxPolicy,
     profile: SandboxProfile,
+    runner_temporary_directory: Option<PathBuf>,
     clock: Arc<dyn Clock>,
 }
 
@@ -209,6 +225,7 @@ impl SandboxWorkspace {
             settings,
             policy,
             profile,
+            runner_temporary_directory: None,
             clock: Arc::new(SystemClock),
         }
     }
@@ -229,6 +246,7 @@ impl SandboxWorkspace {
             settings,
             policy,
             profile,
+            runner_temporary_directory: None,
             clock,
         }
     }
@@ -279,6 +297,15 @@ impl SandboxWorkspace {
         if cancel.is_cancelled() {
             return Err(SandboxWorkspaceError::Cancelled);
         }
+        if let Some(path) = self.runner_temporary_directory.as_deref()
+            && let Some(denied_by) =
+                denied_runner_temporary_directory(path, &self.policy.extra_deny_paths)
+        {
+            return Err(SandboxWorkspaceError::RunnerTemporaryDirectoryDenied {
+                path: path.to_path_buf(),
+                denied_by,
+            });
+        }
         // Fail fast where no sandbox host command exists — the workspace
         // must never silently degrade to an unconfined spawn.
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -312,7 +339,12 @@ impl SandboxWorkspace {
             .await?;
 
             // ----- Phase 2: build the structured confinement policy ------
-            let policy = build_sandbox_policy(mirror.path(), &self.policy, &self.profile);
+            let policy = build_sandbox_policy(
+                mirror.path(),
+                &self.policy,
+                &self.profile,
+                self.runner_temporary_directory.as_deref(),
+            );
 
             tracing::debug!(
                 base = %self.base.display(),
@@ -332,6 +364,10 @@ impl SandboxWorkspace {
 
 #[async_trait]
 impl Workspace for SandboxWorkspace {
+    fn set_runner_temporary_directory(&mut self, path: &Path) {
+        self.runner_temporary_directory = Some(path.to_path_buf());
+    }
+
     async fn setup(
         &mut self,
         cancel: CancellationToken,
@@ -548,7 +584,7 @@ mod tests {
     fn network_off_maps_to_deny() {
         let policy = default_deny_policy();
         let profile = SandboxProfile::new();
-        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &profile);
+        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &profile, None);
         assert_eq!(sp.network(), sandbox::NetworkPolicy::Deny);
     }
 
@@ -556,7 +592,7 @@ mod tests {
     fn network_all_maps_to_allow() {
         let mut policy = default_deny_policy();
         policy.network = NetworkAccess::All;
-        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &SandboxProfile::new());
+        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &SandboxProfile::new(), None);
         assert_eq!(sp.network(), sandbox::NetworkPolicy::AllowOutbound);
     }
 
@@ -564,7 +600,7 @@ mod tests {
     fn network_hosts_with_empty_profile_stays_deny() {
         let mut policy = default_deny_policy();
         policy.network = NetworkAccess::Hosts(vec!["api.example.com".into()]);
-        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &SandboxProfile::new());
+        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &SandboxProfile::new(), None);
         assert_eq!(sp.network(), sandbox::NetworkPolicy::Deny);
     }
 
@@ -574,7 +610,7 @@ mod tests {
         policy.network = NetworkAccess::Hosts(vec!["api.example.com".into()]);
         let mut profile = SandboxProfile::new();
         profile.allow_network_host("api.example.com:443");
-        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &profile);
+        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &profile, None);
         assert_eq!(sp.network(), sandbox::NetworkPolicy::AllowOutbound);
     }
 
@@ -589,7 +625,7 @@ mod tests {
         profile.allow_write("/var/from-profile");
 
         let ws = Path::new("/tmp/ws");
-        let sp = build_sandbox_policy(ws, &policy, &profile);
+        let sp = build_sandbox_policy(ws, &policy, &profile, None);
 
         let reads: Vec<_> = sp.filesystem().read_only_paths().collect();
         assert!(reads.contains(&Path::new("/etc/from-policy")));
@@ -600,6 +636,34 @@ mod tests {
         assert!(writes.contains(&Path::new("/var/from-profile")));
         let denied: Vec<_> = sp.filesystem().denied_paths().collect();
         assert!(denied.contains(&Path::new("/secret")));
+    }
+
+    #[test]
+    fn runner_temporary_directory_is_readable_and_writable() {
+        let policy = default_deny_policy();
+        let runner_temporary_directory = Path::new("/tmp/iter-runner-private");
+        let sp = build_sandbox_policy(
+            Path::new("/tmp/ws"),
+            &policy,
+            &SandboxProfile::new(),
+            Some(runner_temporary_directory),
+        );
+
+        let writes: Vec<_> = sp.filesystem().read_write_paths().collect();
+        assert!(
+            writes.contains(&runner_temporary_directory),
+            "Runner temporary directory must be mounted read-write"
+        );
+    }
+
+    #[test]
+    fn runner_temporary_directory_reports_conflicting_deny_rule() {
+        let temporary = TempDir::new().expect("runner temporary");
+        let denied_by = temporary.path().parent().expect("parent").to_path_buf();
+        assert_eq!(
+            denied_runner_temporary_directory(temporary.path(), std::slice::from_ref(&denied_by)),
+            Some(denied_by)
+        );
     }
 
     #[test]
@@ -615,7 +679,7 @@ mod tests {
         profile
             .declared_env
             .push(("ITER_TEST_DECLARED".to_owned(), "declared-value".to_owned()));
-        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &profile);
+        let sp = build_sandbox_policy(Path::new("/tmp/ws"), &policy, &profile, None);
 
         assert_eq!(
             sp.environment(),
@@ -636,8 +700,12 @@ mod tests {
         let policy = default_deny_policy();
         let mut profile = SandboxProfile::new();
         profile.allow_signal();
-        let sandbox_policy =
-            build_sandbox_policy(Path::new("/tmp/iter-sandbox-policy"), &policy, &profile);
+        let sandbox_policy = build_sandbox_policy(
+            Path::new("/tmp/iter-sandbox-policy"),
+            &policy,
+            &profile,
+            None,
+        );
 
         let mut command = std::process::Command::new("/bin/sh");
         command.arg("-c").arg("true");

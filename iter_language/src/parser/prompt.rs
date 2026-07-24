@@ -23,7 +23,7 @@ impl Parser<'_> {
             && matches!(self.peek(), Some(Token::Ident(name)) if name == "when")
         {
             self.bump();
-            self.parse_guard()
+            self.parse_expr()
         } else {
             None
         };
@@ -159,7 +159,7 @@ impl Parser<'_> {
     /// Parse `<guard-expr> => <value>` — guarded prompt match arm.
     pub(super) fn parse_prompt_match_guard_arm(&mut self) -> Option<CstPromptMatchArm> {
         let start = self.peek_span().start;
-        let guard = self.parse_guard()?;
+        let guard = self.parse_expr()?;
         if !matches!(self.peek(), Some(Token::FatArrow)) {
             let span = self.peek_span();
             let got = self.peek().map(Token::describe).unwrap_or_default();
@@ -184,10 +184,17 @@ impl Parser<'_> {
         let on_span = self.peek_span();
         self.bump(); // `on`
         let event = self.expect_ident()?;
+        let condition = if matches!(self.peek(), Some(Token::Ident(name)) if name == "when") {
+            self.bump();
+            self.parse_expr()
+        } else {
+            None
+        };
         let body = self.parse_block();
         let span_end = body.span.end;
         Some(CstEventHandler {
             event,
+            condition,
             body,
             span: on_span.start..span_end,
         })

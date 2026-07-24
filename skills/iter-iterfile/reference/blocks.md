@@ -120,12 +120,15 @@ Per-kind extras:
 
 - `claude` — optional `system_prompt = "<text>"` replaces the CLI's default
   system prompt; optional `session_id_file = "<path>"` persists a UUID and
-  passes `--session-id <uuid>` on subsequent iterations.
+  passes `--session-id <uuid>` on subsequent iterations; optional inline
+  `output_schema` requires `mode = print`.
+- `codex` — optional inline `output_schema` requires `mode = print`.
 - `cline` — optional `system_prompt = "<text>"` replaces the CLI's default
   system prompt.
 - `grok` — optional `system_prompt = "<text>"` replaces the CLI's default
   system prompt; optional `session_id_file = "<path>"` persists its session
-  identifier across iterations.
+  identifier across iterations; optional inline `output_schema` constrains
+  its headless response.
 - `copilot` — `subcommand` (list of strings). Unset → iter picks a sane
   default (`["copilot", "suggest"]`); `[]` strips the subcommand;
   `[...]` overrides it.
@@ -133,6 +136,12 @@ Per-kind extras:
   and `execve`s the command as-is; the program reads the prompt itself.
 
 `mode` values (kinds that take it): `interactive`, `print`.
+
+`output_schema` accepts a JSON document string or a direct JSON-shaped value.
+It never treats a string as a file path.
+For Codex, iter writes the CLI-required Schema file under the Runner's private
+temporary directory. It never uses the Workspace for that file; a sandboxed
+Workspace permits the private directory explicitly.
 
 ---
 
@@ -159,41 +168,32 @@ Behaviour matrix:
 
 ---
 
-## `prompt [when <guard>] "<body>"`
+## `prompt`
 
-Zero or more per Iterfile.
+Each Runner selects one prompt using `prompt = <value>` or a match block:
+
+```hcl
+prompt {
+  <expression> => "<body>"
+  _            => "<default-body>"
+}
+```
 
 Body forms (from `language.md`): single-line `"..."`, triple-quoted
-`""" ... """`, or a triple-quoted heredoc.
+`""" ... """`, or a triple-quoted heredoc. A bare identifier references a
+top-level `prompt as <name>` definition.
 
-Guard grammar:
-
-```
-guard      ::= term ( ( "&&" | "||" ) term )*
-term       ::= "metadata"  "." <key>   ( "==" | "!=" ) <string>
-             | "iteration" "." <field> ( "%" <int> )? <cmp> <int>
-             | "iteration" "." "previous_result" ( "==" | "!=" ) <result>
-             | "(" guard ")"
-cmp        ::= "==" | "!=" | "<" | "<=" | ">" | ">="
-result    ::= "\"none\"" | "\"success\"" | "\"errored\""
-```
-
-`iteration.*` fields: `count` (1-indexed), `previous_exit_code`,
-`previous_result` (`"none" | "success" | "errored"`),
-`consecutive_failures`, `consecutive_successes`. The result and streak
-fields track **runner stage** results (workspace setup, prompt render,
-agent process spawn/I/O, iteration timeout, workspace teardown) — they
-do not reflect agent-internal behaviour.
-
-`% 0` is rejected at parse time. Multiple matching prompts are joined in
-source order with a blank line between bodies. Zero matches → empty prompt.
+Expressions use `signal.*`, `metadata.*`, `iteration.*`, and `var.*`, with
+`==`, `!=`, `<`, `<=`, `>`, `>=`, `%`, `&&`, `||`, array indexes, and
+parentheses. Conditional arms are evaluated in source order; the first true
+arm wins, otherwise `_` is selected. `% 0` is rejected during analysis.
 
 Placeholders such as `{{metadata.task}}` are resolved at dispatch time, not
 parse time.
 
 ---
 
-## `on <event>`
+## `on <event> [when <expression>]`
 
 Zero or more per Iterfile. Events (in order):
 
@@ -239,5 +239,11 @@ Placeholder roots:
 | `signal.*`, `metadata.*` | per-iteration events only |
 | `iteration.*` | every event (`count == 0` at `runner_starting`) |
 | `var.*` | after an earlier capture in the same Runner |
+| `agent.session_id`, `agent.output` | successful `agent_finished` only |
 
 Multiple `on <same-event>` blocks are allowed; each is a separate handler.
+
+`agent.output` is structured JSON after a supported Agent's inline
+`output_schema` has been validated, and text for other capturable responses.
+Use `agent.output.<field>` in both Hook conditions and templates. The value is
+scoped to the current `AgentRun`, not stored under `var.*`.

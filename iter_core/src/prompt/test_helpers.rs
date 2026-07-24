@@ -2,8 +2,7 @@
 
 use crate::signal::Signal;
 use crate::signal::metadata::{Metadata, MetadataKey, MetadataValue};
-
-use super::guard::PromptGuard;
+use crate::{BinaryOp, Expr, ExprLiteral, PathSegment};
 
 pub(super) fn signal_with(metadata: Metadata) -> Signal {
     Signal::new(metadata)
@@ -18,9 +17,13 @@ pub(super) fn signal_with_kind(kind: &str) -> Signal {
     signal_with(meta)
 }
 
-pub(super) fn guard_kind_eq(value: &str) -> PromptGuard {
-    PromptGuard::MetadataEq {
-        key: "kind".into(),
-        value: value.into(),
+pub(super) fn guard_kind_eq(value: &str) -> Expr {
+    Expr::Binary {
+        lhs: Box::new(Expr::Path {
+            root: "metadata".into(),
+            segments: vec![PathSegment::Field("kind".into())],
+        }),
+        op: BinaryOp::Eq,
+        rhs: Box::new(Expr::Literal(ExprLiteral::String(value.into()))),
     }
 }

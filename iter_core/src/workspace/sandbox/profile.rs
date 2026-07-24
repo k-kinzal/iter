@@ -439,6 +439,7 @@ mod tests {
             args: Vec::new(),
             system_prompt: None,
             session_id_file: None,
+            output_schema: None,
             env: Vec::new(),
             hook_isolation_key: "default".to_owned(),
         }
@@ -450,6 +451,7 @@ mod tests {
             args: Vec::new(),
             system_prompt: None,
             session_id_file: None,
+            output_schema: None,
             env: Vec::new(),
         }
     }
@@ -459,6 +461,7 @@ mod tests {
             command: command.into(),
             mode: AgentMode::Headless,
             args: Vec::new(),
+            output_schema: None,
             env: Vec::new(),
             hook_isolation_key: "default".to_owned(),
         }

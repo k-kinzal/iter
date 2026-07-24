@@ -45,6 +45,7 @@ Iterfile {
                     args: [],
                     system_prompt: None,
                     session_id_file: None,
+                    output_schema: None,
                     env: {},
                 },
             },
@@ -68,33 +69,63 @@ Iterfile {
                 prompt: Match {
                     arms: [
                         PromptArm {
-                            guard: IterationCmp {
-                                field: Count,
-                                modulus: None,
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "count",
+                                        ),
+                                    ],
+                                },
                                 op: Eq,
-                                rhs: 1,
+                                rhs: Literal(
+                                    Integer(
+                                        1,
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "first run",
                             ),
                         },
                         PromptArm {
-                            guard: IterationCmp {
-                                field: ConsecutiveFailures,
-                                modulus: None,
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "consecutive_failures",
+                                        ),
+                                    ],
+                                },
                                 op: Ge,
-                                rhs: 3,
+                                rhs: Literal(
+                                    Integer(
+                                        3,
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "three failures in a row",
                             ),
                         },
                         PromptArm {
-                            guard: IterationCmp {
-                                field: PreviousExitCode,
-                                modulus: None,
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "previous_exit_code",
+                                        ),
+                                    ],
+                                },
                                 op: Neq,
-                                rhs: 0,
+                                rhs: Literal(
+                                    Integer(
+                                        0,
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "previous turn errored exit={{iteration.previous_exit_code}}",

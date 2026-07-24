@@ -1,10 +1,14 @@
 //! Event-handler AST for Runner and Compose hooks.
 
+use super::Expr;
+
 /// A Runner-scoped `on <event-name> { <actions> }` declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventHandlerDef {
     /// Lifecycle event the handler subscribes to.
     pub event: EventName,
+    /// Optional boolean expression evaluated before the handler's actions.
+    pub condition: Option<Expr>,
     /// Actions to execute, in source order.
     pub actions: Vec<RunnerAction>,
 }

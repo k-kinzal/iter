@@ -124,26 +124,14 @@ prompt_guard   = { kw_when ~ guard }
 
 guard       = { guard_or }
 guard_or    = { guard_and  ~ ( "||" ~ guard_and  )* }
-guard_and   = { guard_atom ~ ( "&&" ~ guard_atom )* }
-guard_atom  = { guard_paren | guard_iter | guard_meta }
+guard_and   = { guard_comparison ~ ( "&&" ~ guard_comparison )* }
+guard_comparison = { guard_modulus ~ (guard_compare_op ~ guard_modulus)? }
+guard_modulus = { guard_atom ~ ("%" ~ guard_atom)* }
+guard_atom  = { guard_paren | guard_path | guard_literal }
 guard_paren = { "(" ~ guard_or ~ ")" }
-guard_meta  = { kw_metadata ~ "." ~ ident ~ guard_op ~ string }
-guard_op    = { "==" | "!=" }
-
-// `iteration.<field> [% N] <op> <integer | string>`. The hand-written
-// parser distinguishes numeric and result forms by the RHS literal kind;
-// the pest grammar accepts both shapes and lets the semantic layer enforce
-// "string RHS only on `previous_result ==`/`!=`" so the two
-// implementations stay differentially equivalent on syntactically valid
-// input.
-//
-// Longest-match for `<=`/`>=` against `<`/`>` is enforced by ordering: the
-// two-character forms appear *before* the one-character forms in
-// `guard_iter_op`.
-guard_iter         = { kw_iteration ~ "." ~ ident ~ guard_iter_modulus? ~ guard_iter_op ~ guard_iter_rhs }
-guard_iter_modulus = { "%" ~ integer }
-guard_iter_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
-guard_iter_rhs     = { integer | string }
+guard_path = { ident ~ (("." ~ ident) | ("[" ~ integer ~ "]"))* }
+guard_literal = { string | integer | boolean | null }
+guard_compare_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 
 // ============================================================================
 // Arg: `arg <name> [= "<default>"]`
@@ -172,7 +160,7 @@ prompt_match_guard_arm = { guard ~ "=>" ~ prompt_arm_value }
 prompt_arm_value = { string_literal | ident }
 
 // `on <ident> { ... }` — nested event handler inside a block.
-nested_event_handler = { kw_on ~ ident ~ block }
+nested_event_handler = { kw_on ~ ident ~ (kw_when ~ guard)? ~ block }
 
 // `condition <kind> as <name> { ... }` — runner completion predicate.
 nested_condition = { kw_condition ~ ident ~ kw_as ~ ident ~ block }

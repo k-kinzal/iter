@@ -98,6 +98,74 @@ Used by kinds that support the `mode` field.
 
 ---
 
+## Structured output with `output_schema`
+
+`claude`, `codex`, and `grok` support native JSON Schema-constrained output.
+For `claude` and `codex`, the field is valid only with `mode = print`; Grok is
+already headless-only.
+
+The Schema is inline. A path is not accepted and iter does not read a Schema
+file from the workspace. Use either a JSON document string:
+
+```hcl
+agent claude {
+  mode = print
+  output_schema = """
+  {
+    "type": "object",
+    "properties": {
+      "decision": { "type": "string", "enum": ["fix", "continue"] },
+      "notes": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["decision", "notes"],
+    "additionalProperties": false
+  }
+  """
+}
+```
+
+Or the equivalent direct JSON-shaped value (an object block in this case):
+
+```hcl
+agent codex {
+  mode = print
+  output_schema {
+    type = "object"
+    properties {
+      decision {
+        type = "string"
+        enum = ["fix", "continue"]
+      }
+      notes {
+        type = "array"
+        items { type = "string" }
+      }
+    }
+    required = ["decision", "notes"]
+    additionalProperties = false
+  }
+}
+```
+
+iter validates the Schema while analyzing the Iterfile, passes it through the
+CLI's native structured-output option, then parses and validates the final
+response again. A conforming response is available to the successful
+`agent_finished` Hook as `agent.output`; fields use paths such as
+`agent.output.decision`. Without `output_schema`, a capturable final response
+is exposed as text at `agent.output`.
+
+This is a shape contract only. Satisfying the Schema does not establish that
+the review, implementation, or evidence is correct. Put the fields needed for
+your decision into the Schema, then make the workflow decision explicitly in
+an `agent_finished when ...` expression.
+
+Enabling a provider's native structured-output mode is not a neutral parsing
+setting: it changes the response constraints and can change content,
+omissions, and task performance. Evaluate the structured configuration as its
+own Agent behavior; Schema conformance alone is not a quality measurement.
+
+---
+
 ## `agent router`
 
 Built-in meta-agent that dispatches each iteration to named sub-agents.
@@ -182,6 +250,7 @@ agent claude {
 | `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed defaults. |
 | `system_prompt` | `string` | Optional | — | Replace Claude Code's default system prompt (`--system-prompt`). |
 | `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `--session-id <uuid>`. Omit to run each iteration as a fresh session. |
+| `output_schema` | JSON document `string` or direct JSON-shaped value | Optional | — | Inline JSON Schema for print-mode output. See [Structured output](#structured-output-with-output_schema). |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
 
 ---
@@ -206,6 +275,7 @@ agent codex {
 | `mode` | `enum { interactive \| print }` | Required | — | CLI invocation mode. |
 | `command` | `string` | Optional | `"codex"` | Binary name or absolute path. Bare names are resolved via `PATH`; explicit values override the default. |
 | `args` | `list(string)` | Optional | `[]` | Extra arguments. |
+| `output_schema` | JSON document `string` or direct JSON-shaped value | Optional | — | Inline JSON Schema for print-mode output. Codex receives an iter-managed temporary Schema file because its CLI option takes a path. The file is created in the Runner's private temporary directory, never in the Workspace; sandboxed runs permit that exact directory. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables. See [`env` block](#env-block). |
 
 ---
@@ -411,6 +481,7 @@ agent grok {
 | `args` | `list(string)` | Optional | `[]` | Extra arguments appended after iter-managed headless flags (`-p`, `--always-approve`, `-r`). |
 | `system_prompt` | `string` | Optional | — | Replace Grok's default system prompt (`--system-prompt-override`). |
 | `session_id_file` | `string` | Optional | — | File path (relative to workspace cwd) where iter persists a stable session id. On first invocation iter writes a fresh UUID v4; subsequent iterations read the same file and pass `-r <uuid>` so Grok resumes the same headless session. Omit to run each iteration as a fresh session. |
+| `output_schema` | JSON document `string` or direct JSON-shaped value | Optional | — | Inline JSON Schema passed through `--json-schema`. |
 | `env` | `block { KEY = "value" }` | Optional | — | Environment variables injected into the child process. See [`env` block](#env-block). |
 
 ---

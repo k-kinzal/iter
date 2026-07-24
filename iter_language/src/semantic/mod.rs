@@ -8,8 +8,8 @@ mod compose_resolve;
 mod compose_service;
 mod compose_trigger;
 mod event;
+mod expression;
 mod field_schema;
-mod guard;
 mod prompt;
 mod queue;
 mod runner;
@@ -23,7 +23,7 @@ mod workspace;
 
 pub(crate) use compose::lower_compose_and_check;
 
-use guard::lower_guard_pure;
+use expression::lower_expr_pure;
 use suggest::{closest, parse_priority};
 pub(crate) use template::TemplatePosition;
 
@@ -32,7 +32,7 @@ use crate::ast::{
     WorkspaceSourceRef,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{CstBlock, CstFile, CstGuard, CstIdent, CstSection};
+use crate::parser::{CstBlock, CstExpr, CstFile, CstIdent, CstSection};
 
 // Hint strings for semantic diagnostics. Most explain removed project-shaped
 // defaults; the command hint is scoped to generic agents, which have no
@@ -596,7 +596,7 @@ struct IterBlockSection {
 
 struct IterPromptSection {
     name: Option<CstIdent>,
-    guard: Option<CstGuard>,
+    guard: Option<CstExpr>,
     body: String,
     span: Span,
     body_span: Span,

@@ -22,12 +22,12 @@
 //! signal correlation rides the ambient
 //! [`iter_tracing::iteration_scope`].
 //!
-//! Two pathways leave a run: the agent's **value** is the workspace's file
-//! changes (persisted by workspace teardown's apply-back), and the run's
-//! **record** is what flows through here — teed output into the sink,
-//! [`AgentRun`] out of [`run_on`](Agent::run_on), exit telemetry onto the
-//! current span. `AgentRun` being thin is not a defect; value never travels
-//! this path.
+//! Two pathways leave a run: workspace file changes survive through
+//! teardown's apply-back, while the run record flows through here — teed
+//! process output, [`AgentRun`] out of [`run_on`](Agent::run_on), and exit
+//! telemetry on the current span. `AgentRun` carries only the session id and
+//! the capturable final response; richer CLI-specific records stay inside
+//! their drivers.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -99,13 +99,32 @@ impl Agent {
         prompt: &Prompt,
         cancel: CancellationToken,
     ) -> Result<AgentRun, AgentError> {
+        let temporary_directory = tempfile::Builder::new()
+            .prefix("iter-agent-")
+            .tempdir()
+            .map_err(|error| AgentError::Launch(error.to_string()))?;
+        self.run_on_with_temporary_directory(workspace, temporary_directory.path(), prompt, cancel)
+            .await
+    }
+
+    /// Run using the temporary directory owned by the surrounding Runner.
+    pub(crate) async fn run_on_with_temporary_directory(
+        &self,
+        workspace: &dyn ActiveWorkspace,
+        temporary_directory: &Path,
+        prompt: &Prompt,
+        cancel: CancellationToken,
+    ) -> Result<AgentRun, AgentError> {
         let mut route = self.router.begin();
         let mut last: Option<AgentError> = None;
         loop {
             let Some(driver) = route.next(last.as_ref()) else {
                 return Err(last.expect("Router::begin must yield at least one driver"));
             };
-            match self.run_driver(driver, workspace, prompt, &cancel).await {
+            match self
+                .run_driver(driver, workspace, temporary_directory, prompt, &cancel)
+                .await
+            {
                 Ok(run) => return Ok(run),
                 Err(err) => last = Some(err),
             }
@@ -120,6 +139,7 @@ impl Agent {
         &self,
         driver: &dyn AgentDriver,
         workspace: &dyn ActiveWorkspace,
+        temporary_directory: &Path,
         prompt: &Prompt,
         cancel: &CancellationToken,
     ) -> Result<AgentRun, AgentError> {
@@ -143,7 +163,15 @@ impl Agent {
 
         driver.prepare(path).await?;
         let run_result = self
-            .run_prepared(driver, workspace, path, prompt, session.as_deref(), cancel)
+            .run_prepared(
+                driver,
+                workspace,
+                path,
+                temporary_directory,
+                prompt,
+                session.as_deref(),
+                cancel,
+            )
             .await;
         let cleanup_result = driver.cleanup(path).await;
 
@@ -161,6 +189,7 @@ impl Agent {
         driver: &dyn AgentDriver,
         workspace: &dyn ActiveWorkspace,
         path: &Path,
+        temporary_directory: &Path,
         prompt: &Prompt,
         session: Option<&str>,
         cancel: &CancellationToken,
@@ -169,7 +198,8 @@ impl Agent {
             process: command,
             stdin,
             io,
-        } = driver.command(path, prompt, session)?;
+            temporary_files: _temporary_files,
+        } = driver.command_with_temporary_directory(path, temporary_directory, prompt, session)?;
 
         // The Inherit invariant (see `AgentCommand`): a stdin payload under
         // terminal inheritance has nowhere to go — `wait_inherited` never
@@ -280,6 +310,7 @@ mod tests {
                 process,
                 stdin: None,
                 io: StdioMode::Piped,
+                temporary_files: Vec::new(),
             })
         }
 

@@ -8,8 +8,9 @@
 //! each call site.
 
 use iter_language::{
-    CstAction, CstActionBody, CstBlock, CstCapture, CstCmpOp, CstCondition, CstEventHandler,
-    CstField, CstFile, CstGuard, CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue, Span,
+    CstAction, CstActionBody, CstBinaryOp, CstBlock, CstCapture, CstCondition, CstEventHandler,
+    CstExprLiteral, CstField, CstFile, CstGuard, CstIdent, CstPathSegment, CstPromptMatchArm,
+    CstRoute, CstSection, CstValue, Span,
 };
 use pest::iterators::Pair;
 
@@ -238,7 +239,14 @@ fn lower_guard_or(pair: Pair<Rule>) -> CstGuard {
     for next in inner {
         let right = lower_guard_and(next);
         let span = acc.span().start..right.span().end;
-        acc = CstGuard::Or(Box::new(acc), Box::new(right), span);
+        let op_span = acc.span().end..right.span().start;
+        acc = CstGuard::Binary {
+            lhs: Box::new(acc),
+            op: CstBinaryOp::Or,
+            op_span,
+            rhs: Box::new(right),
+            span,
+        };
     }
     acc
 }
@@ -247,11 +255,66 @@ fn lower_guard_and(pair: Pair<Rule>) -> CstGuard {
     assert_eq!(pair.as_rule(), Rule::guard_and);
     let mut inner = pair.into_inner();
     let first = inner.next().expect("guard_and: left operand");
-    let mut acc = lower_guard_atom(first);
+    let mut acc = lower_guard_comparison(first);
+    for next in inner {
+        let right = lower_guard_comparison(next);
+        let span = acc.span().start..right.span().end;
+        let op_span = acc.span().end..right.span().start;
+        acc = CstGuard::Binary {
+            lhs: Box::new(acc),
+            op: CstBinaryOp::And,
+            op_span,
+            rhs: Box::new(right),
+            span,
+        };
+    }
+    acc
+}
+
+fn lower_guard_comparison(pair: Pair<Rule>) -> CstGuard {
+    assert_eq!(pair.as_rule(), Rule::guard_comparison);
+    let mut inner = pair.into_inner();
+    let mut lhs = lower_guard_modulus(inner.next().expect("comparison lhs"));
+    if let Some(op_pair) = inner.next() {
+        assert_eq!(op_pair.as_rule(), Rule::guard_compare_op);
+        let op_span = pair_span(&op_pair);
+        let op = match op_pair.as_str() {
+            "==" => CstBinaryOp::Eq,
+            "!=" => CstBinaryOp::Neq,
+            "<" => CstBinaryOp::Lt,
+            "<=" => CstBinaryOp::Le,
+            ">" => CstBinaryOp::Gt,
+            ">=" => CstBinaryOp::Ge,
+            other => panic!("unexpected comparison operator {other:?}"),
+        };
+        let rhs = lower_guard_modulus(inner.next().expect("comparison rhs"));
+        let span = lhs.span().start..rhs.span().end;
+        lhs = CstGuard::Binary {
+            lhs: Box::new(lhs),
+            op,
+            op_span,
+            rhs: Box::new(rhs),
+            span,
+        };
+    }
+    lhs
+}
+
+fn lower_guard_modulus(pair: Pair<Rule>) -> CstGuard {
+    assert_eq!(pair.as_rule(), Rule::guard_modulus);
+    let mut inner = pair.into_inner();
+    let mut acc = lower_guard_atom(inner.next().expect("modulus lhs"));
     for next in inner {
         let right = lower_guard_atom(next);
         let span = acc.span().start..right.span().end;
-        acc = CstGuard::And(Box::new(acc), Box::new(right), span);
+        let op_span = acc.span().end..right.span().start;
+        acc = CstGuard::Binary {
+            lhs: Box::new(acc),
+            op: CstBinaryOp::Mod,
+            op_span,
+            rhs: Box::new(right),
+            span,
+        };
     }
     acc
 }
@@ -267,140 +330,50 @@ fn lower_guard_atom(pair: Pair<Rule>) -> CstGuard {
                 .expect("guard_paren contains guard_or");
             lower_guard_or(or)
         }
-        Rule::guard_meta => lower_guard_meta(inner),
-        Rule::guard_iter => lower_guard_iter(inner),
+        Rule::guard_path => lower_guard_path(inner),
+        Rule::guard_literal => lower_guard_literal(inner),
         other => panic!("unexpected guard_atom child: {other:?}"),
     }
 }
 
-fn lower_guard_meta(pair: Pair<Rule>) -> CstGuard {
-    assert_eq!(pair.as_rule(), Rule::guard_meta);
+fn lower_guard_path(pair: Pair<Rule>) -> CstGuard {
+    assert_eq!(pair.as_rule(), Rule::guard_path);
     let span = pair_span(&pair);
-    let mut key: Option<String> = None;
-    let mut op = String::new();
-    let mut value: Option<String> = None;
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::kw_metadata => {}
-            Rule::ident => key = Some(p.as_str().to_string()),
-            Rule::guard_op => op = p.as_str().to_string(),
-            Rule::string => value = Some(lower_string_raw(&p)),
-            other => panic!("unexpected guard_meta child: {other:?}"),
+    let mut inner = pair.into_inner();
+    let root_pair = inner.next().expect("path root");
+    let root = lower_ident(&root_pair);
+    let mut segments = Vec::new();
+    for part in inner {
+        match part.as_rule() {
+            Rule::ident => segments.push(CstPathSegment::Field(lower_ident(&part))),
+            Rule::integer => segments.push(CstPathSegment::Index(
+                part.as_str().parse::<usize>().expect("path index"),
+                pair_span(&part),
+            )),
+            other => panic!("unexpected guard_path child: {other:?}"),
         }
     }
-    let key = key.expect("guard key");
-    let value = value.expect("guard value");
-    match op.as_str() {
-        "==" => CstGuard::MetadataEq { key, value, span },
-        "!=" => CstGuard::MetadataNeq { key, value, span },
-        other => panic!("unexpected guard op {other:?}"),
+    CstGuard::Path {
+        root,
+        segments,
+        span,
     }
 }
 
-fn lower_guard_iter(pair: Pair<Rule>) -> CstGuard {
-    assert_eq!(pair.as_rule(), Rule::guard_iter);
+fn lower_guard_literal(pair: Pair<Rule>) -> CstGuard {
+    assert_eq!(pair.as_rule(), Rule::guard_literal);
     let span = pair_span(&pair);
-    let mut field: Option<String> = None;
-    let mut field_span: Span = 0..0;
-    let mut modulus: Option<i64> = None;
-    let mut modulus_span: Option<Span> = None;
-    let mut op_str = String::new();
-    let mut op_span: Span = 0..0;
-    let mut rhs: Option<RhsLiteral> = None;
-    for p in pair.into_inner() {
-        match p.as_rule() {
-            Rule::kw_iteration => {}
-            Rule::ident => {
-                field_span = pair_span(&p);
-                field = Some(p.as_str().to_string());
-            }
-            Rule::guard_iter_modulus => {
-                let mod_span = pair_span(&p);
-                let mut inner = p.into_inner();
-                let int_pair = inner
-                    .find(|c| c.as_rule() == Rule::integer)
-                    .expect("guard_iter_modulus contains integer");
-                let int_span = pair_span(&int_pair);
-                let int_val = int_pair
-                    .as_str()
-                    .parse::<i64>()
-                    .expect("integer literal parses");
-                modulus = Some(int_val);
-                modulus_span = Some(int_span);
-                let _ = mod_span;
-            }
-            Rule::guard_iter_op => {
-                op_span = pair_span(&p);
-                op_str = p.as_str().to_string();
-            }
-            Rule::guard_iter_rhs => {
-                let inner = first_child(p);
-                let s = pair_span(&inner);
-                rhs = Some(match inner.as_rule() {
-                    Rule::integer => {
-                        RhsLiteral::Int(inner.as_str().parse::<i64>().expect("integer parses"), s)
-                    }
-                    Rule::string => RhsLiteral::Str(lower_string_raw(&inner), s),
-                    other => panic!("unexpected guard_iter_rhs child: {other:?}"),
-                });
-            }
-            other => panic!("unexpected guard_iter child: {other:?}"),
+    let inner = first_child(pair);
+    let value = match inner.as_rule() {
+        Rule::string => CstExprLiteral::String(lower_string_raw(&inner)),
+        Rule::integer => {
+            CstExprLiteral::Integer(inner.as_str().parse::<i64>().expect("integer literal"))
         }
-    }
-    let field = field.expect("iteration field");
-    let rhs = rhs.expect("iteration rhs");
-    let op = match op_str.as_str() {
-        "==" => CstCmpOp::Eq,
-        "!=" => CstCmpOp::Neq,
-        "<" => CstCmpOp::Lt,
-        "<=" => CstCmpOp::Le,
-        ">" => CstCmpOp::Gt,
-        ">=" => CstCmpOp::Ge,
-        other => panic!("unexpected iteration op {other:?}"),
+        Rule::boolean => CstExprLiteral::Bool(inner.as_str() == "true"),
+        Rule::null => CstExprLiteral::Null,
+        other => panic!("unexpected guard_literal child: {other:?}"),
     };
-    match rhs {
-        RhsLiteral::Int(rhs, rhs_span) => CstGuard::IterationCmp {
-            field,
-            field_span,
-            modulus,
-            modulus_span,
-            op,
-            op_span,
-            rhs,
-            rhs_span,
-            span,
-        },
-        RhsLiteral::Str(value, value_span) => match op {
-            CstCmpOp::Eq => CstGuard::IterationResultEq {
-                field,
-                field_span,
-                value,
-                value_span,
-                span,
-            },
-            CstCmpOp::Neq => CstGuard::IterationResultNeq {
-                field,
-                field_span,
-                value,
-                value_span,
-                span,
-            },
-            // Pest's grammar lets a string RHS combine with any operator;
-            // the hand-written parser rejects everything except `==`/`!=`
-            // for result strings. Mirror that here so the differential
-            // harness reaches identical CSTs on the inputs both
-            // implementations accept and identical "unrepresentable" panics
-            // would surface a real bug if we ever desynced.
-            other => panic!(
-                "string RHS only valid for `iteration.previous_result ==/!=`, got op {other:?}"
-            ),
-        },
-    }
-}
-
-enum RhsLiteral {
-    Int(i64, Span),
-    Str(String, Span),
+    CstGuard::Literal { value, span }
 }
 
 // ---------------------------------------------------------------------------
@@ -569,17 +542,20 @@ fn lower_nested_event_handler(pair: Pair<Rule>) -> CstEventHandler {
     assert_eq!(pair.as_rule(), Rule::nested_event_handler);
     let span = pair_span(&pair);
     let mut event: Option<CstIdent> = None;
+    let mut condition: Option<CstGuard> = None;
     let mut body: Option<CstBlock> = None;
     for p in pair.into_inner() {
         match p.as_rule() {
-            Rule::kw_on => {}
+            Rule::kw_on | Rule::kw_when => {}
             Rule::ident => event = Some(lower_ident(&p)),
+            Rule::guard => condition = Some(lower_guard(p)),
             Rule::block => body = Some(lower_block(p)),
             other => panic!("unexpected nested_event_handler child: {other:?}"),
         }
     }
     CstEventHandler {
         event: event.expect("nested_event_handler event"),
+        condition,
         body: body.expect("nested_event_handler body"),
         span,
     }

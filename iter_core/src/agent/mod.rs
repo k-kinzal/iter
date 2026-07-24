@@ -104,4 +104,4 @@ pub use mode::AgentMode;
 pub use router::{
     FallbackRouter, FallbackTriggers, RotateRouter, Route, Router, SingleAgentRouter,
 };
-pub use run::AgentRun;
+pub use run::{AgentOutput, AgentRun};

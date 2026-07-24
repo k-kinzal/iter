@@ -27,6 +27,8 @@ pub(crate) enum TemplatePosition {
     Prompt,
     /// `on <event> { shell "..." }` action commands.
     ShellAction,
+    /// An `agent_finished` action, which additionally sees `agent.*`.
+    AgentFinishedShellAction,
     /// Shell actions on runner completion lifecycle events.
     CompletionShellAction,
     /// Template-bearing actions on Compose lifecycle and aggregate hooks.
@@ -48,6 +50,9 @@ impl TemplatePosition {
         match self {
             TemplatePosition::Prompt | TemplatePosition::ShellAction => {
                 &["signal", "metadata", "iteration", "var"]
+            }
+            TemplatePosition::AgentFinishedShellAction => {
+                &["signal", "metadata", "iteration", "var", "agent"]
             }
             TemplatePosition::TriggerBaseMetadata => &["signal", "metadata", "iteration"],
             TemplatePosition::CompletionShellAction => {

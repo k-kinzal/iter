@@ -8,7 +8,7 @@ AST: `EventHandlerDef`, `EventName`, and `RunnerAction` in
 ## Syntax
 
 ```hcl
-on <event-name> {
+on <event-name> [when <expression>] {
   shell "<command>"
 
   shell {
@@ -26,6 +26,16 @@ on <event-name> {
 Each handler attaches one or more **actions** (`shell`) to a named lifecycle
 event. `enqueue` is a Compose Hook action and is not valid in a Runner Hook.
 
+`when` is optional. It uses the same expression operators as Prompt selection:
+`==`, `!=`, `<`, `<=`, `>`, `>=`, `%`, `&&`, `||`, and parentheses. A handler
+whose expression is false is skipped. Roots are contextual; in particular,
+`agent.*` is available only on `agent_finished`.
+
+The expression is evaluated once per declared handler, before its first
+action. Every action in that handler therefore sees the same decision even
+when an earlier action publishes `var.*`. An expression evaluation failure is
+recorded as a handler error; it is not treated as a false condition.
+
 ## Events
 
 The runner emits events in this order:
@@ -37,7 +47,7 @@ The runner emits events in this order:
 | `workspace_setup_starting` | Just before the workspace is prepared. |
 | `workspace_setup_finished` | Just after the workspace is ready. |
 | `agent_starting` | Immediately before the agent process is spawned. |
-| `agent_finished` | After the agent process exits (regardless of success). |
+| `agent_finished` | After the agent response has been interpreted and any configured Schema has been validated, before workspace teardown. Fires regardless of success. |
 | `workspace_teardown_starting` | Before workspace teardown (apply-back, cleanup). |
 | `workspace_teardown_finished` | After workspace teardown completes. |
 | `runner_error` | A preceding stage failed. Fires instead of any later lifecycle events for that iteration. |
@@ -160,6 +170,7 @@ Compose services.
 | `metadata.*` | `{{metadata.task}}` | User-attached key/value pairs on the Signal. Same scope as `signal.*`. |
 | `iteration.*` | `{{iteration.count}}` | Runner iteration state — available in **every** event including `runner_starting` (initial state, `count == 0`, `previous_result == "none"`) and `runner_finished` (terminal state). See [`iterfile/prompt.md`](prompt.md#iterationfield-reference) for the field set. |
 | `var.*` | `{{var.context.value.foo}}` | Captures published earlier by the same Runner. Available in prompts and Runner shell actions, including completion hooks. |
+| `agent.session_id`, `agent.output` | `{{agent.output.decision}}` | Only in a successful `agent_finished` event. `output` is structured JSON when `output_schema` is configured and validated; otherwise it is captured final-response text. |
 | `completion.*` | `{{completion.condition.name}}` | Only in `runner_completing` / `runner_completed`. Includes `condition.name`, `condition.kind`, condition-specific redacted fields, `requested_at`, and (only after durability) `completed_at`. |
 | `runner.*` | `{{runner.elapsed_seconds}}` | Only in completion events. Includes `started_at`, monotonic `elapsed_seconds`, and `last_signal_id`. |
 
@@ -221,6 +232,25 @@ on agent_finished {
   shell "git push origin HEAD"
 }
 ```
+
+### Branch on a structured Agent response
+
+```hcl
+runner {
+  # ...
+  on agent_finished when agent.output.decision == "fix" {
+    shell "./scripts/apply-review-fixes"
+  }
+
+  on agent_finished when agent.output.decision == "continue" {
+    shell "./scripts/start-next-step"
+  }
+}
+```
+
+`agent.output` belongs to the current `AgentRun`; it is not a Runner-scoped
+`var.*` capture and is not carried into later iterations. If the Agent failed,
+the `agent` root is absent and comparisons against it do not match.
 
 ## Multiplicity
 

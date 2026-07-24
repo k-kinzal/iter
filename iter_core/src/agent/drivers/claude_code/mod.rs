@@ -145,6 +145,8 @@ pub struct ClaudeCodeDriver {
     /// run) is left to the caller; iter has no notion of "end of
     /// exploration".
     pub session_id_file: Option<PathBuf>,
+    /// Optional JSON Schema passed to Claude Code in print mode.
+    pub output_schema: Option<serde_json::Value>,
     /// User-declared environment variables passed to the child process.
     pub env: Vec<(String, String)>,
     /// Per-exploration hook isolation key: distinguishes one Runner's
@@ -232,6 +234,12 @@ impl AgentDriver for ClaudeCodeDriver {
             permission_mode: Some(PermissionMode::BypassPermissions),
             session_id,
             system_prompt: self.system_prompt.clone(),
+            json_schema: self
+                .output_schema
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|error| AgentError::Launch(error.to_string()))?,
             ..ExecuteCommand::default()
         };
         match self.mode {
@@ -249,6 +257,7 @@ impl AgentDriver for ClaudeCodeDriver {
                     process,
                     stdin: Some(prompt.as_str().to_owned()),
                     io: StdioMode::Piped,
+                    temporary_files: Vec::new(),
                 })
             }
             AgentMode::Interactive => {
@@ -263,6 +272,7 @@ impl AgentDriver for ClaudeCodeDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Inherit,
+                    temporary_files: Vec::new(),
                 })
             }
         }
@@ -323,8 +333,22 @@ impl AgentDriver for ClaudeCodeDriver {
                     }
                     .into());
                 }
+                let output = match &self.output_schema {
+                    Some(schema) => match result.extra.get("structured_output") {
+                        Some(value) => Some(crate::agent::run::validate_structured_output(
+                            schema,
+                            value.clone(),
+                        )?),
+                        None => Some(crate::agent::run::parse_structured_output(
+                            schema,
+                            result.result.as_deref(),
+                        )?),
+                    },
+                    None => result.result.map(crate::agent::AgentOutput::Text),
+                };
                 Ok(AgentRun {
                     session_id: result.session_id,
+                    output,
                 })
             }
         }
@@ -381,6 +405,7 @@ mod tests {
             args: Vec::new(),
             system_prompt: None,
             session_id_file: None,
+            output_schema: None,
             env: Vec::new(),
             hook_isolation_key: "default".to_owned(),
         }
@@ -489,6 +514,34 @@ mod tests {
     }
 
     #[test]
+    fn output_schema_is_forwarded_and_structured_output_is_exposed() {
+        let mut d = driver("claude", AgentMode::Headless);
+        d.output_schema = Some(json!({
+            "type": "object",
+            "properties": {"decision": {"const": "fix"}},
+            "required": ["decision"]
+        }));
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        let pos = args
+            .iter()
+            .position(|arg| arg == "--json-schema")
+            .expect("--json-schema");
+        let forwarded: serde_json::Value =
+            serde_json::from_str(&args[pos + 1]).expect("schema JSON");
+        assert_eq!(forwarded, d.output_schema.clone().expect("schema"));
+
+        let body = r#"{"type":"result","subtype":"success","is_error":false,"result":"{\"decision\":\"fix\"}","structured_output":{"decision":"fix"},"session_id":"sess-x"}"#;
+        let run = d
+            .interpret(&synth_output(RawExit::Code(0), body, ""))
+            .expect("structured output");
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Json(json!({"decision": "fix"})))
+        );
+    }
+
+    #[test]
     fn declared_env_is_set_on_the_command() {
         let mut d = driver("claude", AgentMode::Headless);
         d.env = vec![("ITER_TEST_ENV_VAR".into(), "env-value".into())];
@@ -535,6 +588,10 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(0), RESULT_OK, ""))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("ok".into()))
+        );
     }
 
     #[test]

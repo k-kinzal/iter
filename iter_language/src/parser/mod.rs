@@ -10,7 +10,7 @@
 //! # Stability
 //!
 //! The CST types (`CstFile`, `CstSection`, `CstBlock`, `CstField`, `CstValue`,
-//! `CstIdent`, `CstRoute`, `CstAction`, `CstGuard`) are part of the public
+//! `CstIdent`, `CstRoute`, `CstAction`, `CstExpr`) are part of the public
 //! grammar contract together with [`crate::GRAMMAR_VERSION`]. The
 //! [`crate::parse_to_cst`] entry point returns them directly so that external
 //! tooling — in particular the oracle-parser differential harness in this
@@ -19,14 +19,15 @@
 
 mod cst;
 mod cursor;
-mod guard;
+mod expression;
 mod prompt;
 mod section;
 mod value;
 
 pub use cst::{
-    CstAction, CstActionBody, CstBlock, CstCapture, CstCmpOp, CstCondition, CstEventHandler,
-    CstField, CstFile, CstGuard, CstIdent, CstPromptMatchArm, CstRoute, CstSection, CstValue,
+    CstAction, CstActionBody, CstBinaryOp, CstBlock, CstCapture, CstCondition, CstEventHandler,
+    CstExpr, CstExprLiteral, CstField, CstFile, CstGuard, CstIdent, CstPathSegment,
+    CstPromptMatchArm, CstRoute, CstSection, CstValue,
 };
 
 use crate::diagnostic::Diagnostic;

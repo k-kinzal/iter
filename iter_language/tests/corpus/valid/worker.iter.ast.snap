@@ -48,6 +48,7 @@ Iterfile {
                     args: [],
                     system_prompt: None,
                     session_id_file: None,
+                    output_schema: None,
                     env: {},
                 },
             },
@@ -71,34 +72,83 @@ Iterfile {
                 prompt: Match {
                     arms: [
                         PromptArm {
-                            guard: MetadataEq {
-                                key: "kind",
-                                value: "issue",
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "metadata",
+                                    segments: [
+                                        Field(
+                                            "kind",
+                                        ),
+                                    ],
+                                },
+                                op: Eq,
+                                rhs: Literal(
+                                    String(
+                                        "issue",
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "A new issue was opened in {{metadata.repo}}.\nInvestigate and post your findings as a comment.",
                             ),
                         },
                         PromptArm {
-                            guard: MetadataEq {
-                                key: "kind",
-                                value: "ci_fix",
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "metadata",
+                                    segments: [
+                                        Field(
+                                            "kind",
+                                        ),
+                                    ],
+                                },
+                                op: Eq,
+                                rhs: Literal(
+                                    String(
+                                        "ci_fix",
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "CI is failing on {{metadata.repo}}. Diagnose the failure and prepare a patch.",
                             ),
                         },
                         PromptArm {
-                            guard: And(
-                                MetadataNeq {
-                                    key: "kind",
-                                    value: "issue",
+                            guard: Binary {
+                                lhs: Binary {
+                                    lhs: Path {
+                                        root: "metadata",
+                                        segments: [
+                                            Field(
+                                                "kind",
+                                            ),
+                                        ],
+                                    },
+                                    op: Neq,
+                                    rhs: Literal(
+                                        String(
+                                            "issue",
+                                        ),
+                                    ),
                                 },
-                                MetadataNeq {
-                                    key: "kind",
-                                    value: "ci_fix",
+                                op: And,
+                                rhs: Binary {
+                                    lhs: Path {
+                                        root: "metadata",
+                                        segments: [
+                                            Field(
+                                                "kind",
+                                            ),
+                                        ],
+                                    },
+                                    op: Neq,
+                                    rhs: Literal(
+                                        String(
+                                            "ci_fix",
+                                        ),
+                                    ),
                                 },
-                            ),
+                            },
                             value: Inline(
                                 "Unknown signal kind {{metadata.kind}} — log it and exit.",
                             ),
@@ -112,6 +162,7 @@ Iterfile {
                     Spanned {
                         node: EventHandlerDef {
                             event: WorkspaceTeardownFinished,
+                            condition: None,
                             actions: [
                                 Shell(
                                     ShellActionDef {

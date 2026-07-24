@@ -192,7 +192,7 @@ fn classify_headless(raw: &RawOutput<'_>) -> Result<AgentRun, AgentError> {
     }
 
     match raw.exit {
-        RawExit::Code(0) => Ok(AgentRun::empty()),
+        RawExit::Code(0) => Ok(AgentRun::empty().with_text_output(stdout.into_owned())),
         RawExit::Code(EXIT_UNCAUGHT) => {
             // The traceback lands on stderr; fall back to stdout when stderr
             // was suppressed (the `/dev/null` case), then to a bare label.
@@ -282,6 +282,7 @@ impl AgentDriver for HermesDriver {
             process,
             stdin: None,
             io,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -411,6 +412,10 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(0), "the answer\n", ""))
             .expect("clean exit is a run");
         assert_eq!(run.session_id, None);
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("the answer\n".into()))
+        );
     }
 
     #[test]

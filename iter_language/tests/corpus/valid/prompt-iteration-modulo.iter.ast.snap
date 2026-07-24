@@ -45,6 +45,7 @@ Iterfile {
                     args: [],
                     system_prompt: None,
                     session_id_file: None,
+                    output_schema: None,
                     env: {},
                 },
             },
@@ -68,13 +69,29 @@ Iterfile {
                 prompt: Match {
                     arms: [
                         PromptArm {
-                            guard: IterationCmp {
-                                field: Count,
-                                modulus: Some(
-                                    10,
-                                ),
+                            guard: Binary {
+                                lhs: Binary {
+                                    lhs: Path {
+                                        root: "iteration",
+                                        segments: [
+                                            Field(
+                                                "count",
+                                            ),
+                                        ],
+                                    },
+                                    op: Mod,
+                                    rhs: Literal(
+                                        Integer(
+                                            10,
+                                        ),
+                                    ),
+                                },
                                 op: Eq,
-                                rhs: 0,
+                                rhs: Literal(
+                                    Integer(
+                                        0,
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "every-tenth tick n={{iteration.count}}",

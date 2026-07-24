@@ -45,6 +45,7 @@ Iterfile {
                     args: [],
                     system_prompt: None,
                     session_id_file: None,
+                    output_schema: None,
                     env: {},
                 },
             },
@@ -68,24 +69,63 @@ Iterfile {
                 prompt: Match {
                     arms: [
                         PromptArm {
-                            guard: IterationResultEq {
-                                value: "none",
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "previous_result",
+                                        ),
+                                    ],
+                                },
+                                op: Eq,
+                                rhs: Literal(
+                                    String(
+                                        "none",
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "first iteration",
                             ),
                         },
                         PromptArm {
-                            guard: IterationResultEq {
-                                value: "errored",
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "previous_result",
+                                        ),
+                                    ],
+                                },
+                                op: Eq,
+                                rhs: Literal(
+                                    String(
+                                        "errored",
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "recover from previous error",
                             ),
                         },
                         PromptArm {
-                            guard: IterationResultNeq {
-                                value: "success",
+                            guard: Binary {
+                                lhs: Path {
+                                    root: "iteration",
+                                    segments: [
+                                        Field(
+                                            "previous_result",
+                                        ),
+                                    ],
+                                },
+                                op: Neq,
+                                rhs: Literal(
+                                    String(
+                                        "success",
+                                    ),
+                                ),
                             },
                             value: Inline(
                                 "non-success path",

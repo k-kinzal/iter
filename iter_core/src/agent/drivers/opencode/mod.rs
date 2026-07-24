@@ -139,6 +139,7 @@ impl AgentDriver for OpenCodeDriver {
             process,
             stdin: None,
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -197,6 +198,7 @@ impl AgentDriver for OpenCodeDriver {
         // Success: recover any session id from the stream.
         Ok(AgentRun {
             session_id: parsed.session_id(),
+            output: parsed.final_message().map(crate::agent::AgentOutput::Text),
         })
     }
 
@@ -325,11 +327,18 @@ mod tests {
     #[test]
     fn interpret_clean_session_extracts_session_id() {
         let d = driver("opencode");
-        let body = r#"{"type":"session","id":"sess-x","status":"idle"}"#;
+        let body = concat!(
+            "{\"type\":\"session\",\"id\":\"sess-x\",\"status\":\"idle\"}\n",
+            "{\"type\":\"result\",\"text\":\"all done\"}\n",
+        );
         let run = d
             .interpret(&synth_output(RawExit::Code(0), body))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("all done".into()))
+        );
     }
 
     #[test]

@@ -267,56 +267,54 @@ accept Compose actions (`shell` and `enqueue`).
 
 ---
 
-## Guard Expressions
+## Expressions
 
-Used as the guard of a `prompt { <guard> => ... }` match arm inside a `runner` block:
+The same expression language is used by conditional Prompt arms and Runner
+Hook `when` clauses. Each surface decides which context roots are available.
 
 ```pest
-guard              = { guard_or }
-guard_or           = { guard_and  ~ ("||" ~ guard_and)* }
-guard_and          = { guard_atom ~ ("&&" ~ guard_atom)* }
-guard_atom         = { guard_paren | guard_iter | guard_meta }
-guard_paren        = { "(" ~ guard_or ~ ")" }
-guard_meta         = { kw_metadata ~ "." ~ ident ~ guard_eq_op ~ string }
-guard_iter         = { kw_iteration ~ "." ~ ident ~ guard_iter_modulus? ~ guard_iter_op ~ guard_iter_rhs }
-guard_iter_modulus = { "%" ~ integer }
-guard_eq_op        = { "==" | "!=" }
-guard_iter_op      = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
-guard_iter_rhs     = { integer | string }
+expression = { expression_or }
+expression_or = { expression_and ~ ("||" ~ expression_and)* }
+expression_and = { expression_compare ~ ("&&" ~ expression_compare)* }
+expression_compare = { expression_modulus ~ (compare_op ~ expression_modulus)? }
+expression_modulus = { expression_primary ~ ("%" ~ expression_primary)* }
+expression_primary = { path | string | integer | boolean | null | "(" ~ expression ~ ")" }
+path = { ident ~ (("." ~ ident) | ("[" ~ integer ~ "]"))* }
+compare_op = { "==" | "!=" | "<=" | ">=" | "<" | ">" }
 ```
 
-Supported forms:
+Operators:
 
 | Syntax | Meaning |
 | --- | --- |
-| `metadata.<key> == "value"` | Metadata equality. |
-| `metadata.<key> != "value"` | Metadata inequality. |
-| `iteration.<field> <cmp> <int>` | Numeric comparison against a runner iteration field. |
-| `iteration.<field> % <int> <cmp> <int>` | Same, but reduce the LHS modulo `<int>` first. |
-| `iteration.previous_result == "<result>"` | String equality against `"none"`, `"success"`, or `"errored"`. |
-| `iteration.previous_result != "<result>"` | Inequality form of the above. |
+| `<value> == <value>`, `<value> != <value>` | Equality and inequality of compatible values. |
+| `<value> < <value>`, `<=`, `>`, `>=` | Ordering of two JSON numbers or two strings. |
+| `<integer> % <integer>` | Integer remainder. |
 | `<expr> && <expr>` | Logical AND. |
 | `<expr> \|\| <expr>` | Logical OR. |
 | `( <expr> )` | Grouping. |
 
-Where `<cmp>` is one of `==`, `!=`, `<`, `<=`, `>`, `>=`. Numeric
-`iteration.*` fields are `count`, `previous_exit_code`,
-`consecutive_failures`, and `consecutive_successes`; see
-[`iterfile/prompt.md`](iterfile/prompt.md#iterationfield-reference)
-for the full table.
+Prompt expressions can use `signal.*`, `metadata.*`, `iteration.*`, and
+`var.*`. Runner Hooks expose roots appropriate to their event;
+`agent_finished` additionally exposes `agent.session_id` and `agent.output`,
+while completion events expose `completion.*` and `runner.*`.
 
 Constraints:
 
-- Metadata predicates only support `==` / `!=` against a string literal.
-- Numeric `iteration.*` fields require an integer RHS. `previous_result`
-  is the only field that takes a string RHS, and only with `==` / `!=`.
-- `% 0` is rejected at parse time. Modulus is only valid on numeric
-  `iteration.*` fields, applied at most once on the LHS.
-- A missing `previous_exit_code` (no prior turn) makes every comparison
-  evaluate to `false`, including `!=`.
-- `&&` binds tighter than `||` (standard precedence).
+- `% 0` and statically known type mismatches are rejected during declaration
+  analysis.
+- A condition must evaluate to a boolean. Statically known non-boolean
+  conditions are rejected during declaration analysis.
+- `metadata.*` values follow the existing template contract and are strings.
+- Dynamic path values are type-checked when evaluated.
+- A missing path makes a comparison evaluate to `false`, including `!=`.
+- `null` compared with a non-null value also evaluates to `false`, including
+  `!=`, ordering, and expressions containing `%`. Use `== null` to test for
+  an explicit null value.
+- `%` binds tighter than comparisons, comparisons bind tighter than `&&`,
+  and `&&` binds tighter than `||`.
 
-Guards appear as the left-hand side of a `prompt { ... }` match arm inside the `runner` block:
+Expressions appear on the left-hand side of a `prompt { ... }` match arm:
 
 ```hcl
 runner {
@@ -355,6 +353,7 @@ Common placeholders (exact availability depends on the context):
 | `{{metadata.<key>}}` | `prompt` bodies, shell actions, webhook route metadata. |
 | `{{iteration.<field>}}` | Prompt bodies and Runner lifecycle shell actions. See [`iterfile/prompt.md`](iterfile/prompt.md#iterationfield-reference) for the field set. |
 | `{{var.<name>.<field>}}` | Prompt bodies and Runner shell actions after a block-form shell capture has published the named value. |
+| `{{agent.session_id}}`, `{{agent.output}}` | Successful `agent_finished` Runner Hooks only. Structured response fields use paths such as `{{agent.output.decision}}`. |
 | `{{today}}` | `prompt` bodies, shell actions, and Compose Hook enqueue metadata. Current local date as `YYYY-MM-DD`. |
 | `{{error.kind}}`, `{{error.message}}` | DLQ templates. |
 | `{{.<payload-path>}}` | Webhook route metadata values. |

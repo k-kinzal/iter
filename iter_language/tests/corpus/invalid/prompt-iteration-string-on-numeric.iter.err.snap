@@ -2,12 +2,10 @@
 source: iter_language/tests/conformance.rs
 description: prompt-iteration-string-on-numeric.iter
 ---
-Error: string right-hand side is only valid for `iteration.previous_result`, but the left-hand side is `iteration.count`
-    ╭─[prompt-iteration-string-on-numeric.iter:21:15]
+Error: equality operands have incompatible types
+    ╭─[prompt-iteration-string-on-numeric.iter:21:21]
     │
  21 │     iteration.count == "ten" => "should fail"
-    │               ──┬──  
-    │                 ╰──── string right-hand side is only valid for `iteration.previous_result`, but the left-hand side is `iteration.count`
-    │ 
-    │ Help: numeric `iteration.*` fields require an integer RHS; only `previous_result` accepts a string
+    │                     ─┬  
+    │                      ╰── equality operands have incompatible types
 ────╯

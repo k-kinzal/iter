@@ -179,6 +179,8 @@ pub struct CodexDriver {
     /// in interactive mode, between the feature config override and the
     /// positional prompt.
     pub args: Vec<String>,
+    /// Optional JSON Schema passed to Codex in print mode.
+    pub output_schema: Option<serde_json::Value>,
     /// User-declared environment variables passed to the child process.
     pub env: Vec<(String, String)>,
     /// Per-exploration hook isolation key: distinguishes one Runner's
@@ -187,13 +189,12 @@ pub struct CodexDriver {
     pub hook_isolation_key: String,
 }
 
-#[async_trait]
-impl AgentDriver for CodexDriver {
-    fn command(
+impl CodexDriver {
+    fn build_command(
         &self,
         path: &Path,
+        temporary_directory: &Path,
         prompt: &Prompt,
-        _session: Option<&str>,
     ) -> Result<AgentCommand, AgentError> {
         match self.mode {
             AgentMode::Headless => {
@@ -202,9 +203,32 @@ impl AgentDriver for CodexDriver {
                 // the `exec --json [args] <prompt>` order the driver contracts
                 // on. The prompt is appended after `args` so callers can still
                 // extend/override the managed flags.
+                let mut temporary_files = Vec::new();
+                let output_schema = if let Some(schema) = &self.output_schema {
+                    let mut file = tempfile::Builder::new()
+                        .prefix(".iter-output-schema-")
+                        .suffix(".json")
+                        .tempfile_in(temporary_directory)
+                        .map_err(|error| AgentError::Launch(error.to_string()))?;
+                    serde_json::to_writer(&mut file, schema)
+                        .map_err(|error| AgentError::Launch(error.to_string()))?;
+                    let schema_path = file.path().to_path_buf();
+                    temporary_files.push(file.into_temp_path());
+                    Some(schema_path)
+                } else {
+                    None
+                };
+                let exec = ExecCommand {
+                    options: codex_cli::ExecOptions {
+                        output_schema,
+                        ..codex_cli::ExecOptions::default()
+                    },
+                    ..ExecCommand::default()
+                }
+                .json();
                 let mut process = Codex::new(&self.command)
                     .with_current_dir(path)
-                    .to_process(&ExecCommand::default().json());
+                    .to_process(&exec);
                 for arg in &self.args {
                     process.arg(arg);
                 }
@@ -218,6 +242,7 @@ impl AgentDriver for CodexDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Piped,
+                    temporary_files,
                 })
             }
             AgentMode::Interactive => {
@@ -242,9 +267,33 @@ impl AgentDriver for CodexDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Inherit,
+                    temporary_files: Vec::new(),
                 })
             }
         }
+    }
+}
+
+#[async_trait]
+impl AgentDriver for CodexDriver {
+    fn command(
+        &self,
+        path: &Path,
+        prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        let temporary_directory = std::env::temp_dir();
+        self.build_command(path, &temporary_directory, prompt)
+    }
+
+    fn command_with_temporary_directory(
+        &self,
+        path: &Path,
+        temporary_directory: &Path,
+        prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        self.build_command(path, temporary_directory, prompt)
     }
 
     fn interpret(&self, output: &std::process::Output) -> Result<AgentRun, AgentError> {
@@ -284,8 +333,17 @@ impl AgentDriver for CodexDriver {
                 };
 
                 if outcome.status.is_completed() {
+                    let final_message = parsed.final_message();
+                    let output = match &self.output_schema {
+                        Some(schema) => Some(crate::agent::run::parse_structured_output(
+                            schema,
+                            final_message.as_deref(),
+                        )?),
+                        None => final_message.map(crate::agent::AgentOutput::Text),
+                    };
                     return Ok(AgentRun {
                         session_id: parsed.session_id(),
+                        output,
                     });
                 }
 
@@ -349,6 +407,7 @@ mod tests {
             command: command.into(),
             mode,
             args: Vec::new(),
+            output_schema: None,
             env: Vec::new(),
             hook_isolation_key: "default".to_owned(),
         }
@@ -407,6 +466,52 @@ mod tests {
     }
 
     #[test]
+    fn output_schema_uses_runner_temporary_directory_without_touching_workspace() {
+        let workspace = TempDir::new().expect("workspace");
+        let temporary_directory = TempDir::new().expect("runner temporary directory");
+        let mut d = codex_driver("codex", AgentMode::Headless);
+        d.output_schema = Some(json!({
+            "type": "object",
+            "properties": {"decision": {"const": "continue"}},
+            "required": ["decision"]
+        }));
+        let prompt = Prompt::from("x");
+        let command = d
+            .command_with_temporary_directory(
+                workspace.path(),
+                temporary_directory.path(),
+                &prompt,
+                None,
+            )
+            .expect("command");
+        let args = argv(&command);
+        let pos = args
+            .iter()
+            .position(|arg| arg == "--output-schema")
+            .expect("--output-schema");
+        let schema_path = std::path::PathBuf::from(&args[pos + 1]);
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&schema_path).expect("schema file"))
+                .expect("schema JSON");
+        assert_eq!(written, d.output_schema.clone().expect("schema"));
+        assert!(
+            schema_path.starts_with(temporary_directory.path()),
+            "schema must be under the Runner temporary directory: {}",
+            schema_path.display()
+        );
+        assert_eq!(
+            std::fs::read_dir(workspace.path())
+                .expect("workspace entries")
+                .count(),
+            0,
+            "command assembly must not add files to the workspace"
+        );
+        assert_eq!(command.temporary_files.len(), 1);
+        drop(command);
+        assert!(!schema_path.exists(), "temporary schema must be removed");
+    }
+
+    #[test]
     fn declared_env_is_set_on_the_command() {
         let mut d = codex_driver("codex", AgentMode::Headless);
         d.env = vec![("CODEX_TEST_ENV_VAR".into(), "env-value".into())];
@@ -453,12 +558,40 @@ mod tests {
         let d = codex_driver("codex", AgentMode::Headless);
         let stream = concat!(
             "{\"type\":\"session_configured\",\"session_id\":\"sess-x\"}\n",
+            "{\"type\":\"agent_message\",\"message\":\"all done\"}\n",
             "{\"type\":\"task_complete\",\"status\":\"completed\"}\n",
         );
         let run = d
             .interpret(&synth_output(RawExit::Code(0), stream, ""))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("all done".into()))
+        );
+    }
+
+    #[test]
+    fn interpret_structured_final_message() {
+        let mut d = codex_driver("codex", AgentMode::Headless);
+        d.output_schema = Some(json!({
+            "type": "object",
+            "properties": {"decision": {"const": "continue"}},
+            "required": ["decision"]
+        }));
+        let stream = concat!(
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"{\\\"decision\\\":\\\"continue\\\"}\"}}\n",
+            "{\"type\":\"turn.completed\"}\n",
+        );
+        let run = d
+            .interpret(&synth_output(RawExit::Code(0), stream, ""))
+            .expect("structured output");
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Json(
+                json!({"decision": "continue"})
+            ))
+        );
     }
 
     #[test]

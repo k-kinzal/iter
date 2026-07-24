@@ -2,8 +2,8 @@
 
 use super::{Analyzer, COMMAND_HINT};
 use crate::ast::{
-    AgentDef, AgentMode, CloneApplyBackMode, RouterFallbackClass, RouterFallbackTriggers,
-    RouterStrategy, Span,
+    AgentDef, AgentMode, CloneApplyBackMode, OutputSchema, RouterFallbackClass,
+    RouterFallbackTriggers, RouterStrategy, Span,
 };
 use crate::diagnostic::Diagnostic;
 use crate::parser::{CstBlock, CstField, CstIdent, CstValue};
@@ -126,6 +126,7 @@ impl Analyzer {
             "claude" => {
                 let system_prompt = self.take_optional_string(fields, "system_prompt");
                 let session_id_file = self.take_optional_string(fields, "session_id_file");
+                let output_schema = self.take_output_schema(fields, mode.as_ref(), "agent claude");
                 self.reject_unknown_fields(
                     fields,
                     &[
@@ -134,6 +135,7 @@ impl Analyzer {
                         "args",
                         "system_prompt",
                         "session_id_file",
+                        "output_schema",
                         "env",
                     ],
                     "agent claude",
@@ -144,19 +146,22 @@ impl Analyzer {
                     args,
                     system_prompt,
                     session_id_file,
+                    output_schema,
                     env,
                 })
             }
             "codex" => {
+                let output_schema = self.take_output_schema(fields, mode.as_ref(), "agent codex");
                 self.reject_unknown_fields(
                     fields,
-                    &["mode", "command", "args", "env"],
+                    &["mode", "command", "args", "output_schema", "env"],
                     "agent codex",
                 );
                 Some(AgentDef::Codex {
                     mode: mode?,
                     command: command?,
                     args,
+                    output_schema,
                     env,
                 })
             }
@@ -287,10 +292,19 @@ impl Analyzer {
             .unwrap_or_default();
         let system_prompt = self.take_optional_string(fields, "system_prompt");
         let session_id_file = self.take_optional_string(fields, "session_id_file");
+        let output_schema =
+            self.take_output_schema(fields, Some(&AgentMode::Headless), "agent grok");
         let env = self.take_optional_env_block(fields);
         self.reject_unknown_fields(
             fields,
-            &["command", "args", "system_prompt", "session_id_file", "env"],
+            &[
+                "command",
+                "args",
+                "system_prompt",
+                "session_id_file",
+                "output_schema",
+                "env",
+            ],
             "agent grok",
         );
         Some(AgentDef::Grok {
@@ -298,8 +312,115 @@ impl Analyzer {
             args,
             system_prompt,
             session_id_file,
+            output_schema,
             env,
         })
+    }
+
+    fn take_output_schema(
+        &mut self,
+        fields: &mut std::collections::BTreeMap<String, CstField>,
+        mode: Option<&AgentMode>,
+        label: &str,
+    ) -> Option<OutputSchema> {
+        let field = fields.remove("output_schema")?;
+        if !matches!(mode, Some(AgentMode::Headless)) {
+            self.errors.push(
+                Diagnostic::error(
+                    field.span.clone(),
+                    format!("`output_schema` is only valid in print mode for {label}"),
+                )
+                .with_hint("set `mode = print` or remove `output_schema`"),
+            );
+            return None;
+        }
+
+        let value = match field.value {
+            CstValue::String(document, span) => match serde_json::from_str(&document) {
+                Ok(value) => value,
+                Err(error) => {
+                    self.errors.push(
+                        Diagnostic::error(span, format!("invalid JSON in `output_schema`: {error}"))
+                            .with_hint(
+                                "`output_schema` accepts a JSON document string or a direct JSON-shaped value",
+                            ),
+                    );
+                    return None;
+                }
+            },
+            value => self.lower_direct_json(value)?,
+        };
+
+        if let Err(error) = jsonschema::meta::validate(&value) {
+            self.errors.push(
+                Diagnostic::error(
+                    field.span,
+                    format!("invalid JSON Schema in `output_schema`: {error}"),
+                )
+                .with_hint("provide a valid inline JSON Schema document"),
+            );
+            return None;
+        }
+
+        Some(OutputSchema { value })
+    }
+
+    fn lower_direct_json(&mut self, value: CstValue) -> Option<serde_json::Value> {
+        match value {
+            CstValue::String(value, _) => Some(serde_json::Value::String(value)),
+            CstValue::Integer(value, _) => {
+                Some(serde_json::Value::Number(serde_json::Number::from(value)))
+            }
+            CstValue::Bool(value, _) => Some(serde_json::Value::Bool(value)),
+            CstValue::Null(_) => Some(serde_json::Value::Null),
+            CstValue::List(items, _) => {
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(self.lower_direct_json(item)?);
+                }
+                Some(serde_json::Value::Array(values))
+            }
+            CstValue::Block(block) => {
+                if !block.conditions.is_empty()
+                    || !block.routes.is_empty()
+                    || !block.actions.is_empty()
+                    || !block.captures.is_empty()
+                    || !block.prompt_arms.is_empty()
+                    || !block.event_handlers.is_empty()
+                {
+                    self.errors.push(Diagnostic::error(
+                        block.span,
+                        "`output_schema` blocks may contain only JSON fields",
+                    ));
+                    return None;
+                }
+
+                let mut object = serde_json::Map::new();
+                for field in block.fields {
+                    let name = field.name.name;
+                    if object.contains_key(&name) {
+                        self.errors.push(Diagnostic::error(
+                            field.name.span,
+                            format!("duplicate JSON field `{name}` in `output_schema`"),
+                        ));
+                        continue;
+                    }
+                    object.insert(name, self.lower_direct_json(field.value)?);
+                }
+                Some(serde_json::Value::Object(object))
+            }
+            unsupported
+            @ (CstValue::Duration(..) | CstValue::Ident(..) | CstValue::Call { .. }) => {
+                self.errors.push(
+                    Diagnostic::error(
+                        unsupported.span(),
+                        "`output_schema` direct values must be JSON values",
+                    )
+                    .with_hint("quote JSON strings and do not use durations or function calls"),
+                );
+                None
+            }
+        }
     }
 
     fn lower_generic_agent(

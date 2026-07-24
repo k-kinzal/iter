@@ -161,6 +161,7 @@ impl ClineDriver {
             if result.finish_reason.is_completed() {
                 return Ok(AgentRun {
                     session_id: result.session_id,
+                    output: parsed.final_message().map(crate::agent::AgentOutput::Text),
                 });
             }
             // Ran a turn but did not complete — refine into token-limit when
@@ -228,6 +229,7 @@ impl AgentDriver for ClineDriver {
             process,
             stdin: None,
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -357,11 +359,15 @@ mod tests {
     #[test]
     fn interpret_completed_run_extracts_session_id() {
         let d = driver("cline");
-        let body = r#"{"type":"run_result","finishReason":"completed","sessionId":"sess-x"}"#;
+        let body = r#"{"type":"run_result","finishReason":"completed","sessionId":"sess-x","message":"all done"}"#;
         let run = d
             .interpret(&synth_output(RawExit::Code(0), body))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("all done".into()))
+        );
     }
 
     #[test]

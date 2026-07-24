@@ -50,6 +50,16 @@ pub enum StdioMode {
 /// [`ActiveWorkspace::teardown`], mirroring the common xUnit fixture idiom.
 #[async_trait]
 pub trait Workspace: Send + Sync {
+    /// Bind the temporary directory owned by the Runner.
+    ///
+    /// The directory lives for the whole Runner run and is outside every
+    /// iteration workspace. Unconfined workspace implementations need no
+    /// special handling. Isolation implementations must make this exact
+    /// directory readable and writable by spawned agent processes so
+    /// Runner-owned command artifacts can be passed without touching the
+    /// workspace tree.
+    fn set_runner_temporary_directory(&mut self, _path: &Path) {}
+
     /// Materialise one iteration's working environment.
     ///
     /// # Self-cleaning contract

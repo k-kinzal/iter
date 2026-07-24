@@ -254,6 +254,7 @@ fn interpret_output(raw: &RawOutput<'_>) -> Result<AgentRun, CopilotOutputError>
 
     Ok(AgentRun {
         session_id: result.session_id,
+        output: parsed.final_message().map(crate::agent::AgentOutput::Text),
     })
 }
 
@@ -342,6 +343,7 @@ impl AgentDriver for CopilotDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Piped,
+                    temporary_files: Vec::new(),
                 })
             }
             AgentMode::Interactive => {
@@ -363,6 +365,7 @@ impl AgentDriver for CopilotDriver {
                     process,
                     stdin: None,
                     io: StdioMode::Inherit,
+                    temporary_files: Vec::new(),
                 })
             }
         }
@@ -535,11 +538,18 @@ mod tests {
     #[test]
     fn interpret_result_extracts_session_id() {
         let d = copilot_driver("copilot", AgentMode::Headless);
-        let body = r#"{"type":"result","sessionId":"sess-x","exitCode":0}"#;
+        let body = concat!(
+            "{\"type\":\"assistant.message\",\"data\":{\"content\":\"all done\"}}\n",
+            "{\"type\":\"result\",\"sessionId\":\"sess-x\",\"exitCode\":0}\n",
+        );
         let run = d
             .interpret(&synth_output(RawExit::Code(0), body, ""))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("all done".into()))
+        );
     }
 
     #[test]

@@ -34,6 +34,7 @@ mod agent;
 mod arg;
 mod compose;
 mod event;
+mod expression;
 mod prompt;
 mod queue;
 mod runner;
@@ -43,7 +44,9 @@ mod trigger;
 mod value;
 mod workspace;
 
-pub use agent::{AgentDef, AgentMode, RouterFallbackClass, RouterFallbackTriggers, RouterStrategy};
+pub use agent::{
+    AgentDef, AgentMode, OutputSchema, RouterFallbackClass, RouterFallbackTriggers, RouterStrategy,
+};
 pub use arg::ArgDef;
 pub use compose::{
     Compose, ComposeServiceOverride, ComposeTriggerOverride, InlineService, NamedCompose,
@@ -54,10 +57,8 @@ pub use event::{
     RunnerAction, ShellActionDef, ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode,
     ShellCaptureParse, ShellCaptureStream,
 };
-pub use prompt::{
-    CmpOp, IterationField, NamedPrompt, PriorityKeyword, PromptArm, PromptDef, PromptExpr,
-    PromptGuard, PromptValue,
-};
+pub use expression::{BinaryOp, Expr, ExprLiteral, PathSegment};
+pub use prompt::{NamedPrompt, PriorityKeyword, PromptArm, PromptDef, PromptExpr, PromptValue};
 pub use queue::{
     DlqPolicyDef, DlqTargetDef, MetadataSource, QueueDef, RetryPolicyDef, SqsConfig, SqsConsumer,
     SqsCredentialKind, SqsCredentials, SqsHttpClient, SqsIdentity, SqsProducer,

@@ -244,6 +244,7 @@ mod tests {
             args: Vec::new(),
             system_prompt: None,
             session_id_file: None,
+            output_schema: None,
             env: BTreeMap::new(),
         }
     }
@@ -321,6 +322,7 @@ mod tests {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
+                condition: None,
                 actions: vec![RunnerAction::Shell(iter_language::ShellActionDef::simple(
                     "echo start",
                 ))],
@@ -345,6 +347,7 @@ mod tests {
         let events = vec![Spanned::new(
             EventHandlerDef {
                 event: EventName::RunnerStarting,
+                condition: None,
                 actions: vec![RunnerAction::Shell(iter_language::ShellActionDef::simple(
                     "echo {{",
                 ))],

@@ -243,6 +243,26 @@ impl RunOutput {
     pub fn session_id(&self) -> Option<String> {
         self.result().and_then(|record| record.session_id)
     }
+
+    /// Final top-level assistant response.
+    ///
+    /// Messages carrying `data.parentToolCallId` belong to a sub-agent and
+    /// are excluded from the parent run's final response.
+    #[must_use]
+    pub fn final_message(&self) -> Option<String> {
+        self.events.iter().rev().find_map(|event| {
+            if !event.type_is("assistant.message") {
+                return None;
+            }
+            let data = event.as_value().get("data")?;
+            if data.get("parentToolCallId").is_some() {
+                return None;
+            }
+            data.get("content")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+    }
 }
 
 impl TryFrom<ProcessOutput> for RunOutput {

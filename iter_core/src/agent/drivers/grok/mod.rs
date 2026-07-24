@@ -150,6 +150,8 @@ pub struct GrokDriver {
     /// drops the file on the final iteration. iter does not own that
     /// decision because it has no notion of "end of exploration".
     pub session_id_file: Option<PathBuf>,
+    /// Optional JSON Schema passed to Grok's headless mode.
+    pub output_schema: Option<serde_json::Value>,
     /// User-declared environment variables passed to the child process.
     pub env: Vec<(String, String)>,
 }
@@ -207,6 +209,12 @@ impl AgentDriver for GrokDriver {
             .options
             .system_prompt_override
             .clone_from(&self.system_prompt);
+        single.options.json_schema = self
+            .output_schema
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| AgentError::Launch(error.to_string()))?;
         if let Some(sid) = session {
             single = single.resume(ResumeTarget::session(sid));
         }
@@ -247,6 +255,7 @@ impl AgentDriver for GrokDriver {
             process,
             stdin: None,
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -297,14 +306,20 @@ impl AgentDriver for GrokDriver {
             return Err(GrokOutputError::Reported { message, exit_code }.into());
         }
 
-        // Only `session_id` crosses into the domain `AgentRun`. The rich record
-        // (`request_id`, `thought`, `stop_reason`, `usage`) stays at the crate
-        // layer: `AgentRun` carries only what a Factor consumes, and iter has no
-        // agreed token/cost Factor field — matching how the Cursor/Claude
-        // drivers keep their usage/cost out of `AgentRun`. (Moot for
-        // `grok 0.2.45`, which reports no usage/cost anyway.)
+        // Only the session id and final response cross into `AgentRun`. The
+        // rich record (`request_id`, `thought`, `stop_reason`, `usage`) stays
+        // at the crate layer; iter has no consumer for those fields.
+        let final_message = parsed.final_message();
+        let output = match &self.output_schema {
+            Some(schema) => Some(crate::agent::run::parse_structured_output(
+                schema,
+                final_message.as_deref(),
+            )?),
+            None => final_message.map(crate::agent::AgentOutput::Text),
+        };
         Ok(AgentRun {
             session_id: parsed.session_id(),
+            output,
         })
     }
 
@@ -339,6 +354,7 @@ mod tests {
             args: Vec::new(),
             system_prompt: None,
             session_id_file: None,
+            output_schema: None,
             env: Vec::new(),
         }
     }
@@ -437,6 +453,36 @@ mod tests {
     }
 
     #[test]
+    fn output_schema_is_forwarded_and_validated() {
+        let mut d = driver("grok");
+        d.output_schema = Some(serde_json::json!({
+            "type": "object",
+            "properties": {"decision": {"const": "fix"}},
+            "required": ["decision"]
+        }));
+        let prompt = Prompt::from("x");
+        let args = argv(&d.command(Path::new("."), &prompt, None).expect("command"));
+        let pos = args
+            .iter()
+            .position(|arg| arg == "--json-schema")
+            .expect("--json-schema");
+        let forwarded: serde_json::Value =
+            serde_json::from_str(&args[pos + 1]).expect("schema JSON");
+        assert_eq!(forwarded, d.output_schema.clone().expect("schema"));
+
+        let body = r#"{"text":"{\"decision\":\"fix\"}","stopReason":"EndTurn","sessionId":"sess-x","requestId":"r"}"#;
+        let run = d
+            .interpret(&synth_output(RawExit::Code(0), body))
+            .expect("structured output");
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Json(
+                serde_json::json!({"decision": "fix"})
+            ))
+        );
+    }
+
+    #[test]
     fn declared_env_is_set_on_the_command() {
         let mut d = driver("grok");
         d.env = vec![("GROK_TEST_ENV_VAR".into(), "env-value".into())];
@@ -459,6 +505,10 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(0), body))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("OK".into()))
+        );
     }
 
     #[test]

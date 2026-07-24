@@ -8,7 +8,7 @@
 use iter_core::{EventName, RunnerBuilder, TemplateError};
 use iter_language::{EventHandlerDef, Iterfile, RunnerAction, Spanned};
 
-use crate::shell_action::ShellAction;
+use crate::shell_action::{ShellAction, ShellEventHandler};
 
 /// Map a language-level [`iter_language::EventName`] to the core-level
 /// [`iter_core::EventName`] routing key.
@@ -67,13 +67,20 @@ pub(crate) fn register_event_actions_from_events(
     let variables = builder.variable_store();
     for spanned in events {
         let Spanned { node, .. } = spanned;
-        let EventHandlerDef { event, actions } = node;
+        let EventHandlerDef {
+            event,
+            condition,
+            actions,
+        } = node;
         let core_name = to_core_event_name(*event);
+        let condition = condition.as_ref().map(crate::prompt::translate_expr);
+        let mut shell_actions = Vec::with_capacity(actions.len());
         for action in actions {
             let RunnerAction::Shell(definition) = action;
-            let handler = ShellAction::from_def(definition, variables.clone())?;
-            builder = builder.on(core_name, handler);
+            shell_actions.push(ShellAction::from_def(definition, variables.clone())?);
         }
+        let handler = ShellEventHandler::new(shell_actions, condition, variables.clone());
+        builder = builder.on(core_name, handler);
     }
     Ok(builder)
 }
@@ -87,6 +94,7 @@ mod tests {
         Spanned::new(
             EventHandlerDef {
                 event,
+                condition: None,
                 actions: vec![RunnerAction::Shell(ShellActionDef::simple(cmd))],
             },
             0..0,

@@ -1,10 +1,9 @@
 //! `build_prompt_selector` — pick prompts out of an [`Iterfile`](Iterfile).
 //!
-//! Translates a runner's guarded `prompt` expression into an
-//! [`iter_core::PromptSelector`] the runner can evaluate per-signal. Guards
-//! are translated from [`iter_language::PromptGuard`] (a parse-tree type)
-//! into [`iter_core::PromptGuard`] (a runtime type) so the runtime layer
-//! does not depend on the language crate.
+//! Translates a runner's conditional `prompt` expression into an
+//! [`iter_core::PromptSelector`] the runner can evaluate per-signal. The
+//! runtime layer owns an equivalent expression AST so it does not depend on
+//! the language crate.
 //!
 //! # Selection semantics
 //!
@@ -16,12 +15,12 @@
 //! see [`iter_core::PromptSelector::render`] for the exact contract.
 
 use iter_core::{
-    CmpOp as CoreCmpOp, IterationField as CoreIterationField, PromptGuard as CorePromptGuard,
-    PromptSelector, PromptTemplate, TemplateError,
+    BinaryOp as CoreBinaryOp, Expr as CoreExpr, ExprLiteral as CoreExprLiteral,
+    PathSegment as CorePathSegment, PromptSelector, PromptTemplate, TemplateError,
 };
 use iter_language::{
-    CmpOp as LangCmpOp, IterationField as LangIterationField, Iterfile, PromptDef,
-    PromptGuard as LangPromptGuard, Spanned,
+    BinaryOp as LangBinaryOp, Expr as LangExpr, ExprLiteral as LangExprLiteral, Iterfile,
+    PathSegment as LangPathSegment, PromptDef, Spanned,
 };
 
 /// Errors produced while building a [`PromptSelector`] from prompt
@@ -83,7 +82,7 @@ pub(crate) fn prompt_selector_from_defs(
         return Err(PromptBuildError::Missing);
     }
 
-    let mut branches: Vec<(CorePromptGuard, PromptTemplate)> = Vec::new();
+    let mut branches: Vec<(CoreExpr, PromptTemplate)> = Vec::new();
     let mut default: Option<PromptTemplate> = None;
 
     for spanned in prompts {
@@ -94,8 +93,8 @@ pub(crate) fn prompt_selector_from_defs(
                 source,
             }
         })?;
-        if let Some(guard) = &decl.guard {
-            branches.push((translate_guard(guard), template));
+        if let Some(expression) = &decl.guard {
+            branches.push((translate_expr(expression), template));
         } else {
             if default.is_some() {
                 return Err(PromptBuildError::MultipleDefaults);
@@ -107,64 +106,42 @@ pub(crate) fn prompt_selector_from_defs(
     Ok(PromptSelector::new(branches, default))
 }
 
-/// Recursively translate a language-AST guard into the runtime guard type.
+/// Recursively translate a language expression into the runtime expression.
 /// Pure structural mapping; no semantic validation happens here because the
-/// parser already rejected malformed guards.
-fn translate_guard(guard: &LangPromptGuard) -> CorePromptGuard {
-    match guard {
-        LangPromptGuard::MetadataEq { key, value } => CorePromptGuard::MetadataEq {
-            key: key.clone(),
-            value: value.clone(),
+/// parser already rejected malformed expressions.
+pub(crate) fn translate_expr(expression: &LangExpr) -> CoreExpr {
+    match expression {
+        LangExpr::Literal(literal) => CoreExpr::Literal(match literal {
+            LangExprLiteral::String(value) => CoreExprLiteral::String(value.clone()),
+            LangExprLiteral::Integer(value) => CoreExprLiteral::Integer(*value),
+            LangExprLiteral::Bool(value) => CoreExprLiteral::Bool(*value),
+            LangExprLiteral::Null => CoreExprLiteral::Null,
+        }),
+        LangExpr::Path { root, segments } => CoreExpr::Path {
+            root: root.clone(),
+            segments: segments
+                .iter()
+                .map(|segment| match segment {
+                    LangPathSegment::Field(value) => CorePathSegment::Field(value.clone()),
+                    LangPathSegment::Index(value) => CorePathSegment::Index(*value),
+                })
+                .collect(),
         },
-        LangPromptGuard::MetadataNeq { key, value } => CorePromptGuard::MetadataNeq {
-            key: key.clone(),
-            value: value.clone(),
+        LangExpr::Binary { lhs, op, rhs } => CoreExpr::Binary {
+            lhs: Box::new(translate_expr(lhs)),
+            op: match op {
+                LangBinaryOp::Or => CoreBinaryOp::Or,
+                LangBinaryOp::And => CoreBinaryOp::And,
+                LangBinaryOp::Eq => CoreBinaryOp::Eq,
+                LangBinaryOp::Neq => CoreBinaryOp::Neq,
+                LangBinaryOp::Lt => CoreBinaryOp::Lt,
+                LangBinaryOp::Le => CoreBinaryOp::Le,
+                LangBinaryOp::Gt => CoreBinaryOp::Gt,
+                LangBinaryOp::Ge => CoreBinaryOp::Ge,
+                LangBinaryOp::Mod => CoreBinaryOp::Mod,
+            },
+            rhs: Box::new(translate_expr(rhs)),
         },
-        LangPromptGuard::IterationCmp {
-            field,
-            modulus,
-            op,
-            rhs,
-        } => CorePromptGuard::IterationCmp {
-            field: translate_iteration_field(*field),
-            modulus: *modulus,
-            op: translate_cmp_op(*op),
-            rhs: *rhs,
-        },
-        LangPromptGuard::IterationResultEq { value } => CorePromptGuard::IterationResultEq {
-            value: value.clone(),
-        },
-        LangPromptGuard::IterationResultNeq { value } => CorePromptGuard::IterationResultNeq {
-            value: value.clone(),
-        },
-        LangPromptGuard::And(lhs, rhs) => CorePromptGuard::And(
-            Box::new(translate_guard(lhs)),
-            Box::new(translate_guard(rhs)),
-        ),
-        LangPromptGuard::Or(lhs, rhs) => CorePromptGuard::Or(
-            Box::new(translate_guard(lhs)),
-            Box::new(translate_guard(rhs)),
-        ),
-    }
-}
-
-fn translate_iteration_field(field: LangIterationField) -> CoreIterationField {
-    match field {
-        LangIterationField::Count => CoreIterationField::Count,
-        LangIterationField::PreviousExitCode => CoreIterationField::PreviousExitCode,
-        LangIterationField::ConsecutiveFailures => CoreIterationField::ConsecutiveFailures,
-        LangIterationField::ConsecutiveSuccesses => CoreIterationField::ConsecutiveSuccesses,
-    }
-}
-
-fn translate_cmp_op(op: LangCmpOp) -> CoreCmpOp {
-    match op {
-        LangCmpOp::Eq => CoreCmpOp::Eq,
-        LangCmpOp::Neq => CoreCmpOp::Neq,
-        LangCmpOp::Lt => CoreCmpOp::Lt,
-        LangCmpOp::Le => CoreCmpOp::Le,
-        LangCmpOp::Gt => CoreCmpOp::Gt,
-        LangCmpOp::Ge => CoreCmpOp::Ge,
     }
 }
 
@@ -174,7 +151,7 @@ mod tests {
     use iter_core::{IterationContext, Metadata, MetadataKey, MetadataValue, Signal};
     use iter_language::{PromptDef, Spanned};
 
-    fn prompt(body: &str, guard: Option<LangPromptGuard>) -> Spanned<PromptDef> {
+    fn prompt(body: &str, guard: Option<LangExpr>) -> Spanned<PromptDef> {
         Spanned::new(
             PromptDef {
                 guard,
@@ -195,6 +172,17 @@ mod tests {
 
     fn iter_ctx() -> IterationContext {
         IterationContext::for_test()
+    }
+
+    fn kind_cmp(op: LangBinaryOp, value: &str) -> LangExpr {
+        LangExpr::Binary {
+            lhs: Box::new(LangExpr::Path {
+                root: "metadata".into(),
+                segments: vec![LangPathSegment::Field("kind".into())],
+            }),
+            op,
+            rhs: Box::new(LangExpr::Literal(LangExprLiteral::String(value.into()))),
+        }
     }
 
     #[test]
@@ -218,17 +206,11 @@ mod tests {
         let prompts = vec![
             prompt(
                 "handle issue {{metadata.kind}}",
-                Some(LangPromptGuard::MetadataEq {
-                    key: "kind".into(),
-                    value: "issue".into(),
-                }),
+                Some(kind_cmp(LangBinaryOp::Eq, "issue")),
             ),
             prompt(
                 "fix ci {{metadata.kind}}",
-                Some(LangPromptGuard::MetadataEq {
-                    key: "kind".into(),
-                    value: "ci_fix".into(),
-                }),
+                Some(kind_cmp(LangBinaryOp::Eq, "ci_fix")),
             ),
         ];
 
@@ -252,13 +234,7 @@ mod tests {
     #[test]
     fn guarded_branches_fall_through_to_default() {
         let prompts = vec![
-            prompt(
-                "urgent path",
-                Some(LangPromptGuard::MetadataEq {
-                    key: "kind".into(),
-                    value: "urgent".into(),
-                }),
-            ),
+            prompt("urgent path", Some(kind_cmp(LangBinaryOp::Eq, "urgent"))),
             prompt("default path", None),
         ];
 
@@ -294,22 +270,15 @@ mod tests {
     fn nested_and_or_guards_translate_structurally() {
         let prompts = vec![prompt(
             "matched",
-            Some(LangPromptGuard::And(
-                Box::new(LangPromptGuard::MetadataEq {
-                    key: "kind".into(),
-                    value: "issue".into(),
+            Some(LangExpr::Binary {
+                lhs: Box::new(kind_cmp(LangBinaryOp::Eq, "issue")),
+                op: LangBinaryOp::And,
+                rhs: Box::new(LangExpr::Binary {
+                    lhs: Box::new(kind_cmp(LangBinaryOp::Neq, "ci_fix")),
+                    op: LangBinaryOp::Or,
+                    rhs: Box::new(kind_cmp(LangBinaryOp::Eq, "urgent")),
                 }),
-                Box::new(LangPromptGuard::Or(
-                    Box::new(LangPromptGuard::MetadataNeq {
-                        key: "kind".into(),
-                        value: "ci_fix".into(),
-                    }),
-                    Box::new(LangPromptGuard::MetadataEq {
-                        key: "kind".into(),
-                        value: "urgent".into(),
-                    }),
-                )),
-            )),
+            }),
         )];
 
         let selector = prompt_selector_from_defs(&prompts).expect("build");

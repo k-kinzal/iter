@@ -1,5 +1,6 @@
 //! [`SelectorError`] — failures surfaced by [`PromptSelector`](super::PromptSelector).
 
+use crate::ExprError;
 use crate::template::TemplateError;
 
 /// Errors produced by [`PromptSelector::render`](super::PromptSelector::render).
@@ -14,4 +15,12 @@ pub enum SelectorError {
     /// Rendering the selected template failed.
     #[error(transparent)]
     Template(#[from] TemplateError),
+
+    /// Evaluating a conditional prompt expression failed.
+    #[error(transparent)]
+    Expression(#[from] ExprError),
+
+    /// Building the JSON-shaped expression context failed.
+    #[error(transparent)]
+    ExpressionContext(#[from] serde_json::Error),
 }

@@ -40,6 +40,7 @@ Iterfile {
                     session_id_file: Some(
                         ".iter/session-id",
                     ),
+                    output_schema: None,
                     env: {},
                 },
             },

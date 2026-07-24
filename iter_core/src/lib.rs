@@ -25,6 +25,7 @@
 #![deny(rust_2018_idioms)]
 
 pub mod agent;
+pub mod expression;
 pub mod home;
 pub mod log;
 pub mod os_signal;
@@ -41,12 +42,11 @@ pub mod variable;
 pub mod workspace;
 
 pub use agent::{
-    Agent, AgentCommand, AgentDriver, AgentRun, FallbackRouter, FallbackTriggers, RotateRouter,
-    Route, Router, SingleAgentRouter,
+    Agent, AgentCommand, AgentDriver, AgentOutput, AgentRun, FallbackRouter, FallbackTriggers,
+    RotateRouter, Route, Router, SingleAgentRouter,
 };
-pub use prompt::{
-    CmpOp, IterationField, Prompt, PromptGuard, PromptSelector, PromptTemplate, SelectorError,
-};
+pub use expression::{BinaryOp, Expr, ExprError, ExprLiteral, PathSegment};
+pub use prompt::{Prompt, PromptSelector, PromptTemplate, SelectorError};
 pub use queue::{Priority, Queue};
 pub use runner::{
     BoxError, BuilderError, CompletionCondition, CompletionConditionErrorPolicy,

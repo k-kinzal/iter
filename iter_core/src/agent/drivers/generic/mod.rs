@@ -97,6 +97,7 @@ impl AgentDriver for GenericDriver {
             process,
             stdin,
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -106,7 +107,7 @@ impl AgentDriver for GenericDriver {
         // exit is a run, a non-zero exit is a failure. Token-limit text in the
         // output is still surfaced so the router can fall back.
         match raw.exit.into_failure() {
-            None => Ok(AgentRun::empty()),
+            None => Ok(AgentRun::empty().with_text_output(raw.stdout_str().into_owned())),
             Some(err) => {
                 if let Some(detail) = detect_token_limit(&raw.stdout_str())
                     .or_else(|| detect_token_limit(&raw.stderr_str()))
@@ -209,12 +210,12 @@ mod tests {
     // ----- interpret(): inbound translation --------------------------------
 
     #[test]
-    fn interpret_clean_exit_is_an_empty_run() {
+    fn interpret_clean_exit_captures_stdout() {
         let d = GenericDriver::new(Vec::new());
         let run = d
             .interpret(&synth_output(RawExit::Code(0), "output", ""))
             .expect("clean exit is a run");
-        assert_eq!(run, AgentRun::empty());
+        assert_eq!(run, AgentRun::empty().with_text_output("output"));
     }
 
     #[test]

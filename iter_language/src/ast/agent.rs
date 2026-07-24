@@ -2,6 +2,17 @@
 
 use std::collections::BTreeMap;
 
+/// An inline JSON Schema controlling a supported headless agent's response.
+///
+/// The source declaration is normalized during semantic analysis, so runtime
+/// consumers never need to distinguish a JSON document string from the
+/// direct JSON-shaped Iterfile form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputSchema {
+    /// The normalized JSON Schema document.
+    pub value: serde_json::Value,
+}
+
 /// Agent backend declaration.
 ///
 /// Every named variant (all but [`AgentDef::Generic`]) carries a concrete
@@ -41,6 +52,8 @@ pub enum AgentDef {
         /// later iterations inherit prior agent context as well as workspace
         /// state.
         session_id_file: Option<String>,
+        /// Optional inline JSON Schema for the headless response.
+        output_schema: Option<OutputSchema>,
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
@@ -52,6 +65,8 @@ pub enum AgentDef {
         command: String,
         /// Extra arguments appended after the iter-managed defaults.
         args: Vec<String>,
+        /// Optional inline JSON Schema for the headless response.
+        output_schema: Option<OutputSchema>,
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },
@@ -162,6 +177,8 @@ pub enum AgentDef {
         /// the on-ramp to the narrowest exploration mode: later iterations
         /// inherit prior agent context as well as workspace state.
         session_id_file: Option<String>,
+        /// Optional inline JSON Schema for the headless response.
+        output_schema: Option<OutputSchema>,
         /// Environment variables passed to the agent child process.
         env: BTreeMap<String, String>,
     },

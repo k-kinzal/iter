@@ -74,7 +74,12 @@ impl Analyzer {
 
         // Lower nested `on <event> { ... }` event handlers from the block.
         for handler in block.event_handlers {
-            if let Some(decl) = self.lower_event(&handler.event, &handler.body, handler.span) {
+            if let Some(decl) = self.lower_event(
+                &handler.event,
+                handler.condition.as_ref(),
+                &handler.body,
+                handler.span,
+            ) {
                 events.push(decl);
             }
         }
@@ -198,7 +203,12 @@ impl Analyzer {
 
         // Lower nested `on <event> { ... }` event handlers from the block.
         for handler in block.event_handlers {
-            if let Some(decl) = self.lower_event(&handler.event, &handler.body, handler.span) {
+            if let Some(decl) = self.lower_event(
+                &handler.event,
+                handler.condition.as_ref(),
+                &handler.body,
+                handler.span,
+            ) {
                 events.push(decl);
             }
         }
@@ -389,7 +399,7 @@ impl Analyzer {
                     }
                 }
                 Some(raw_guard) => {
-                    let guard = self.lower_guard(raw_guard);
+                    let guard = self.lower_prompt_expr(raw_guard);
                     arms.push(PromptArm { guard, value });
                 }
             }

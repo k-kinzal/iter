@@ -532,6 +532,20 @@ fn session_error_record_exposes_type_code_and_status() {
 }
 
 #[test]
+fn final_message_uses_last_top_level_assistant_message() {
+    let stream = concat!(
+        "{\"type\":\"assistant.message\",\"data\":{\"content\":\"first\"}}\n",
+        "{\"type\":\"assistant.message\",\"data\":{\"content\":\"nested\",\"parentToolCallId\":\"tool-1\"}}\n",
+        "{\"type\":\"assistant.message\",\"data\":{\"content\":\"final\"}}\n",
+        "{\"type\":\"result\",\"sessionId\":\"sess-1\",\"exitCode\":0}\n"
+    );
+    assert_eq!(
+        RunOutput::parse(stream).final_message().as_deref(),
+        Some("final")
+    );
+}
+
+#[test]
 fn both_terminal_records_are_exposed_when_both_appear() {
     // Classification (which one wins) is the caller's job; the crate surfaces
     // both records faithfully.

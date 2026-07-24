@@ -28,6 +28,7 @@ pub mod lifecycle;
 pub mod observer;
 pub mod policy;
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -90,6 +91,10 @@ pub struct Runner {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) id_source: Arc<dyn IdSource>,
     pub(crate) variables: VariableStore,
+    /// Private scratch area retained for the lifetime of this Runner.
+    ///
+    /// Agent command artifacts belong here, never in a Workspace.
+    pub(crate) temporary_directory: tempfile::TempDir,
 }
 
 impl Runner {
@@ -130,6 +135,7 @@ impl Runner {
             clock,
             id_source,
             variables,
+            temporary_directory,
         } = self;
         let mut events = RunnerEmitter::new(emitter, observers);
         let runner_started_at = clock.now();
@@ -157,6 +163,7 @@ impl Runner {
             clock.as_ref(),
             id_source.as_ref(),
             &variables,
+            temporary_directory.path(),
             &mut events,
             &mut iter_state,
             &mut iteration_count,
@@ -474,6 +481,7 @@ const ITERATION_TIMEOUT_DRAIN_GRACE: Duration =
 async fn run_agent_with_timeout(
     agent: &Agent,
     workspace: &dyn ActiveWorkspace,
+    temporary_directory: &Path,
     prompt: &Prompt,
     cancel: &CancellationToken,
     timeout: Option<Duration>,
@@ -481,8 +489,12 @@ async fn run_agent_with_timeout(
     let iter_cancel = cancel.child_token();
     match timeout {
         Some(limit) => {
-            let mut agent_fut =
-                std::pin::pin!(agent.run_on(workspace, prompt, iter_cancel.clone()));
+            let mut agent_fut = std::pin::pin!(agent.run_on_with_temporary_directory(
+                workspace,
+                temporary_directory,
+                prompt,
+                iter_cancel.clone(),
+            ));
             tokio::select! {
                 biased;
                 res = agent_fut.as_mut() => res,
@@ -498,7 +510,16 @@ async fn run_agent_with_timeout(
                 }
             }
         }
-        None => agent.run_on(workspace, prompt, iter_cancel).await,
+        None => {
+            agent
+                .run_on_with_temporary_directory(
+                    workspace,
+                    temporary_directory,
+                    prompt,
+                    iter_cancel,
+                )
+                .await
+        }
     }
 }
 
@@ -532,6 +553,7 @@ async fn best_effort_teardown(
 async fn drive_workspace(
     workspace: &mut dyn Workspace,
     agent: &Agent,
+    temporary_directory: &Path,
     config: &RunnerPolicy,
     cancel: &CancellationToken,
     events: &mut RunnerEmitter,
@@ -617,10 +639,16 @@ async fn drive_workspace(
         iter.agent.exit_code = field::Empty,
         iter.agent.exit_disposition = field::Empty,
     );
-    let agent_result =
-        run_agent_with_timeout(agent, &*active, prompt, cancel, config.iteration_timeout)
-            .instrument(agent_span.clone())
-            .await;
+    let agent_result = run_agent_with_timeout(
+        agent,
+        &*active,
+        temporary_directory,
+        prompt,
+        cancel,
+        config.iteration_timeout,
+    )
+    .instrument(agent_span.clone())
+    .await;
 
     // The agent result is now a plain `Result`: `Ok` means the agent ran
     // (exit 0), `Err` carries the failure class. The lifecycle label and
@@ -746,6 +774,7 @@ fn agent_result_message(label: &str, exit_code: Option<i32>) -> String {
 async fn run_iteration(
     workspace: &mut dyn Workspace,
     agent: &Agent,
+    temporary_directory: &Path,
     prompt_selector: &PromptSelector,
     config: &RunnerPolicy,
     cancel: &CancellationToken,
@@ -794,7 +823,15 @@ async fn run_iteration(
         }
     };
     let record = drive_workspace(
-        workspace, agent, config, cancel, events, &signal, &prompt, &snap,
+        workspace,
+        agent,
+        temporary_directory,
+        config,
+        cancel,
+        events,
+        &signal,
+        &prompt,
+        &snap,
     )
     .await?;
     iter_state.record_success(signal_id, record.exit_code, clock.now());
@@ -818,6 +855,7 @@ async fn run_loop(
     clock: &dyn Clock,
     id_source: &dyn IdSource,
     variables: &VariableStore,
+    temporary_directory: &Path,
     events: &mut RunnerEmitter,
     iter_state: &mut IterationState,
     iteration_count: &mut u32,
@@ -932,6 +970,7 @@ async fn run_loop(
                         run_iteration(
                             workspace,
                             agent,
+                            temporary_directory,
                             prompt_selector,
                             config,
                             cancel,

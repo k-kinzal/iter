@@ -83,6 +83,7 @@ fn build_claude(
     args: &[String],
     system_prompt: Option<&String>,
     session_id_file: Option<&String>,
+    output_schema: Option<&iter_language::OutputSchema>,
     env: &BTreeMap<String, String>,
 ) -> ClaudeCodeDriver {
     ClaudeCodeDriver {
@@ -91,6 +92,7 @@ fn build_claude(
         args: args.to_vec(),
         system_prompt: system_prompt.cloned(),
         session_id_file: session_id_file.map(PathBuf::from),
+        output_schema: output_schema.map(|schema| schema.value.clone()),
         env: resolve_env(env),
         hook_isolation_key: DEFAULT_HOOK_ISOLATION_KEY.to_owned(),
     }
@@ -104,6 +106,7 @@ fn build_grok(
     args: &[String],
     system_prompt: Option<&String>,
     session_id_file: Option<&String>,
+    output_schema: Option<&iter_language::OutputSchema>,
     env: &BTreeMap<String, String>,
 ) -> GrokDriver {
     GrokDriver {
@@ -111,6 +114,7 @@ fn build_grok(
         args: args.to_vec(),
         system_prompt: system_prompt.cloned(),
         session_id_file: session_id_file.map(PathBuf::from),
+        output_schema: output_schema.map(|schema| schema.value.clone()),
         env: resolve_env(env),
     }
 }
@@ -140,6 +144,7 @@ fn driver_from_def(def: &AgentDef) -> Result<Box<dyn AgentDriver>, AgentBuildErr
             args,
             system_prompt,
             session_id_file,
+            output_schema,
             env,
         } => Box::new(build_claude(
             *mode,
@@ -147,17 +152,20 @@ fn driver_from_def(def: &AgentDef) -> Result<Box<dyn AgentDriver>, AgentBuildErr
             args,
             system_prompt.as_ref(),
             session_id_file.as_ref(),
+            output_schema.as_ref(),
             env,
         )),
         AgentDef::Codex {
             mode,
             command,
             args,
+            output_schema,
             env,
         } => Box::new(CodexDriver {
             command: command.clone(),
             mode: convert_mode(*mode),
             args: args.clone(),
+            output_schema: output_schema.as_ref().map(|schema| schema.value.clone()),
             env: resolve_env(env),
             hook_isolation_key: DEFAULT_HOOK_ISOLATION_KEY.to_owned(),
         }),
@@ -237,12 +245,14 @@ fn driver_from_def(def: &AgentDef) -> Result<Box<dyn AgentDriver>, AgentBuildErr
             args,
             system_prompt,
             session_id_file,
+            output_schema,
             env,
         } => Box::new(build_grok(
             command,
             args,
             system_prompt.as_ref(),
             session_id_file.as_ref(),
+            output_schema.as_ref(),
             env,
         )),
         AgentDef::Noop => Box::new(NoopDriver),
@@ -381,6 +391,7 @@ mod tests {
             args: Vec::new(),
             system_prompt: None,
             session_id_file: None,
+            output_schema: None,
             env: empty_env(),
         }
     }
@@ -399,6 +410,7 @@ mod tests {
                     mode: AstAgentMode::Headless,
                     command: "codex".into(),
                     args: Vec::new(),
+                    output_schema: None,
                     env: empty_env(),
                 },
                 AgentKind::Codex,
@@ -472,6 +484,7 @@ mod tests {
                     args: Vec::new(),
                     system_prompt: None,
                     session_id_file: None,
+                    output_schema: None,
                     env: empty_env(),
                 },
                 AgentKind::Grok,
@@ -514,6 +527,7 @@ mod tests {
             &["--model".to_string(), "opus".to_string()],
             Some(&"Use Rust.".to_string()),
             Some(&".iter/session-id".to_string()),
+            None,
             &env,
         );
         assert_eq!(driver.command, "/opt/bin/claude");
@@ -541,6 +555,7 @@ mod tests {
             &[],
             None,
             None,
+            None,
             &BTreeMap::new(),
         );
         assert_eq!(none.mode, ImplAgentMode::Headless);
@@ -555,6 +570,7 @@ mod tests {
             &["--output-format".to_string(), "json".to_string()],
             Some(&"Be concise.".to_string()),
             Some(&".iter/session-id".to_string()),
+            None,
             &BTreeMap::new(),
         );
         assert_eq!(with.command, "grok");
@@ -568,7 +584,7 @@ mod tests {
             Some(PathBuf::from(".iter/session-id")),
         );
 
-        let without = build_grok("grok", &[], None, None, &BTreeMap::new());
+        let without = build_grok("grok", &[], None, None, None, &BTreeMap::new());
         assert!(without.session_id_file.is_none());
     }
 
@@ -602,6 +618,7 @@ mod tests {
                         args: Vec::new(),
                         system_prompt: None,
                         session_id_file: None,
+                        output_schema: None,
                         env: empty_env(),
                     }),
                 ),

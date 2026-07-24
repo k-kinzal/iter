@@ -2,19 +2,22 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{Analyzer, TemplatePosition, closest};
+use super::{Analyzer, TemplatePosition, closest, lower_expr_pure};
 use crate::ast::{
     ComposeAction, ComposeEventName, ComposeHookDef, EnqueueActionDef, EventHandlerDef, EventName,
     RunnerAction, ShellActionDef, ShellCaptureDef, ShellCaptureFormat, ShellCaptureMode,
     ShellCaptureParse, ShellCaptureStream, Span, Spanned,
 };
 use crate::diagnostic::Diagnostic;
-use crate::parser::{CstAction, CstActionBody, CstBlock, CstCapture, CstField, CstIdent, CstValue};
+use crate::parser::{
+    CstAction, CstActionBody, CstBlock, CstCapture, CstExpr, CstField, CstIdent, CstValue,
+};
 
 impl Analyzer {
     pub(super) fn lower_event(
         &mut self,
         event: &CstIdent,
+        condition: Option<&CstExpr>,
         body: &CstBlock,
         span: Span,
     ) -> Option<Spanned<EventHandlerDef>> {
@@ -44,13 +47,32 @@ impl Analyzer {
             self.errors.push(diag);
             return None;
         };
-        let position = if matches!(
-            event_name,
-            EventName::RunnerCompleting | EventName::RunnerCompleted
-        ) {
-            TemplatePosition::CompletionShellAction
-        } else {
-            TemplatePosition::ShellAction
+        let condition = condition.map(|expression| {
+            let roots: &[&str] = match event_name {
+                EventName::AgentFinished => &["signal", "metadata", "iteration", "var", "agent"],
+                EventName::SignalReceived
+                | EventName::WorkspaceSetupStarting
+                | EventName::WorkspaceSetupFinished
+                | EventName::AgentStarting
+                | EventName::WorkspaceTeardownStarting
+                | EventName::WorkspaceTeardownFinished => {
+                    &["signal", "metadata", "iteration", "var"]
+                }
+                EventName::RunnerCompleting | EventName::RunnerCompleted => {
+                    &["iteration", "var", "completion", "runner"]
+                }
+                EventName::RunnerStarting | EventName::RunnerError | EventName::RunnerFinished => {
+                    &["iteration", "var"]
+                }
+            };
+            lower_expr_pure(expression.clone(), &mut self.errors, roots)
+        });
+        let position = match event_name {
+            EventName::RunnerCompleting | EventName::RunnerCompleted => {
+                TemplatePosition::CompletionShellAction
+            }
+            EventName::AgentFinished => TemplatePosition::AgentFinishedShellAction,
+            _ => TemplatePosition::ShellAction,
         };
         let actions = self.lower_actions(body, position);
         if !body.fields.is_empty() {
@@ -99,6 +121,7 @@ impl Analyzer {
         Some(Spanned::new(
             EventHandlerDef {
                 event: event_name,
+                condition,
                 actions,
             },
             span,

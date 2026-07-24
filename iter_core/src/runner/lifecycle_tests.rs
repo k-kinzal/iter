@@ -264,6 +264,7 @@ fn shell_command(script: &str) -> AgentCommand {
         process,
         stdin: None,
         io: StdioMode::Piped,
+        temporary_files: Vec::new(),
     }
 }
 
@@ -284,6 +285,69 @@ impl AgentDriver for StubDriver {
     fn interpret(&self, _output: &std::process::Output) -> Result<AgentRun, AgentError> {
         Ok(AgentRun::empty())
     }
+    fn kind(&self) -> AgentKind {
+        AgentKind::Fake
+    }
+}
+
+struct TemporaryDirectoryWorkspace {
+    inner: FakeWorkspace,
+    seen: Arc<Mutex<Option<PathBuf>>>,
+}
+
+#[async_trait]
+impl Workspace for TemporaryDirectoryWorkspace {
+    fn set_runner_temporary_directory(&mut self, path: &Path) {
+        *self.seen.lock().unwrap() = Some(path.to_path_buf());
+    }
+
+    async fn setup(
+        &mut self,
+        cancel: CancellationToken,
+    ) -> Result<Box<dyn ActiveWorkspace>, WorkspaceError> {
+        self.inner.setup(cancel).await
+    }
+
+    fn name(&self) -> &'static str {
+        "temporary-directory-recording"
+    }
+}
+
+struct TemporaryDirectoryDriver {
+    seen: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+#[async_trait]
+impl AgentDriver for TemporaryDirectoryDriver {
+    fn command(
+        &self,
+        _path: &Path,
+        _prompt: &Prompt,
+        _session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        Ok(shell_command("exit 0"))
+    }
+
+    fn command_with_temporary_directory(
+        &self,
+        path: &Path,
+        temporary_directory: &Path,
+        prompt: &Prompt,
+        session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        let mut seen = self.seen.lock().unwrap();
+        let marker = temporary_directory.join(format!("iteration-{}", seen.len() + 1));
+        std::fs::write(&marker, b"runner temporary marker")
+            .map_err(|error| AgentError::Launch(error.to_string()))?;
+        seen.push(temporary_directory.to_path_buf());
+        drop(seen);
+        self.command(path, prompt, session)
+    }
+
+    fn interpret(&self, _output: &std::process::Output) -> Result<AgentRun, AgentError> {
+        Ok(AgentRun::empty())
+    }
+
     fn kind(&self) -> AgentKind {
         AgentKind::Fake
     }
@@ -518,6 +582,55 @@ fn finished_handler_error_count(events: &[HookEvent]) -> u32 {
         }
     }
     panic!("no RunnerFinished in events: {events:?}");
+}
+
+#[tokio::test]
+async fn runner_owns_one_temporary_directory_for_all_iterations() {
+    let workspace_seen = Arc::new(Mutex::new(None));
+    let driver_seen = Arc::new(Mutex::new(Vec::new()));
+    let queue: Arc<dyn Queue> = Arc::new(InMemoryQueue::new());
+    for _ in 0..2 {
+        queue
+            .enqueue(Signal::new(Metadata::new()), Priority::default())
+            .await
+            .expect("enqueue");
+    }
+    queue
+        .enqueue(Signal::terminate(), Priority::default())
+        .await
+        .expect("terminate");
+
+    let runner = Runner::builder()
+        .queue(queue)
+        .workspace(Box::new(TemporaryDirectoryWorkspace {
+            inner: FakeWorkspace::new(),
+            seen: Arc::clone(&workspace_seen),
+        }))
+        .agent(agent_over(TemporaryDirectoryDriver {
+            seen: Arc::clone(&driver_seen),
+        }))
+        .prompt_template(PromptTemplate::new("hello").expect("prompt"))
+        .config(RunnerPolicy::default())
+        .build()
+        .expect("runner");
+
+    runner
+        .run(CancellationToken::new())
+        .await
+        .expect("runner run");
+
+    let workspace_path = workspace_seen
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("workspace received temporary directory");
+    let driver_paths = driver_seen.lock().unwrap().clone();
+    assert_eq!(driver_paths.len(), 2);
+    assert!(driver_paths.iter().all(|path| path == &workspace_path));
+    assert!(
+        !workspace_path.exists(),
+        "Runner temporary directory must be removed when the Runner ends"
+    );
 }
 
 #[tokio::test]

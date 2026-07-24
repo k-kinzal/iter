@@ -87,6 +87,34 @@ runner {
 }
 
 #[test]
+fn agent_root_is_available_only_in_agent_finished_shell_actions() {
+    let valid = r#"
+workspace local { base = "." }
+agent claude { mode = print command = "claude" }
+runner {
+  agent = claude
+  workspace = local
+  continue_on_error = false
+  behavior = loop
+  prompt = "ok"
+  on agent_finished {
+    shell "echo {{agent.session_id}} {{agent.output.decision}}"
+  }
+}
+"#;
+    assert!(
+        parse(valid).is_ok(),
+        "`agent.*` is available after a successful Agent run"
+    );
+
+    let invalid = valid.replace("on agent_finished", "on agent_starting");
+    assert!(
+        parse(&invalid).is_err(),
+        "`agent.*` is unavailable before the Agent run finishes"
+    );
+}
+
+#[test]
 fn completion_hooks_accept_completion_and_runner_roots() {
     let src = r#"
 workspace local { base = "." }

@@ -1,12 +1,13 @@
 //! [`PromptSelector`] — selects and renders the appropriate
 //! [`PromptTemplate`] for a given [`Signal`].
 
+use crate::Expr;
 use crate::runner::iteration::IterationContext;
 use crate::signal::Signal;
+use crate::template::IterationRenderContext;
 use crate::variable::VariableStore;
 
 use super::error::SelectorError;
-use super::guard::PromptGuard;
 use super::prompt::Prompt;
 use super::template::PromptTemplate;
 
@@ -23,7 +24,7 @@ use super::template::PromptTemplate;
 /// source declaration: guarded branches are always tried first.
 #[derive(Debug, Clone)]
 pub struct PromptSelector {
-    branches: Vec<(PromptGuard, PromptTemplate)>,
+    branches: Vec<(Expr, PromptTemplate)>,
     default: Option<PromptTemplate>,
 }
 
@@ -32,10 +33,7 @@ impl PromptSelector {
     /// optional default. Callers that only have a single unguarded
     /// template should prefer [`PromptSelector::single`].
     #[must_use]
-    pub fn new(
-        branches: Vec<(PromptGuard, PromptTemplate)>,
-        default: Option<PromptTemplate>,
-    ) -> Self {
+    pub fn new(branches: Vec<(Expr, PromptTemplate)>, default: Option<PromptTemplate>) -> Self {
         Self { branches, default }
     }
 
@@ -52,7 +50,7 @@ impl PromptSelector {
 
     /// Borrow the ordered list of guarded branches.
     #[must_use]
-    pub fn branches(&self) -> &[(PromptGuard, PromptTemplate)] {
+    pub fn branches(&self) -> &[(Expr, PromptTemplate)] {
         &self.branches
     }
 
@@ -76,8 +74,9 @@ impl PromptSelector {
         signal: &Signal,
         iteration: &IterationContext,
     ) -> Result<Prompt, SelectorError> {
-        for (guard, template) in &self.branches {
-            if guard.matches(signal, iteration) {
+        let context = serde_json::to_value(IterationRenderContext::new(signal, iteration))?;
+        for (expression, template) in &self.branches {
+            if expression.evaluate_bool(&context)? {
                 return Ok(template.render(signal, iteration)?);
             }
         }
@@ -98,8 +97,13 @@ impl PromptSelector {
         iteration: &IterationContext,
         variables: &VariableStore,
     ) -> Result<Prompt, SelectorError> {
-        for (guard, template) in &self.branches {
-            if guard.matches(signal, iteration) {
+        let context = serde_json::to_value(IterationRenderContext::with_variables(
+            signal,
+            iteration,
+            variables.snapshot(),
+        ))?;
+        for (expression, template) in &self.branches {
+            if expression.evaluate_bool(&context)? {
                 return Ok(template.render_with_variables(signal, iteration, variables)?);
             }
         }
@@ -121,6 +125,7 @@ mod tests {
     use super::*;
     use crate::prompt::test_helpers::{guard_kind_eq, signal_with, signal_with_kind};
     use crate::signal::metadata::Metadata;
+    use crate::{BinaryOp, ExprLiteral, PathSegment};
 
     fn prompt_template(source: &str) -> PromptTemplate {
         PromptTemplate::new(source).expect("compile")
@@ -177,6 +182,31 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "default path"
+        );
+    }
+
+    #[test]
+    fn first_iteration_null_exit_code_does_not_select_inequality_branch() {
+        let previous_exit_code_ne_zero = Expr::Binary {
+            lhs: Box::new(Expr::Path {
+                root: "iteration".to_owned(),
+                segments: vec![PathSegment::Field("previous_exit_code".to_owned())],
+            }),
+            op: BinaryOp::Neq,
+            rhs: Box::new(Expr::Literal(ExprLiteral::Integer(0))),
+        };
+        let selector = PromptSelector::new(
+            vec![(
+                previous_exit_code_ne_zero,
+                prompt_template("previous failure"),
+            )],
+            Some(prompt_template("first iteration")),
+        );
+        let signal = signal_with(Metadata::new());
+
+        assert_eq!(
+            selector.render(&signal, &iter_ctx()).unwrap().as_str(),
+            "first iteration"
         );
     }
 

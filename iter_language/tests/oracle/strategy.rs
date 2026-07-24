@@ -19,8 +19,8 @@
 //! shape should run `canonicalize::canonicalize` on both sides anyway.
 
 use iter_language::{
-    CstAction, CstActionBody, CstBlock, CstField, CstFile, CstGuard, CstIdent, CstRoute,
-    CstSection, CstValue,
+    CstAction, CstActionBody, CstBinaryOp, CstBlock, CstExprLiteral, CstField, CstFile, CstGuard,
+    CstIdent, CstPathSegment, CstPromptMatchArm, CstRoute, CstSection, CstValue,
 };
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -188,14 +188,15 @@ fn block_strategy() -> impl Strategy<Value = CstBlock> {
         vec(field_strategy(), 0..=4),
         vec(route_strategy(), 0..=2),
         vec(action_strategy(), 0..=2),
+        vec(prompt_arm_strategy(), 0..=2),
     )
-        .prop_map(|(fields, routes, actions)| CstBlock {
+        .prop_map(|(fields, routes, actions, prompt_arms)| CstBlock {
             fields,
             conditions: Vec::new(),
             routes,
             actions,
             captures: Vec::new(),
-            prompt_arms: Vec::new(),
+            prompt_arms,
             event_handlers: Vec::new(),
             span: 0..0,
         })
@@ -206,38 +207,119 @@ fn block_strategy() -> impl Strategy<Value = CstBlock> {
 // ---------------------------------------------------------------------------
 
 fn guard_leaf() -> impl Strategy<Value = CstGuard> {
-    (ident_name(), string_lit(), any::<bool>()).prop_map(|(key, value, eq)| {
-        if eq {
-            CstGuard::MetadataEq {
-                key,
-                value,
+    prop_oneof![
+        (ident_name(), string_lit(), any::<bool>()).prop_map(|(key, value, eq)| {
+            CstGuard::Binary {
+                lhs: Box::new(CstGuard::Path {
+                    root: CstIdent {
+                        name: "metadata".to_owned(),
+                        span: 0..0,
+                    },
+                    segments: vec![CstPathSegment::Field(CstIdent {
+                        name: key,
+                        span: 0..0,
+                    })],
+                    span: 0..0,
+                }),
+                op: if eq {
+                    CstBinaryOp::Eq
+                } else {
+                    CstBinaryOp::Neq
+                },
+                op_span: 0..0,
+                rhs: Box::new(CstGuard::Literal {
+                    value: CstExprLiteral::String(value),
+                    span: 0..0,
+                }),
                 span: 0..0,
             }
-        } else {
-            CstGuard::MetadataNeq {
-                key,
-                value,
+        }),
+        (string_lit(), ident_name()).prop_map(|(value, key)| CstGuard::Binary {
+            lhs: Box::new(CstGuard::Literal {
+                value: CstExprLiteral::String(value),
                 span: 0..0,
-            }
-        }
-    })
+            }),
+            op: CstBinaryOp::Eq,
+            op_span: 0..0,
+            rhs: Box::new(CstGuard::Path {
+                root: CstIdent {
+                    name: "metadata".to_owned(),
+                    span: 0..0,
+                },
+                segments: vec![CstPathSegment::Field(CstIdent {
+                    name: key,
+                    span: 0..0,
+                })],
+                span: 0..0,
+            }),
+            span: 0..0,
+        }),
+        (1_i64..100).prop_map(|divisor| CstGuard::Binary {
+            lhs: Box::new(CstGuard::Binary {
+                lhs: Box::new(CstGuard::Literal {
+                    value: CstExprLiteral::Integer(divisor),
+                    span: 0..0,
+                }),
+                op: CstBinaryOp::Mod,
+                op_span: 0..0,
+                rhs: Box::new(CstGuard::Path {
+                    root: CstIdent {
+                        name: "iteration".to_owned(),
+                        span: 0..0,
+                    },
+                    segments: vec![CstPathSegment::Field(CstIdent {
+                        name: "count".to_owned(),
+                        span: 0..0,
+                    })],
+                    span: 0..0,
+                }),
+                span: 0..0,
+            }),
+            op: CstBinaryOp::Eq,
+            op_span: 0..0,
+            rhs: Box::new(CstGuard::Literal {
+                value: CstExprLiteral::Integer(0),
+                span: 0..0,
+            }),
+            span: 0..0,
+        }),
+    ]
 }
 
 fn guard_strategy() -> impl Strategy<Value = CstGuard> {
     guard_leaf().prop_recursive(2, 8, 2, |inner| {
         prop_oneof![
-            (inner.clone(), inner.clone()).prop_map(|(l, r)| CstGuard::And(
-                Box::new(l),
-                Box::new(r),
-                0..0
-            )),
-            (inner.clone(), inner.clone()).prop_map(|(l, r)| CstGuard::Or(
-                Box::new(l),
-                Box::new(r),
-                0..0
-            )),
+            (inner.clone(), inner.clone()).prop_map(|(l, r)| CstGuard::Binary {
+                lhs: Box::new(l),
+                op: CstBinaryOp::And,
+                op_span: 0..0,
+                rhs: Box::new(r),
+                span: 0..0,
+            }),
+            (inner.clone(), inner.clone()).prop_map(|(l, r)| CstGuard::Binary {
+                lhs: Box::new(l),
+                op: CstBinaryOp::Or,
+                op_span: 0..0,
+                rhs: Box::new(r),
+                span: 0..0,
+            }),
         ]
     })
+}
+
+fn prompt_arm_strategy() -> impl Strategy<Value = CstPromptMatchArm> {
+    prop_oneof![
+        guard_strategy().prop_map(|guard| CstPromptMatchArm {
+            guard: Some(guard),
+            value: CstValue::String("selected".to_owned(), 0..0),
+            span: 0..0,
+        }),
+        Just(CstPromptMatchArm {
+            guard: None,
+            value: CstValue::String("default".to_owned(), 0..0),
+            span: 0..0,
+        }),
+    ]
 }
 
 fn block_section_strategy() -> impl Strategy<Value = CstSection> {

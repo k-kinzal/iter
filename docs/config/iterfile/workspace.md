@@ -181,6 +181,12 @@ AST: `SandboxPolicyDef`.
 | `allow_read_outside` | `list(string)` | Optional | `[]` | Absolute paths outside the workspace tmpdir the agent may read. |
 | `allow_write_outside` | `list(string)` | Optional | `[]` | Absolute paths outside the workspace tmpdir the agent may write. |
 | `extra_deny_paths` | `list(string)` | Optional | `[]` | Absolute paths explicitly denied. Deny beats allow. |
+
+The Runner owns one private temporary directory outside the Workspace and
+permits that exact directory in a sandbox for internal command artifacts.
+If an `extra_deny_paths` entry contains the Runner directory, sandbox setup
+fails with an explicit conflict error; iter does not silently override the
+project deny rule.
 | `allow_exec` | `list(string)` | Optional | `[]` | Absolute paths of binaries the sandbox may `execve`. Empty means "inherit backend default" (allow all). On macOS, a non-empty list restricts `process-exec` to the listed paths. **Linux (bwrap):** not yet implemented — the field is accepted but has no effect. See [Platform notes](#allow_exec-platform-notes). |
 
 #### `network` values

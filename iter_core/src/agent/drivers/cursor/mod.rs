@@ -147,6 +147,7 @@ impl AgentDriver for CursorDriver {
             process,
             stdin: Some(prompt.as_str().to_owned()),
             io: StdioMode::Piped,
+            temporary_files: Vec::new(),
         })
     }
 
@@ -162,6 +163,7 @@ impl AgentDriver for CursorDriver {
         if parsed.succeeded() {
             return Ok(AgentRun {
                 session_id: parsed.session_id(),
+                output: parsed.final_message().map(crate::agent::AgentOutput::Text),
             });
         }
         Err(classify_failure(&raw, &parsed, &stdout).into())
@@ -301,6 +303,10 @@ mod tests {
             .interpret(&synth_output(RawExit::Code(0), RESULT_OK, ""))
             .expect("ok");
         assert_eq!(run.session_id.as_deref(), Some("sess-x"));
+        assert_eq!(
+            run.output,
+            Some(crate::agent::AgentOutput::Text("ok".into()))
+        );
     }
 
     #[test]

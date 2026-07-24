@@ -7,8 +7,8 @@
 //! build a random `CstFile`, print it, re-parse it, and compare shapes.
 
 use iter_language::{
-    CstAction, CstActionBody, CstBlock, CstCmpOp, CstField, CstFile, CstGuard, CstRoute,
-    CstSection, CstValue,
+    CstAction, CstActionBody, CstBinaryOp, CstBlock, CstExprLiteral, CstField, CstFile, CstGuard,
+    CstPathSegment, CstRoute, CstSection, CstValue,
 };
 
 pub(crate) fn pretty(file: &CstFile) -> String {
@@ -113,6 +113,29 @@ fn pp_block(out: &mut String, b: &CstBlock, depth: usize) {
         out.push_str(&capture.name.name);
         out.push(' ');
         pp_block(out, &capture.body, depth + 1);
+        out.push('\n');
+    }
+    for arm in &b.prompt_arms {
+        indent(out, depth + 1);
+        if let Some(guard) = &arm.guard {
+            pp_guard(out, guard, 0);
+        } else {
+            out.push('_');
+        }
+        out.push_str(" => ");
+        pp_value(out, &arm.value, depth + 1);
+        out.push('\n');
+    }
+    for handler in &b.event_handlers {
+        indent(out, depth + 1);
+        out.push_str("on ");
+        out.push_str(&handler.event.name);
+        if let Some(condition) = &handler.condition {
+            out.push_str(" when ");
+            pp_guard(out, condition, 0);
+        }
+        out.push(' ');
+        pp_block(out, &handler.body, depth + 1);
         out.push('\n');
     }
     indent(out, depth);
@@ -258,75 +281,68 @@ fn pp_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
-fn pp_cmp_op(op: CstCmpOp) -> &'static str {
+fn pp_binary_op(op: CstBinaryOp) -> &'static str {
     match op {
-        CstCmpOp::Eq => "==",
-        CstCmpOp::Neq => "!=",
-        CstCmpOp::Lt => "<",
-        CstCmpOp::Le => "<=",
-        CstCmpOp::Gt => ">",
-        CstCmpOp::Ge => ">=",
+        CstBinaryOp::Or => "||",
+        CstBinaryOp::And => "&&",
+        CstBinaryOp::Eq => "==",
+        CstBinaryOp::Neq => "!=",
+        CstBinaryOp::Lt => "<",
+        CstBinaryOp::Le => "<=",
+        CstBinaryOp::Gt => ">",
+        CstBinaryOp::Ge => ">=",
+        CstBinaryOp::Mod => "%",
     }
 }
 
 fn pp_guard(out: &mut String, g: &CstGuard, parent_prec: u8) {
-    // Precedence: `||` = 1, `&&` = 2, atom = 3.
-    let (prec, sep): (u8, &str) = match g {
-        CstGuard::Or(..) => (1, " || "),
-        CstGuard::And(..) => (2, " && "),
-        CstGuard::MetadataEq { .. }
-        | CstGuard::MetadataNeq { .. }
-        | CstGuard::IterationCmp { .. }
-        | CstGuard::IterationResultEq { .. }
-        | CstGuard::IterationResultNeq { .. } => (3, ""),
+    let prec = match g {
+        CstGuard::Binary { op, .. } => match op {
+            CstBinaryOp::Or => 1,
+            CstBinaryOp::And => 2,
+            CstBinaryOp::Eq
+            | CstBinaryOp::Neq
+            | CstBinaryOp::Lt
+            | CstBinaryOp::Le
+            | CstBinaryOp::Gt
+            | CstBinaryOp::Ge => 3,
+            CstBinaryOp::Mod => 4,
+        },
+        CstGuard::Literal { .. } | CstGuard::Path { .. } => 5,
     };
     let needs_parens = prec < parent_prec;
     if needs_parens {
         out.push('(');
     }
     match g {
-        CstGuard::MetadataEq { key, value, .. } => {
-            out.push_str("metadata.");
-            out.push_str(key);
-            out.push_str(" == ");
-            pp_string(out, value);
-        }
-        CstGuard::MetadataNeq { key, value, .. } => {
-            out.push_str("metadata.");
-            out.push_str(key);
-            out.push_str(" != ");
-            pp_string(out, value);
-        }
-        CstGuard::IterationCmp {
-            field,
-            modulus,
-            op,
-            rhs,
-            ..
-        } => {
-            out.push_str("iteration.");
-            out.push_str(field);
-            if let Some(m) = modulus {
-                out.push_str(" % ");
-                out.push_str(&m.to_string());
+        CstGuard::Literal { value, .. } => match value {
+            CstExprLiteral::String(value) => pp_string(out, value),
+            CstExprLiteral::Integer(value) => out.push_str(&value.to_string()),
+            CstExprLiteral::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            CstExprLiteral::Null => out.push_str("null"),
+        },
+        CstGuard::Path { root, segments, .. } => {
+            out.push_str(&root.name);
+            for segment in segments {
+                match segment {
+                    CstPathSegment::Field(field) => {
+                        out.push('.');
+                        out.push_str(&field.name);
+                    }
+                    CstPathSegment::Index(index, _) => {
+                        out.push('[');
+                        out.push_str(&index.to_string());
+                        out.push(']');
+                    }
+                }
             }
+        }
+        CstGuard::Binary { lhs, op, rhs, .. } => {
+            pp_guard(out, lhs, prec);
             out.push(' ');
-            out.push_str(pp_cmp_op(*op));
+            out.push_str(pp_binary_op(*op));
             out.push(' ');
-            out.push_str(&rhs.to_string());
-        }
-        CstGuard::IterationResultEq { value, .. } => {
-            out.push_str("iteration.previous_result == ");
-            pp_string(out, value);
-        }
-        CstGuard::IterationResultNeq { value, .. } => {
-            out.push_str("iteration.previous_result != ");
-            pp_string(out, value);
-        }
-        CstGuard::Or(l, r, _) | CstGuard::And(l, r, _) => {
-            pp_guard(out, l, prec);
-            out.push_str(sep);
-            pp_guard(out, r, prec);
+            pp_guard(out, rhs, prec + 1);
         }
     }
     if needs_parens {

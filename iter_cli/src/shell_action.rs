@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use iter_core::{
-    BoxError, CompletionRenderContext, EventAction, HookEvent, IterationContext,
+    BoxError, CompletionRenderContext, EventAction, Expr, HookEvent, IterationContext,
     IterationRenderContext, RunnerRenderContext, Signal, Template, TemplateError, VariableStore,
 };
 use iter_language::{
@@ -89,6 +89,32 @@ impl ShellAction {
             captures: definition.captures.clone(),
             variables,
         })
+    }
+}
+
+/// One declared `on <event> [when <expression>] { ... }` handler.
+///
+/// The condition belongs to the handler, so it is evaluated exactly once
+/// against one variable snapshot before any contained action runs.
+#[derive(Debug)]
+pub(crate) struct ShellEventHandler {
+    actions: Vec<ShellAction>,
+    condition: Option<Expr>,
+    variables: VariableStore,
+}
+
+impl ShellEventHandler {
+    #[must_use]
+    pub(crate) fn new(
+        actions: Vec<ShellAction>,
+        condition: Option<Expr>,
+        variables: VariableStore,
+    ) -> Self {
+        Self {
+            actions,
+            condition,
+            variables,
+        }
     }
 }
 
@@ -143,6 +169,19 @@ impl EventAction for ShellAction {
                         self.variables.snapshot(),
                     ))
             }
+            HookEvent::AgentFinished {
+                signal,
+                result: Ok(agent),
+                ..
+            } => {
+                let ctx = IterationRenderContext::with_agent_and_variables(
+                    signal.as_signal(),
+                    iteration,
+                    self.variables.snapshot(),
+                    agent,
+                );
+                self.compiled.render(&ctx)
+            }
             _ if signal.is_some() => {
                 let signal = signal.expect("guarded by is_some");
                 let ctx = IterationRenderContext::with_variables(
@@ -177,6 +216,71 @@ impl EventAction for ShellAction {
         }
         Ok(())
     }
+}
+
+impl EventAction for ShellEventHandler {
+    async fn handle(
+        &self,
+        event: &HookEvent,
+        iteration: &IterationContext,
+    ) -> Result<(), BoxError> {
+        if let Some(condition) = &self.condition {
+            let context = expression_context(event, iteration, self.variables.snapshot())?;
+            if !condition
+                .evaluate_bool(&context)
+                .map_err(|error| -> BoxError { Box::new(error) })?
+            {
+                return Ok(());
+            }
+        }
+
+        // Preserve best-effort action execution: one action error is reported
+        // for this handler, but does not prevent later declared actions.
+        let mut first_error = None;
+        for action in &self.actions {
+            if let Err(error) = action.handle(event, iteration).await
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+
+fn expression_context(
+    event: &HookEvent,
+    iteration: &IterationContext,
+    variables: iter_core::VariableSnapshot,
+) -> Result<Value, BoxError> {
+    let value = match event {
+        HookEvent::RunnerCompleting { completion } | HookEvent::RunnerCompleted { completion } => {
+            serde_json::to_value(CompletionRenderContext::with_variables(
+                completion, iteration, variables,
+            ))
+        }
+        HookEvent::AgentFinished {
+            signal,
+            result: Ok(agent),
+            ..
+        } => serde_json::to_value(IterationRenderContext::with_agent_and_variables(
+            signal.as_signal(),
+            iteration,
+            variables,
+            agent,
+        )),
+        _ => match event.signal() {
+            Some(signal) => serde_json::to_value(IterationRenderContext::with_variables(
+                signal, iteration, variables,
+            )),
+            None => serde_json::to_value(RunnerRenderContext::with_variables(iteration, variables)),
+        },
+    }
+    .map_err(|error| -> BoxError { Box::new(error) })?;
+    Ok(value)
 }
 
 impl ShellAction {
@@ -424,7 +528,8 @@ fn extract_context(event: &HookEvent) -> (Option<&Signal>, Option<PathBuf>) {
 mod tests {
     use super::*;
     use iter_core::{
-        EventDispatcher, EventName, Metadata, MetadataKey, MetadataValue, Signal, VariableStore,
+        AgentRun, BinaryOp, EventDispatcher, EventName, ExprLiteral, Metadata, MetadataKey,
+        MetadataValue, PathSegment, Signal, VariableStore,
     };
 
     fn iter_ctx() -> IterationContext {
@@ -439,6 +544,28 @@ mod tests {
         HookEvent::WorkspaceTeardownFinished {
             signal: empty_signal().into(),
             path,
+        }
+    }
+
+    fn agent_finished_event(path: PathBuf, run: AgentRun) -> HookEvent {
+        HookEvent::AgentFinished {
+            signal: empty_signal().into(),
+            path,
+            result: Ok(run),
+        }
+    }
+
+    fn decision_is(expected: &str) -> Expr {
+        Expr::Binary {
+            lhs: Box::new(Expr::Path {
+                root: "agent".to_owned(),
+                segments: vec![
+                    PathSegment::Field("output".to_owned()),
+                    PathSegment::Field("decision".to_owned()),
+                ],
+            }),
+            op: BinaryOp::Eq,
+            rhs: Box::new(Expr::Literal(ExprLiteral::String(expected.to_owned()))),
         }
     }
 
@@ -746,6 +873,167 @@ mod tests {
         assert!(
             contents.contains("prev=none"),
             "iteration.previous_result missing: {contents:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_finished_renders_structured_agent_output() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let action =
+            ShellAction::new("echo {{agent.output.decision}} > decision.txt").expect("compile");
+        action
+            .handle(
+                &agent_finished_event(
+                    tmp.path().to_path_buf(),
+                    AgentRun::empty()
+                        .with_json_output(json!({"decision": "fix", "notes": ["missing test"]})),
+                ),
+                &iter_ctx(),
+            )
+            .await
+            .expect("action");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("decision.txt"))
+                .expect("decision")
+                .trim(),
+            "fix",
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_finished_renders_text_agent_output() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let action =
+            ShellAction::new("printf '%s' '{{agent.output}}' > response.txt").expect("compile");
+        action
+            .handle(
+                &agent_finished_event(
+                    tmp.path().to_path_buf(),
+                    AgentRun::empty().with_text_output("plain response"),
+                ),
+                &iter_ctx(),
+            )
+            .await
+            .expect("action");
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("response.txt")).expect("response"),
+            "plain response",
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_finished_condition_controls_shell_execution() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let event = agent_finished_event(
+            tmp.path().to_path_buf(),
+            AgentRun::empty().with_json_output(json!({"decision": "continue"})),
+        );
+        ShellEventHandler::new(
+            vec![ShellAction::new("touch skipped").expect("compile")],
+            Some(decision_is("fix")),
+            VariableStore::new(),
+        )
+        .handle(&event, &iter_ctx())
+        .await
+        .expect("false condition");
+        ShellEventHandler::new(
+            vec![ShellAction::new("touch selected").expect("compile")],
+            Some(decision_is("continue")),
+            VariableStore::new(),
+        )
+        .handle(&event, &iter_ctx())
+        .await
+        .expect("true condition");
+        assert!(!tmp.path().join("skipped").exists());
+        assert!(tmp.path().join("selected").exists());
+    }
+
+    #[tokio::test]
+    async fn handler_condition_error_is_reported() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let score = Expr::Path {
+            root: "agent".to_owned(),
+            segments: vec![
+                PathSegment::Field("output".to_owned()),
+                PathSegment::Field("score".to_owned()),
+            ],
+        };
+        let condition = Expr::Binary {
+            lhs: Box::new(Expr::Binary {
+                lhs: Box::new(score),
+                op: BinaryOp::Mod,
+                rhs: Box::new(Expr::Literal(ExprLiteral::Integer(2))),
+            }),
+            op: BinaryOp::Eq,
+            rhs: Box::new(Expr::Literal(ExprLiteral::Integer(0))),
+        };
+        let handler = ShellEventHandler::new(
+            vec![ShellAction::new("touch must-not-run").expect("compile")],
+            Some(condition),
+            VariableStore::new(),
+        );
+        let event = agent_finished_event(
+            tmp.path().to_path_buf(),
+            AgentRun::empty().with_json_output(json!({"score": 0.5})),
+        );
+
+        let error = handler
+            .handle(&event, &iter_ctx())
+            .await
+            .expect_err("invalid condition operands must be reported");
+        assert!(error.to_string().contains("operator %"));
+        assert!(!tmp.path().join("must-not-run").exists());
+    }
+
+    #[tokio::test]
+    async fn handler_condition_is_evaluated_once_before_all_actions() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let variables = VariableStore::new();
+        variables.set("gate", json!({"value": "run"}));
+        let condition = Expr::Binary {
+            lhs: Box::new(Expr::Path {
+                root: "var".to_owned(),
+                segments: vec![
+                    PathSegment::Field("gate".to_owned()),
+                    PathSegment::Field("value".to_owned()),
+                ],
+            }),
+            op: BinaryOp::Eq,
+            rhs: Box::new(Expr::Literal(ExprLiteral::String("run".to_owned()))),
+        };
+        let update_gate = ShellAction::from_def(
+            &ShellActionDef {
+                script: "printf stop".to_owned(),
+                captures: vec![capture(
+                    "gate",
+                    ShellCaptureStream::Stdout,
+                    ShellCaptureMode::Replace,
+                    ShellCaptureParse::Ordered(vec![ShellCaptureFormat::Text]),
+                )],
+            },
+            variables.clone(),
+        )
+        .expect("compile");
+        let second = ShellAction::from_def(
+            &ShellActionDef::simple("touch second-ran"),
+            variables.clone(),
+        )
+        .expect("compile");
+        let handler = ShellEventHandler::new(
+            vec![update_gate, second],
+            Some(condition),
+            variables.clone(),
+        );
+
+        handler
+            .handle(&torndown_event(tmp.path().to_path_buf()), &iter_ctx())
+            .await
+            .expect("handler");
+
+        assert_eq!(variables.get("gate").expect("gate")["value"], "stop");
+        assert!(
+            tmp.path().join("second-ran").exists(),
+            "later actions use the handler's original condition decision"
         );
     }
 

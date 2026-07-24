@@ -47,6 +47,9 @@ pub struct AgentCommand {
     /// How the child's stdio is wired: piped capture or terminal
     /// inheritance.
     pub io: StdioMode,
+    /// Temporary files referenced by the command line. Holding their paths
+    /// here keeps them alive until the child has finished.
+    pub temporary_files: Vec<tempfile::TempPath>,
 }
 
 impl std::fmt::Debug for AgentCommand {
@@ -55,6 +58,7 @@ impl std::fmt::Debug for AgentCommand {
             .field("process", &self.process)
             .field("stdin", &self.stdin.as_ref().map(String::len))
             .field("io", &self.io)
+            .field("temporary_files", &self.temporary_files)
             .finish()
     }
 }
@@ -90,6 +94,27 @@ pub trait AgentDriver: Send + Sync {
         session: Option<&str>,
     ) -> Result<AgentCommand, AgentError>;
 
+    /// Assemble a command using the Runner's private temporary directory.
+    ///
+    /// Drivers that need to materialise command-line artifacts override this
+    /// method and place them under `temporary_directory`. The default keeps
+    /// existing drivers source-compatible because most commands need no
+    /// temporary files.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same command-construction errors as [`Self::command`].
+    fn command_with_temporary_directory(
+        &self,
+        path: &Path,
+        temporary_directory: &Path,
+        prompt: &Prompt,
+        session: Option<&str>,
+    ) -> Result<AgentCommand, AgentError> {
+        let _ = temporary_directory;
+        self.command(path, prompt, session)
+    }
+
     /// Inbound translation: read the CLI's own verdict out of the child's
     /// output and exit status.
     ///
@@ -98,9 +123,9 @@ pub trait AgentDriver: Send + Sync {
     /// extracts the session id. For [`StdioMode::Inherit`] runs the output
     /// carries empty stdout/stderr and only the exit status speaks.
     ///
-    /// The agent's *value* never flows through here — it lives in the
-    /// workspace's files and survives via teardown's apply-back. This method
-    /// only judges the run's record.
+    /// This method also projects a capturable final response onto
+    /// [`AgentRun::output`](crate::agent::AgentRun::output). Workspace file
+    /// changes remain a separate path and survive via teardown's apply-back.
     ///
     /// # Errors
     ///

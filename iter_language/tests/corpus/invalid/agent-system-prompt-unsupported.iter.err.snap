@@ -9,5 +9,5 @@ Error: unknown field `system_prompt` in agent codex
    │   ──────┬──────  
    │         ╰──────── unknown field `system_prompt` in agent codex
    │ 
-   │ Help: valid fields: mode, command, args, env
+   │ Help: valid fields: mode, command, args, output_schema, env
 ───╯
