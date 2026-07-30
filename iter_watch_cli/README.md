@@ -18,8 +18,8 @@ Merged signals carry `files` (unique paths), `events` (ordered detail),
 
 ## Workspace dependencies
 
-`iter_core`.
+`iter_core`, `iter_tracing`.
 
 ## Non-dependencies (explicit)
 
-`iter_compose`, `iter_language` — this CLI is a standalone binary.
+`iter_cli`, `iter_language` — this CLI is a standalone binary.

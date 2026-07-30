@@ -15,8 +15,8 @@ Use `--no-exit-on-eof` to keep the process alive after draining all sources
 
 ## Workspace dependencies
 
-`iter_core`.
+`iter_core`, `iter_tracing`.
 
 ## Non-dependencies (explicit)
 
-`iter_compose`, `iter_language` — this CLI is a standalone binary.
+`iter_cli`, `iter_language` — this CLI is a standalone binary.
